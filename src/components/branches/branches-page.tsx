@@ -87,7 +87,14 @@ export function BranchesPage() {
     queryKey: ['branches', currentServerId, refreshBranches],
     queryFn: async () => {
       const res = await fetch(`/api/servers/${currentServerId}/branches`)
-      if (!res.ok) throw new Error('Failed to load branches')
+      if (!res.ok) {
+        if (res.status === 404) {
+          // Server no longer exists, reset selection
+          setCurrentServer(null)
+          return []
+        }
+        throw new Error('Failed to load branches')
+      }
       return res.json()
     },
     enabled: !!currentServerId,

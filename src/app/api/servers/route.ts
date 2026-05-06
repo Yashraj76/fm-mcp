@@ -39,6 +39,7 @@ export async function GET() {
             tools: true,
             deployments: true,
             branches: true,
+            connections: true,
           },
         },
       },

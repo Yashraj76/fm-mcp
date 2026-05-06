@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { z } from 'zod'
 
 const deploySchema = z.object({
-  branchId: z.string().min(1, 'Branch ID is required'),
+  branchId: z.string().optional(),
   changelog: z.string().optional(),
   targetEnvironment: z.enum(['staging', 'production']).default('staging'),
 })
@@ -59,8 +59,29 @@ export async function POST(
       )
     }
 
+    // Determine which branch to deploy
+    let targetBranchId = parsed.data.branchId
+    if (!targetBranchId) {
+      const defaultBranch = await db.branch.findFirst({
+        where: { serverId: id, isDefault: true, status: 'active' },
+      })
+      targetBranchId = defaultBranch?.id
+      if (!targetBranchId) {
+        // Fall back to any active branch
+        const anyBranch = await db.branch.findFirst({
+          where: { serverId: id, status: 'active' },
+          orderBy: { isDefault: 'desc' },
+        })
+        targetBranchId = anyBranch?.id
+      }
+    }
+
+    if (!targetBranchId) {
+      return NextResponse.json({ error: 'No active branch found to deploy' }, { status: 400 })
+    }
+
     const branch = await db.branch.findFirst({
-      where: { id: parsed.data.branchId, serverId: id },
+      where: { id: targetBranchId, serverId: id },
       include: {
         tools: { orderBy: { sortOrder: 'asc' } },
       },
