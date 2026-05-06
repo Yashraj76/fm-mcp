@@ -19,6 +19,8 @@ import {
   Wrench,
   Calendar,
   MessageSquare,
+  Server,
+  ArrowLeft,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
@@ -51,12 +53,14 @@ interface BranchItem {
   createdAt: string
   updatedAt: string
   parent: { id: string; name: string } | null
-  _count: { children: number }
+  children: { id: string }[]
 }
 
-interface ServerInfo {
+interface ServerItem {
   id: string
   name: string
+  status: string
+  _count: { tools: number; branches: number }
 }
 
 function BranchStatusBadge({ status }: { status: string }) {
@@ -72,29 +76,39 @@ function BranchStatusBadge({ status }: { status: string }) {
 
 export function BranchesPage() {
   const queryClient = useQueryClient()
-  const { currentServerId, setShowBranchDialog, triggerRefreshBranches, refreshBranches } = useAppStore()
+  const { currentServerId, setCurrentServer, setCurrentView, setShowBranchDialog, triggerRefreshBranches, refreshBranches } = useAppStore()
 
-  const { data: branches = [], isLoading, isError } = useQuery<BranchItem[]>({
+  const { data: servers = [] } = useQuery<ServerItem[]>({
+    queryKey: ['servers'],
+    queryFn: () => fetch('/api/servers').then(r => r.json()),
+  })
+
+  const { data: branches = [], isLoading, isError, error } = useQuery<BranchItem[]>({
     queryKey: ['branches', currentServerId, refreshBranches],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/branches`).then(r => r.json()),
+    queryFn: async () => {
+      const res = await fetch(`/api/servers/${currentServerId}/branches`)
+      if (!res.ok) throw new Error('Failed to load branches')
+      return res.json()
+    },
     enabled: !!currentServerId,
+    retry: 1,
   })
 
-  const { data: server } = useQuery<ServerInfo>({
-    queryKey: ['server-info', currentServerId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}`).then(r => r.json()).then(s => ({ id: s.id, name: s.name })),
-    enabled: !!currentServerId,
-  })
+  const server = servers.find(s => s.id === currentServerId)
 
   const mergeMutation = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/servers/${currentServerId}/branches/${branchId}/merge`, { method: 'POST' }).then(r => r.json()),
+      fetch(`/api/servers/${currentServerId}/branches/${branchId}/merge`, { method: 'POST' }).then(r => {
+        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Merge failed') })
+        return r.json()
+      }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
       triggerRefreshBranches()
       toast.success(data.message || 'Branch merged successfully')
     },
-    onError: () => toast.error('Failed to merge branch'),
+    onError: (err: Error) => toast.error(err.message || 'Failed to merge branch'),
   })
 
   const revertMutation = useMutation({
@@ -126,20 +140,70 @@ export function BranchesPage() {
   const deleteMutation = useMutation({
     mutationFn: (branchId: string) =>
       fetch(`/api/servers/${currentServerId}/branches/${branchId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'deleted' }),
-      }).then(r => r.json()),
+        method: 'DELETE',
+      }).then(r => {
+        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Delete failed') })
+        return r.json()
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
       triggerRefreshBranches()
       toast.success('Branch deleted')
     },
-    onError: () => toast.error('Failed to delete branch'),
+    onError: (err: Error) => toast.error(err.message || 'Failed to delete branch'),
   })
 
   const defaultBranch = branches.find(b => b.isDefault)
   const otherBranches = branches.filter(b => !b.isDefault)
+
+  // No server selected - show server selector
+  if (!currentServerId) {
+    return (
+      <div className="p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Branch Management</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Select a server to manage its branches
+          </p>
+        </div>
+        {servers.length === 0 ? (
+          <Card className="flex flex-col items-center justify-center py-16">
+            <Server className="size-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-semibold mb-1">No servers available</h3>
+            <p className="text-muted-foreground text-sm mb-4 text-center max-w-md">
+              Create an MCP server first before managing branches.
+            </p>
+            <Button variant="outline" onClick={() => setCurrentView('servers')}>
+              <ArrowLeft className="size-4" />
+              Go to Servers
+            </Button>
+          </Card>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {servers.map((s) => (
+              <Card
+                key={s.id}
+                className="hover:border-primary/30 transition-colors cursor-pointer"
+                onClick={() => setCurrentServer(s.id)}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <Server className="size-5 text-muted-foreground" />
+                    <div>
+                      <p className="text-sm font-medium">{s.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {s._count?.branches ?? 0} branches
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (isLoading) {
     return (
@@ -150,17 +214,28 @@ export function BranchesPage() {
         </div>
         <Skeleton className="h-32 w-full" />
         <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-24 w-full" />
       </div>
     )
   }
 
   if (isError) {
     return (
-      <div className="p-6">
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-500">
-          Failed to load branches.
+      <div className="p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null); setCurrentView('servers') }}>
+            <ArrowLeft className="size-4" />
+          </Button>
+          <h1 className="text-2xl font-bold tracking-tight">Branch Management</h1>
         </div>
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardContent className="p-6 text-center">
+            <p className="text-sm text-destructive font-medium">Failed to load branches</p>
+            <p className="text-xs text-muted-foreground mt-1">{error?.message || 'An unexpected error occurred'}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => queryClient.invalidateQueries({ queryKey: ['branches'] })}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -169,13 +244,18 @@ export function BranchesPage() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Branch Management</h1>
-          {server && (
-            <p className="text-muted-foreground text-sm mt-1">
-              Managing branches for <span className="font-medium text-foreground">{server.name}</span>
-            </p>
-          )}
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null); setCurrentView('servers') }}>
+            <ArrowLeft className="size-4" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Branch Management</h1>
+            {server && (
+              <p className="text-muted-foreground text-sm mt-0.5">
+                Server: <span className="font-medium text-foreground">{server.name}</span> — {branches.length} {branches.length === 1 ? 'branch' : 'branches'}
+              </p>
+            )}
+          </div>
         </div>
         <Button size="sm" onClick={() => setShowBranchDialog(true)}>
           <Plus className="size-4" />
@@ -206,7 +286,7 @@ export function BranchesPage() {
                   <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <Wrench className="size-3" />
-                      {defaultBranch.tools.length} tools
+                      {defaultBranch.tools?.length ?? 0} tools
                     </span>
                     {defaultBranch.commitMessage && (
                       <span className="flex items-center gap-1">
@@ -239,11 +319,15 @@ export function BranchesPage() {
       )}
 
       {/* Other Branches */}
-      {otherBranches.length === 0 && defaultBranch ? (
+      {otherBranches.length === 0 ? (
         <Card className="flex flex-col items-center justify-center py-12">
           <GitBranch className="size-10 text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground">No additional branches</p>
-          <p className="text-xs text-muted-foreground/70 mt-1">Create a branch to start working on features</p>
+          <p className="text-sm text-muted-foreground">
+            {defaultBranch ? 'No additional branches' : 'No branches yet'}
+          </p>
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            {defaultBranch ? 'Create a branch to start working on features' : 'Create a server first to start using branches'}
+          </p>
         </Card>
       ) : (
         <div className="space-y-3">
@@ -254,19 +338,19 @@ export function BranchesPage() {
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <GitBranch className="size-4 text-muted-foreground shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-semibold">{branch.name}</span>
                         <BranchStatusBadge status={branch.status} />
-                        {branch._count.children > 0 && (
+                        {branch.children?.length > 0 && (
                           <Badge variant="secondary" className="text-xs">
-                            {branch._count.children} {branch._count.children === 1 ? 'child' : 'children'}
+                            {branch.children.length} {branch.children.length === 1 ? 'child' : 'children'}
                           </Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
                         <span className="flex items-center gap-1">
                           <Wrench className="size-3" />
-                          {branch.tools.length} tools
+                          {branch.tools?.length ?? 0} tools
                         </span>
                         {branch.commitMessage && (
                           <span className="flex items-center gap-1 truncate max-w-48">
@@ -328,7 +412,7 @@ export function BranchesPage() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Delete Branch</AlertDialogTitle>
                               <AlertDialogDescription>
-                                Are you sure you want to delete the branch &quot;{branch.name}&quot;? This action cannot be undone.
+                                Are you sure you want to delete &quot;{branch.name}&quot;? This action cannot be undone.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
@@ -345,9 +429,7 @@ export function BranchesPage() {
                       </>
                     )}
                     {branch.status === 'merged' && (
-                      <Badge variant="secondary" className="text-xs">
-                        Already merged
-                      </Badge>
+                      <Badge variant="secondary" className="text-xs">Already merged</Badge>
                     )}
                     {branch.status === 'archived' && (
                       <Button

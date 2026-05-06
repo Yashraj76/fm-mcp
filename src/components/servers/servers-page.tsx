@@ -20,16 +20,17 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 
-interface ServerItem {
+interface ServerFromAPI {
   id: string
   name: string
   description: string | null
   version: string
   status: string
-  connectionCount: number
-  toolCount: number
-  branchCount: number
-  deploymentCount: number
+  connections: { connection: { id: string; name: string; host: string; status: string; database: string }; fileNames: string; isActive: boolean }[]
+  branches: { id: string; name: string; status: string; isDefault: boolean }[]
+  tools: { id: string; name: string; isEnabled: boolean; category: string | null }[]
+  deployments: { id: string; version: string; status: string; toolCount: number; changelog: string | null; deployedAt: string | null; createdAt: string }[]
+  _count: { tools: number; deployments: number; branches: number; connections: number }
   createdAt: string
   updatedAt: string
 }
@@ -77,18 +78,26 @@ export function ServersPage() {
   const queryClient = useQueryClient()
   const { setCurrentView, setCurrentServer, setShowServerDialog, setShowConfigDialog, refreshServers } = useAppStore()
 
-  const { data: servers = [], isLoading, isError } = useQuery<ServerItem[]>({
+  const { data: servers = [], isLoading, isError, error } = useQuery<ServerFromAPI[]>({
     queryKey: ['servers', refreshServers],
-    queryFn: () => fetch('/api/servers').then(r => r.json()),
+    queryFn: async () => {
+      const res = await fetch('/api/servers')
+      if (!res.ok) throw new Error('Failed to fetch servers')
+      return res.json()
+    },
+    retry: 1,
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => fetch(`/api/servers/${id}`, { method: 'DELETE' }).then(r => r.json()),
+    mutationFn: (id: string) => fetch(`/api/servers/${id}`, { method: 'DELETE' }).then(r => {
+      if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Delete failed') })
+      return r.json()
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Server deleted successfully')
     },
-    onError: () => toast.error('Failed to delete server'),
+    onError: (err: Error) => toast.error(err.message || 'Failed to delete server'),
   })
 
   const deployMutation = useMutation({
@@ -96,7 +105,7 @@ export function ServersPage() {
       fetch(`/api/servers/${id}/deployments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ changelog: 'Quick deploy from server card' })
+        body: JSON.stringify({ changelog: 'Quick deploy from server card' }),
       }).then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
@@ -120,16 +129,6 @@ export function ServersPage() {
     setShowConfigDialog(true)
   }
 
-  if (isError) {
-    return (
-      <div className="p-6">
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-500">
-          Failed to load servers. Please try again.
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -151,6 +150,16 @@ export function ServersPage() {
             <ServerCardSkeleton key={i} />
           ))}
         </div>
+      ) : isError ? (
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardContent className="p-6 text-center">
+            <p className="text-sm text-destructive font-medium">Failed to load servers</p>
+            <p className="text-xs text-muted-foreground mt-1">{error?.message || 'An unexpected error occurred'}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => queryClient.invalidateQueries({ queryKey: ['servers'] })}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
       ) : servers.length === 0 ? (
         <Card className="flex flex-col items-center justify-center py-16">
           <Server className="size-12 text-muted-foreground/50 mb-4" />
@@ -165,105 +174,108 @@ export function ServersPage() {
         </Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {servers.map((server) => (
-            <Card
-              key={server.id}
-              className="group hover:border-primary/30 transition-colors cursor-pointer"
-            >
-              <CardHeader>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <CardTitle className="flex items-center gap-2 truncate">
-                      <Server className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{server.name}</span>
-                    </CardTitle>
-                    {server.description && (
-                      <CardDescription className="mt-1 line-clamp-2">
-                        {server.description}
-                      </CardDescription>
-                    )}
+          {servers.map((server) => {
+            const connCount = server.connections?.length ?? server._count?.connections ?? 0
+            const toolCount = server.tools?.filter(t => t.isEnabled).length ?? server._count?.tools ?? 0
+            return (
+              <Card
+                key={server.id}
+                className="group hover:border-primary/30 transition-colors"
+              >
+                <CardHeader>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <CardTitle className="flex items-center gap-2 truncate">
+                        <Server className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{server.name}</span>
+                      </CardTitle>
+                      {server.description && (
+                        <CardDescription className="mt-1 line-clamp-2">
+                          {server.description}
+                        </CardDescription>
+                      )}
+                    </div>
+                    <StatusBadge status={server.status} />
                   </div>
-                  <StatusBadge status={server.status} />
-                </div>
-              </CardHeader>
+                </CardHeader>
 
-              <CardContent>
-                <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                  <span className="flex items-center gap-1.5">
-                    <Link2 className="size-3.5" />
-                    {server.connectionCount} {server.connectionCount === 1 ? 'connection' : 'connections'}
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <Wrench className="size-3.5" />
-                    {server.toolCount} {server.toolCount === 1 ? 'tool' : 'tools'}
-                  </span>
-                </div>
-                <div className="mt-2 text-xs text-muted-foreground/70">
-                  v{server.version}
-                </div>
-              </CardContent>
+                <CardContent>
+                  <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <Link2 className="size-3.5" />
+                      {connCount} {connCount === 1 ? 'connection' : 'connections'}
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Wrench className="size-3.5" />
+                      {toolCount} {toolCount === 1 ? 'tool' : 'tools'}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground/70">
+                    v{server.version}
+                  </div>
+                </CardContent>
 
-              <CardFooter className="gap-2 flex-wrap">
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => handleOpen(server.id)}
-                  className="flex-1"
-                >
-                  <ExternalLink className="size-3.5" />
-                  Open
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleEdit(server.id)}
-                >
-                  <Pencil className="size-3.5" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => deployMutation.mutate(server.id)}
-                  disabled={server.status === 'deployed'}
-                >
-                  <Rocket className="size-3.5" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleGenerateConfig(server.id)}
-                >
-                  <FileJson className="size-3.5" />
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete Server</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Are you sure you want to delete &quot;{server.name}&quot;? This will permanently
-                        remove the server, all its branches, tools, and deployment history. This action
-                        cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => deleteMutation.mutate(server.id)}
-                        className="bg-destructive text-white hover:bg-destructive/90"
-                      >
-                        Delete
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </CardFooter>
-            </Card>
-          ))}
+                <CardFooter className="gap-2 flex-wrap">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => handleOpen(server.id)}
+                    className="flex-1"
+                  >
+                    <ExternalLink className="size-3.5" />
+                    Open
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleEdit(server.id)}
+                  >
+                    <Pencil className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => deployMutation.mutate(server.id)}
+                    disabled={server.status === 'deployed'}
+                  >
+                    <Rocket className="size-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleGenerateConfig(server.id)}
+                  >
+                    <FileJson className="size-3.5" />
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Server</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Are you sure you want to delete &quot;{server.name}&quot;? This will permanently
+                          remove the server, all its branches, tools, and deployment history.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          onClick={() => deleteMutation.mutate(server.id)}
+                          className="bg-destructive text-white hover:bg-destructive/90"
+                        >
+                          Delete
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </CardFooter>
+              </Card>
+            )
+          })}
         </div>
       )}
     </div>

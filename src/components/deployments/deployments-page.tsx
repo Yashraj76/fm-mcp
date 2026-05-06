@@ -27,7 +27,8 @@ import {
   Tag,
   Plus,
   FileJson,
-  Clock,
+  Server,
+  ArrowLeft,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
@@ -59,7 +60,13 @@ interface DeploymentItem {
   createdAt: string
   configSnapshot: string
   branchSnapshot: string
-  server: { name: string }
+}
+
+interface ServerItem {
+  id: string
+  name: string
+  status: string
+  _count: { tools: number; branches: number; deployments: number }
 }
 
 function DeploymentStatusBadge({ status }: { status: string }) {
@@ -76,17 +83,29 @@ function DeploymentStatusBadge({ status }: { status: string }) {
 
 export function DeploymentsPage() {
   const queryClient = useQueryClient()
-  const { currentServerId, triggerRefreshDeployments, refreshDeployments } = useAppStore()
+  const { currentServerId, setCurrentServer, setCurrentView, triggerRefreshDeployments, refreshDeployments } = useAppStore()
   const [showDeployDialog, setShowDeployDialog] = useState(false)
   const [changelog, setChangelog] = useState('')
   const [showSnapshotDialog, setShowSnapshotDialog] = useState(false)
   const [snapshotConfig, setSnapshotConfig] = useState<string>('')
 
-  const { data: deployments = [], isLoading, isError } = useQuery<DeploymentItem[]>({
-    queryKey: ['deployments', currentServerId, refreshDeployments],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/deployments`).then(r => r.json()),
-    enabled: !!currentServerId,
+  const { data: servers = [] } = useQuery<ServerItem[]>({
+    queryKey: ['servers'],
+    queryFn: () => fetch('/api/servers').then(r => r.json()),
   })
+
+  const { data: deployments = [], isLoading, isError, error } = useQuery<DeploymentItem[]>({
+    queryKey: ['deployments', currentServerId, refreshDeployments],
+    queryFn: async () => {
+      const res = await fetch(`/api/servers/${currentServerId}/deployments`)
+      if (!res.ok) throw new Error('Failed to load deployments')
+      return res.json()
+    },
+    enabled: !!currentServerId,
+    retry: 1,
+  })
+
+  const server = servers.find(s => s.id === currentServerId)
 
   const deployMutation = useMutation({
     mutationFn: () =>
@@ -94,17 +113,19 @@ export function DeploymentsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ changelog: changelog || 'New deployment' }),
-      }).then(r => r.json()),
+      }).then(r => {
+        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Deploy failed') })
+        return r.json()
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments'] })
       queryClient.invalidateQueries({ queryKey: ['servers'] })
-      queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       triggerRefreshDeployments()
       toast.success('Deployment created successfully')
       setShowDeployDialog(false)
       setChangelog('')
     },
-    onError: () => toast.error('Failed to create deployment'),
+    onError: (err: Error) => toast.error(err.message || 'Failed to create deployment'),
   })
 
   const rollbackMutation = useMutation({
@@ -120,12 +141,59 @@ export function DeploymentsPage() {
 
   const handleViewSnapshot = (deployment: DeploymentItem) => {
     try {
-      const config = JSON.parse(deployment.configSnapshot)
+      const config = JSON.parse(deployment.configSnapshot || '{}')
       setSnapshotConfig(JSON.stringify(config, null, 2))
     } catch {
-      setSnapshotConfig(deployment.configSnapshot)
+      setSnapshotConfig(deployment.configSnapshot || 'No snapshot available')
     }
     setShowSnapshotDialog(true)
+  }
+
+  // No server selected
+  if (!currentServerId) {
+    return (
+      <div className="p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Deployment History</h1>
+          <p className="text-muted-foreground text-sm mt-1">Select a server to view deployments</p>
+        </div>
+        {servers.length === 0 ? (
+          <Card className="flex flex-col items-center justify-center py-16">
+            <Server className="size-12 text-muted-foreground/50 mb-4" />
+            <h3 className="text-lg font-semibold mb-1">No servers available</h3>
+            <p className="text-muted-foreground text-sm mb-4 text-center max-w-md">
+              Create an MCP server first before managing deployments.
+            </p>
+            <Button variant="outline" onClick={() => setCurrentView('servers')}>
+              <ArrowLeft className="size-4" />
+              Go to Servers
+            </Button>
+          </Card>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {servers.map((s) => (
+              <Card
+                key={s.id}
+                className="hover:border-primary/30 transition-colors cursor-pointer"
+                onClick={() => setCurrentServer(s.id)}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <Server className="size-5 text-muted-foreground" />
+                    <div>
+                      <p className="text-sm font-medium">{s.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {s._count?.deployments ?? 0} deployments
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -144,10 +212,22 @@ export function DeploymentsPage() {
 
   if (isError) {
     return (
-      <div className="p-6">
-        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-500">
-          Failed to load deployment history.
+      <div className="p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null); setCurrentView('servers') }}>
+            <ArrowLeft className="size-4" />
+          </Button>
+          <h1 className="text-2xl font-bold tracking-tight">Deployment History</h1>
         </div>
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardContent className="p-6 text-center">
+            <p className="text-sm text-destructive font-medium">Failed to load deployment history</p>
+            <p className="text-xs text-muted-foreground mt-1">{error?.message || 'An unexpected error occurred'}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => queryClient.invalidateQueries({ queryKey: ['deployments'] })}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
@@ -156,11 +236,18 @@ export function DeploymentsPage() {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Deployment History</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {deployments.length} {deployments.length === 1 ? 'deployment' : 'deployments'} total
-          </p>
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null); setCurrentView('servers') }}>
+            <ArrowLeft className="size-4" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Deployment History</h1>
+            {server && (
+              <p className="text-muted-foreground text-sm mt-0.5">
+                Server: <span className="font-medium text-foreground">{server.name}</span> — {deployments.length} {deployments.length === 1 ? 'deployment' : 'deployments'}
+              </p>
+            )}
+          </div>
         </div>
         <Button size="sm" onClick={() => setShowDeployDialog(true)}>
           <Rocket className="size-4" />
@@ -188,7 +275,6 @@ export function DeploymentsPage() {
               <CardContent className="p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex-1 min-w-0 space-y-2">
-                    {/* Version & Status Row */}
                     <div className="flex items-center gap-3 flex-wrap">
                       <div className="flex items-center gap-2">
                         <Tag className="size-3.5 text-muted-foreground" />
@@ -202,7 +288,6 @@ export function DeploymentsPage() {
                       )}
                     </div>
 
-                    {/* Details */}
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <Wrench className="size-3" />
@@ -226,7 +311,6 @@ export function DeploymentsPage() {
                       )}
                     </div>
 
-                    {/* Changelog */}
                     {deployment.changelog && (
                       <div className="flex items-start gap-1.5">
                         <MessageSquare className="size-3 text-muted-foreground shrink-0 mt-0.5" />
@@ -235,7 +319,6 @@ export function DeploymentsPage() {
                     )}
                   </div>
 
-                  {/* Actions */}
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Button
                       variant="outline"
@@ -244,14 +327,12 @@ export function DeploymentsPage() {
                       title="View config snapshot"
                     >
                       <Eye className="size-3.5" />
-                      Config
                     </Button>
                     {(deployment.status === 'deployed' || deployment.status === 'rolled_back') && index > 0 && (
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button variant="outline" size="sm" title="Rollback to this version">
                             <RotateCcw className="size-3.5" />
-                            Rollback
                           </Button>
                         </AlertDialogTrigger>
                         <AlertDialogContent>
@@ -259,8 +340,6 @@ export function DeploymentsPage() {
                             <AlertDialogTitle>Rollback to v{deployment.version}?</AlertDialogTitle>
                             <AlertDialogDescription>
                               This will roll back the current deployment to version {deployment.version} ({deployment.branchName}).
-                              The current deployment will be marked as rolled back. This action will restore the tools
-                              from that version&apos;s snapshot.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -329,21 +408,16 @@ export function DeploymentsPage() {
               <FileJson className="size-5 text-primary" />
               Configuration Snapshot
             </DialogTitle>
-            <DialogDescription>
-              The deployed configuration at the time of this deployment.
-            </DialogDescription>
+            <DialogDescription>The deployed configuration at the time of this deployment.</DialogDescription>
           </DialogHeader>
           <pre className="bg-muted rounded-lg p-4 font-mono text-sm overflow-auto max-h-96 whitespace-pre-wrap break-all">
             {snapshotConfig}
           </pre>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                navigator.clipboard.writeText(snapshotConfig)
-                toast.success('Copied to clipboard')
-              }}
-            >
+            <Button variant="outline" onClick={() => {
+              navigator.clipboard.writeText(snapshotConfig)
+              toast.success('Copied to clipboard')
+            }}>
               Copy
             </Button>
           </DialogFooter>
