@@ -35,30 +35,48 @@ export async function GET(
     }))
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const mcpBase = `${baseUrl}/api/mcp/${server.id}`
 
-    // SSE Configuration Format
+    // Fetch API key metadata (prefix only — never the raw key)
+    const apiKeyRecord = await db.mcpApiKey.findUnique({ where: { serverId: server.id } }).catch(() => null)
+    const authNote = apiKeyRecord
+      ? `Bearer <your-api-key>  (prefix: ${apiKeyRecord.keyPrefix}…)`
+      : `No API key generated yet — POST /api/servers/${server.id}/api-key to create one`
+
+    // Streamable HTTP — Cursor, VS Code, ChatGPT, Claude Code
+    const streamableHttpConfig = {
+      mcpServers: {
+        [server.name]: {
+          url: `${mcpBase}/mcp`,
+          headers: { Authorization: 'Bearer <your-api-key>' },
+        },
+      },
+      _authNote: authNote,
+    }
+
+    // SSE — Claude Desktop, Claude.ai (requires REDIS_URL on server)
     const sseConfig = {
       mcpServers: {
         [server.name]: {
-          transport: {
-            type: 'sse',
-            url: `${baseUrl}/api/mcp/sse?serverId=${server.id}&token=${server.sseToken}`,
-            headers: {
-              Authorization: `Bearer ${server.sseToken}`,
-            },
-          },
+          url: `${mcpBase}/sse`,
+          headers: { Authorization: 'Bearer <your-api-key>' },
         },
       },
-      tools: toolDefinitions,
-      metadata: {
-        serverName: server.name,
-        serverVersion: server.version,
-        toolCount: toolDefinitions.length,
-        generatedAt: new Date().toISOString(),
+      _authNote: authNote,
+      _note: 'SSE requires REDIS_URL configured on the server',
+    }
+
+    // mcp-remote proxy — stdio clients that cannot use HTTP transport
+    const mcpRemoteConfig = {
+      mcpServers: {
+        [server.name]: {
+          command: 'npx',
+          args: ['-y', 'mcp-remote', `${mcpBase}/mcp`, '--header', 'Authorization: Bearer <your-api-key>'],
+        },
       },
     }
 
-    // Proxy/stdio Configuration Format
+    // Legacy proxy config (backward compat)
     const proxyConfig = {
       mcpServers: {
         [server.name]: {
@@ -75,25 +93,6 @@ export async function GET(
           },
         },
       },
-      tools: toolDefinitions,
-      metadata: {
-        serverName: server.name,
-        serverVersion: server.version,
-        toolCount: toolDefinitions.length,
-        generatedAt: new Date().toISOString(),
-      },
-    }
-
-    // Claude Desktop compatible configuration
-    const claudeConfig = {
-      mcpServers: {
-        [server.name]: {
-          url: `${baseUrl}/api/mcp/sse?serverId=${server.id}&token=${server.sseToken}`,
-          headers: {
-            'Authorization': `Bearer ${server.sseToken}`,
-          },
-        },
-      },
     }
 
     return NextResponse.json({
@@ -102,17 +101,26 @@ export async function GET(
         serverId: server.id,
         serverName: server.name,
         serverVersion: server.version,
+        endpoints: {
+          streamableHttp: `${mcpBase}/mcp`,
+          sse: `${mcpBase}/sse`,
+        },
+        hasApiKey: !!apiKeyRecord,
+        streamableHttp: streamableHttpConfig,
         sse: sseConfig,
+        mcpRemote: mcpRemoteConfig,
         proxy: proxyConfig,
-        claudeDesktop: claudeConfig,
+        // Kept for backward compat
+        claudeDesktop: sseConfig,
         toolCount: toolDefinitions.length,
+        tools: toolDefinitions,
         connectedDatabases: server.connections.map((c) => ({
           connectionId: c.connectionId,
           databaseName: c.connection.database,
           host: c.connection.host,
           isActive: c.isActive,
         })),
-      }
+      },
     })
   } catch (error) {
     console.error('[API Error]', error)

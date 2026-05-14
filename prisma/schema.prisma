@@ -114,11 +114,24 @@ model McpServer {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  connections FMConnectionServer[]
-  branches    Branch[]
-  deployments Deployment[]
-  tools       Tool[]
+  connections        FMConnectionServer[]
+  branches           Branch[]
+  deployments        Deployment[]
+  tools              Tool[]
   toolGenerationJobs ToolGenerationJob[]
+  apiKey             McpApiKey?
+}
+
+// ============ MCP API KEYS ============
+
+model McpApiKey {
+  id         String    @id @default(cuid())
+  serverId   String    @unique
+  server     McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  keyHash    String
+  keyPrefix  String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
 }
 
 // ============ CONNECTION ↔ SERVER JOIN ============
