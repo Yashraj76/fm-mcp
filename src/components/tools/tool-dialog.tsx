@@ -142,7 +142,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     queryFn: async () => {
       const res = await fetch(`/api/servers/${currentServerId}/tools/${editingToolId}`)
       if (!res.ok) throw new Error('Failed to fetch tool')
-      return res.json().then((r: { data?: unknown }) => r.data)
+      return res.json().then((r: { data?: any }) => r.data)
     },
     enabled: isEditing && !!currentServerId && !!editingToolId,
   })
@@ -167,7 +167,6 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
           setFormData({
             name: existingTool.name || '',
             description: existingTool.description || '',
-            category: existingTool.category || 'Custom',
             fmMethod: existingTool.fmMethod || 'custom',
             fmLayout: existingTool.fmLayout || '',
             fmScript: existingTool.fmScript || '',

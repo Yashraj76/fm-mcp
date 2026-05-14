@@ -60,7 +60,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
     const aiText = await callAI({
       systemPrompt: CREATE_TOOLS_PROMPT,
       userMessage: JSON.stringify(inputPayload, null, 2),
-      maxTokens: 8000,
+      maxOutputTokens: 8000,
     });
     await prisma.toolGenerationJob.update({ where: { id: jobId }, data: { progress: 70 } });
 
@@ -138,7 +138,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
         });
         saved++;
       } catch (e: any) {
-        await appendLog(jobId, `Skipped tool "${tool.name}": ${e.message}`, 'error');
+        await appendLog(jobId, `Skipped tool "${toolDef.name}": ${e.message}`, 'error');
       }
     }
 

@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     const aiText = await callAI({
       systemPrompt: PLAYGROUND_ORCHESTRATOR_PROMPT,
       userMessage: `Available tools:\n${JSON.stringify(toolList, null, 2)}\n\nUser request: ${message}`,
-      maxTokens: 3000,
+      maxOutputTokens: 3000,
     });
     const clean = aiText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
     plan = JSON.parse(clean);

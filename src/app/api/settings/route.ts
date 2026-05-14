@@ -85,7 +85,7 @@ export async function PUT(req: NextRequest) {
     })
   } catch (e) {
     if (e instanceof ZodError) {
-      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.errors }, { status: 400 })
+      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
     }
     console.error('[settings PUT]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })

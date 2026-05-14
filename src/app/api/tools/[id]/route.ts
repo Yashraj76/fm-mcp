@@ -59,7 +59,7 @@ export async function PUT(
         success: false,
         error: 'Validation failed',
         code: 'VALIDATION_ERROR',
-        details: error.errors,
+        details: error.issues,
       }, { status: 400 })
     }
     console.error('[API Error]', error)

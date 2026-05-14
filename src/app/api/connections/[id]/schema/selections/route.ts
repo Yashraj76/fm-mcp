@@ -8,7 +8,7 @@ const selectionsSchema = z.object({
   selectedLayouts: z.array(z.string()),
   selectedTables: z.array(z.string()).default([]),
   selectedScripts: z.array(z.string()).default([]),
-  selectedFields: z.record(z.array(z.string())).optional().default({}),
+  selectedFields: z.record(z.string(), z.array(z.string())).optional().default({}),
   relationships: z.array(z.object({
     from: z.string(),
     to: z.string(),
@@ -72,7 +72,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     return NextResponse.json({ success: true, data: { compiledSchema, updatedAt: updated.updatedAt } })
   } catch (e: any) {
     if (e instanceof ZodError) {
-      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.errors }, { status: 400 })
+      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
     }
     console.error('[schema/selections PUT]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })

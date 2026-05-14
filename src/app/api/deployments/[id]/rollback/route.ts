@@ -18,7 +18,7 @@ export async function POST(
     await db.branch.update({
       where: { id: deployment.branchId },
       data: {
-        snapshot: deployment.snapshot,
+        snapshot: deployment.branchSnapshot,
         commitMessage: `Rollback to deployment ${deployment.version}`
       }
     })

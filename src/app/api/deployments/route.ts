@@ -34,11 +34,11 @@ export async function POST(request: NextRequest) {
       data: {
         serverId,
         branchId,
+        branchName: branch.name,
+        branchSnapshot: branch.snapshot,
         version: version || '1.0.0',
-        environment: environment || 'production',
         status: 'deployed',
-        snapshot: branch.snapshot, // Copy current branch snapshot
-        config: branch.snapshot, // Just using snapshot for config
+        configSnapshot: branch.snapshot, // Using snapshot for config
       }
     })
     

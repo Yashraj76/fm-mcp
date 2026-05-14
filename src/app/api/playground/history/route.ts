@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     
     const history = await db.toolExecution.findMany({
       where: toolId ? { toolId } : undefined,
-      orderBy: { executedAt: 'desc' },
+      orderBy: { createdAt: 'desc' },
       take: limit,
       include: {
         tool: {
