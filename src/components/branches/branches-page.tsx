@@ -80,7 +80,7 @@ export function BranchesPage() {
 
   const { data: servers = [] } = useQuery<ServerItem[]>({
     queryKey: ['servers'],
-    queryFn: () => fetch('/api/servers').then(r => r.json()),
+    queryFn: () => fetch('/api/servers').then(r => r.json()).then(res => res.data ?? []),
   })
 
   const { data: branches = [], isLoading, isError, error } = useQuery<BranchItem[]>({
@@ -95,7 +95,7 @@ export function BranchesPage() {
         }
         throw new Error('Failed to load branches')
       }
-      return res.json()
+      return res.json().then(r => r.data ?? [])
     },
     enabled: !!currentServerId,
     retry: 1,

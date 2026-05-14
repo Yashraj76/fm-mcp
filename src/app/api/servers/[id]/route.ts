@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { z } from 'zod'
+import { z, ZodError } from 'zod'
 
 const updateServerSchema = z.object({
   name: z.string().min(1).optional(),
@@ -32,6 +32,11 @@ export async function GET(
         },
         branches: {
           orderBy: { isDefault: 'desc' },
+          include: {
+            tools: {
+              orderBy: { sortOrder: 'asc' },
+            },
+          },
         },
         deployments: {
           orderBy: { createdAt: 'desc' },
@@ -54,16 +59,16 @@ export async function GET(
 
     if (!server) {
       return NextResponse.json(
-        { error: 'Server not found' },
+        { success: false, error: 'Server not found', code: 'NOT_FOUND' },
         { status: 404 }
       )
     }
 
-    return NextResponse.json(server)
+    return NextResponse.json({ success: true, data: server })
   } catch (error) {
-    console.error('Error fetching server:', error)
+    console.error('[API Error]', error)
     return NextResponse.json(
-      { error: 'Failed to fetch server' },
+      { success: false, error: 'Failed to fetch server', code: 'SERVER_ERROR' },
       { status: 500 }
     )
   }
@@ -79,22 +84,15 @@ export async function PUT(
     const existing = await db.mcpServer.findUnique({ where: { id } })
     if (!existing) {
       return NextResponse.json(
-        { error: 'Server not found' },
+        { success: false, error: 'Server not found', code: 'NOT_FOUND' },
         { status: 404 }
       )
     }
 
     const body = await request.json()
-    const parsed = updateServerSchema.safeParse(body)
+    const parsed = updateServerSchema.parse(body)
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
-    }
-
-    const { connectionIds, fileNamesPerConnection, ...updateData } = parsed.data
+    const { connectionIds, fileNamesPerConnection, ...updateData } = parsed
 
     // If connection IDs are provided, update junction records
     if (connectionIds !== undefined) {
@@ -132,11 +130,19 @@ export async function PUT(
       data: updateData,
     })
 
-    return NextResponse.json(server)
+    return NextResponse.json({ success: true, data: server })
   } catch (error) {
-    console.error('Error updating server:', error)
+    if (error instanceof ZodError) {
+      return NextResponse.json({
+        success: false,
+        error: 'Validation failed',
+        code: 'VALIDATION_ERROR',
+        details: error.issues,
+      }, { status: 400 })
+    }
+    console.error('[API Error]', error)
     return NextResponse.json(
-      { error: 'Failed to update server' },
+      { success: false, error: 'Failed to update server', code: 'SERVER_ERROR' },
       { status: 500 }
     )
   }
@@ -152,18 +158,18 @@ export async function DELETE(
     const existing = await db.mcpServer.findUnique({ where: { id } })
     if (!existing) {
       return NextResponse.json(
-        { error: 'Server not found' },
+        { success: false, error: 'Server not found', code: 'NOT_FOUND' },
         { status: 404 }
       )
     }
 
     await db.mcpServer.delete({ where: { id } })
 
-    return NextResponse.json({ message: 'Server deleted successfully' })
+    return NextResponse.json({ success: true, data: null })
   } catch (error) {
-    console.error('Error deleting server:', error)
+    console.error('[API Error]', error)
     return NextResponse.json(
-      { error: 'Failed to delete server' },
+      { success: false, error: 'Failed to delete server', code: 'SERVER_ERROR' },
       { status: 500 }
     )
   }

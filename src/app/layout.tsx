@@ -18,9 +18,6 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "FileMaker MCP Server Platform",
   description: "Build, manage, and deploy MCP servers for FileMaker Data API connections with AI-powered tool generation.",
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
-  },
 };
 
 export default function RootLayout({

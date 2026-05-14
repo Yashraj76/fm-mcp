@@ -104,7 +104,7 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
     isFetching,
   } = useQuery<SchemaData>({
     queryKey: ['schema', connectionId],
-    queryFn: () => fetch(`/api/connections/${connectionId}/schema`).then((r) => r.json()),
+    queryFn: () => fetch(`/api/connections/${connectionId}/schema`).then((r) => r.json()).then(res => res.data),
     enabled: !!connectionId,
   })
 
@@ -118,7 +118,7 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
               <SheetDescription>
                 {schema?.databaseName && `Database: ${schema.databaseName}`}
                 {schema?.cachedAt && (
-                  <span className="block text-[11px] mt-0.5">
+                  <span className="block text-[11px] mt-0.5" suppressHydrationWarning>
                     Cached {formatDistanceToNow(new Date(schema.cachedAt), { addSuffix: true })}
                   </span>
                 )}

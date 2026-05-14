@@ -20,15 +20,18 @@ export async function GET() {
     })
 
     return NextResponse.json({
-      totalConnections: connections,
-      connectedConnections,
-      activeServers,
-      totalServers: servers,
-      totalTools: tools,
-      totalDeployments: deployments,
+      success: true,
+      data: {
+        totalConnections: connections,
+        connectedConnections,
+        activeServers,
+        totalServers: servers,
+        totalTools: tools,
+        totalDeployments: deployments,
+      }
     })
   } catch (error) {
     console.error('Error fetching stats:', error)
-    return NextResponse.json({ error: 'Failed to fetch stats' }, { status: 500 })
+    return NextResponse.json({ success: false, error: 'Failed to fetch stats', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }

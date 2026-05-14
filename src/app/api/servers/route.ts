@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { z } from 'zod'
+import { z, ZodError } from 'zod'
 
 const createServerSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -45,11 +45,11 @@ export async function GET() {
       },
     })
 
-    return NextResponse.json(servers)
+    return NextResponse.json({ success: true, data: servers })
   } catch (error) {
-    console.error('Error fetching servers:', error)
+    console.error('[API Error]', error)
     return NextResponse.json(
-      { error: 'Failed to fetch servers' },
+      { success: false, error: 'Failed to fetch servers', code: 'SERVER_ERROR' },
       { status: 500 }
     )
   }
@@ -59,16 +59,9 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const parsed = createServerSchema.safeParse(body)
+    const parsed = createServerSchema.parse(body)
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
-    }
-
-    const { name, description, version, connectionIds, fileNamesPerConnection } = parsed.data
+    const { name, description, version, connectionIds, fileNamesPerConnection } = parsed
 
     // Auto-generate config from connections
     const config = JSON.stringify({
@@ -116,11 +109,41 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    return NextResponse.json(server, { status: 201 })
+    // Start background job to generate tools if there are connections
+    if (connectionIds && connectionIds.length > 0) {
+      // Create the job record first so we can track progress
+      const job = await db.toolGenerationJob.create({
+        data: {
+          serverId: server.id,
+          status: 'pending',
+          progress: 0,
+          log: JSON.stringify([{ time: new Date().toISOString(), message: 'Job created via server setup', level: 'info' }])
+        }
+      });
+
+      setImmediate(async () => {
+        try {
+          const { runToolGenerationJob } = await import('@/lib/tools/job-runner');
+          await runToolGenerationJob(job.id, server.id);
+        } catch (e) {
+          console.error('[ServerCreation] Tool generation error:', e);
+        }
+      });
+    }
+
+    return NextResponse.json({ success: true, data: server }, { status: 201 })
   } catch (error) {
-    console.error('Error creating server:', error)
+    if (error instanceof ZodError) {
+      return NextResponse.json({
+        success: false,
+        error: 'Validation failed',
+        code: 'VALIDATION_ERROR',
+        details: error.issues,
+      }, { status: 400 })
+    }
+    console.error('[API Error]', error)
     return NextResponse.json(
-      { error: 'Failed to create server' },
+      { success: false, error: 'Failed to create server', code: 'SERVER_ERROR' },
       { status: 500 }
     )
   }

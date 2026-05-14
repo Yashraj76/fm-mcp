@@ -83,7 +83,7 @@ export function ServersPage() {
     queryFn: async () => {
       const res = await fetch('/api/servers')
       if (!res.ok) throw new Error('Failed to fetch servers')
-      return res.json()
+      return res.json().then(r => r.data)
     },
     retry: 1,
   })

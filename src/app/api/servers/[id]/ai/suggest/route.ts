@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { callAI } from '@/lib/ai/client'
+import { SUGGEST_TOOLS_PROMPT } from '@/lib/ai/prompts/suggest-tools'
 
 const suggestSchema = z.object({
   branchId: z.string().optional(),
@@ -17,170 +19,77 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
+    const { id } = await params;
+    const server = await db.mcpServer.findUnique({ 
+      where: { id },
+      include: { 
+        connections: { 
+          where: { isActive: true },
+          take: 1,
+          include: { 
+            connection: { 
+              include: { 
+                browsedSchema: true 
+              } 
+            } 
+          } 
+        } 
+      }
+    });
+    
     if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+      return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 });
     }
 
-    const body = await request.json()
-    const parsed = suggestSchema.safeParse(body || {})
+    const body = await request.json();
+    const parsed = suggestSchema.safeParse(body || {});
 
     if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
+        { success: false, error: 'Validation failed', details: parsed.error.flatten() },
         { status: 400 }
-      )
+      );
     }
 
-    // Build schema context from connected databases
-    let schemaContext: Record<string, unknown>[] = []
-
-    if (parsed.data.connectionId) {
-      const schemaCache = await db.fMSchemaCache.findFirst({
-        where: { connectionId: parsed.data.connectionId },
-        orderBy: { cachedAt: 'desc' },
-      })
-      if (schemaCache) {
-        schemaContext = [
-          { layouts: JSON.parse(schemaCache.layouts || '[]') },
-          { scripts: JSON.parse(schemaCache.scripts || '[]') },
-          { tables: JSON.parse(schemaCache.tables || '[]') },
-          { fields: JSON.parse(schemaCache.fields || '[]') },
-        ]
-      }
+    // Load schema from connection
+    const activeConnection = server.connections[0]?.connection;
+    const bs = activeConnection?.browsedSchema;
+    if (!bs || !bs.compiledSchema) {
+      return NextResponse.json(
+        { success: false, error: 'Schema not browsed or compiled. Please browse and save schema selections first.', code: 'SCHEMA_MISSING' },
+        { status: 400 }
+      );
     }
 
-    // Generate mock AI suggestions based on type
-    const suggestions: Array<Record<string, unknown>> = []
+    const compiledSchema = JSON.parse(bs.compiledSchema);
+    
+    // Call AI for suggestions
+    const inputPayload = {
+      layouts: compiledSchema.layouts || [],
+      relationships: compiledSchema.relationships || [],
+      context: parsed.data.context,
+      type: parsed.data.suggestionType
+    };
 
-    if (parsed.data.suggestionType === 'tool_suggestion') {
-      const mockSuggestions = [
-        {
-          title: 'Create Contact Tool',
-          description: 'A tool to create new contact records in the Contacts layout. This would map to a FileMaker "create record" operation with fields for name, email, phone, and company.',
-          category: 'CRUD',
-          fmMethod: 'create',
-          fmLayout: 'Contacts',
-          proposedConfig: {
-            name: 'fm_create_contact',
-            description: 'Create a new contact record in FileMaker',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                firstName: { type: 'string', description: 'Contact first name' },
-                lastName: { type: 'string', description: 'Contact last name' },
-                email: { type: 'string', format: 'email', description: 'Contact email address' },
-                phone: { type: 'string', description: 'Contact phone number' },
-                company: { type: 'string', description: 'Associated company name' },
-              },
-              required: ['firstName', 'lastName'],
-            },
-            handlerConfig: {
-              type: 'create',
-              layout: 'Contacts',
-              fieldMapping: {
-                firstName: 'Contacts::firstName',
-                lastName: 'Contacts::lastName',
-                email: 'Contacts::email',
-                phone: 'Contacts::phone',
-                company: 'Contacts::company',
-              },
-            },
-          },
-        },
-        {
-          title: 'Find Invoices Tool',
-          description: 'A tool to search and find invoice records based on criteria like date range, status, and customer. Supports pagination.',
-          category: 'Find',
-          fmMethod: 'find',
-          fmLayout: 'Invoices',
-          proposedConfig: {
-            name: 'fm_find_invoices',
-            description: 'Search for invoices by criteria',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['pending', 'paid', 'overdue'], description: 'Invoice status' },
-                dateFrom: { type: 'string', format: 'date', description: 'Start date filter' },
-                dateTo: { type: 'string', format: 'date', description: 'End date filter' },
-                customerId: { type: 'number', description: 'Filter by customer ID' },
-                limit: { type: 'number', default: 20, description: 'Max results to return' },
-                offset: { type: 'number', default: 0, description: 'Pagination offset' },
-              },
-            },
-            handlerConfig: {
-              type: 'find',
-              layout: 'Invoices',
-              sort: [{ fieldName: 'createdAt', sortOrder: 'descend' }],
-              pagination: { limit: 20, offset: 0 },
-            },
-          },
-        },
-        {
-          title: 'Generate Invoice Script Tool',
-          description: 'Execute the FileMaker script that generates invoices from orders, with support for custom discount percentages.',
-          category: 'Script',
-          fmMethod: 'script',
-          fmScript: 'Create Invoice',
-          proposedConfig: {
-            name: 'fm_generate_invoice',
-            description: 'Generate an invoice from an existing order using the Create Invoice script',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                orderId: { type: 'number', description: 'The order ID to generate invoice from' },
-                discountPercent: { type: 'number', default: 0, description: 'Discount percentage to apply (0-100)' },
-              },
-              required: ['orderId'],
-            },
-            handlerConfig: {
-              type: 'script',
-              scriptName: 'Create Invoice',
-              scriptParameters: {
-                orderId: 'orderId',
-                discountPercent: 'discountPercent',
-              },
-            },
-          },
-        },
-      ]
+    const aiText = await callAI({
+      systemPrompt: SUGGEST_TOOLS_PROMPT,
+      userMessage: JSON.stringify(inputPayload, null, 2),
+    });
 
-      suggestions.push(...mockSuggestions)
-    } else if (parsed.data.suggestionType === 'optimization') {
-      suggestions.push({
-        title: 'Add Caching Layer',
-        description: 'Implement response caching for frequently accessed tools like product catalogs to reduce FileMaker server load. Cache TTL of 5 minutes recommended.',
-        category: 'optimization',
-        proposedConfig: {
-          type: 'cache',
-          ttl: 300,
-          applicableTools: ['fm_find_products', 'fm_get_product', 'fm_list_categories'],
-        },
-      })
-      suggestions.push({
-        title: 'Batch Operation Support',
-        description: 'Add batch create/update support to reduce API round-trips. Group multiple record operations into a single tool call.',
-        category: 'optimization',
-        proposedConfig: {
-          type: 'batch',
-          maxBatchSize: 100,
-          operations: ['create', 'update', 'delete'],
-        },
-      })
-    } else if (parsed.data.suggestionType === 'error_fix') {
-      suggestions.push({
-        title: 'Fix Auth Token Refresh',
-        description: 'The OAuth token refresh logic may fail silently. Add explicit token refresh handling with retry logic before FileMaker API calls.',
-        category: 'error_fix',
-        proposedConfig: {
-          type: 'auth_fix',
-          retryCount: 3,
-          retryDelay: 1000,
-          tokenRefreshBuffer: 300000,
-        },
-      })
+    // Parse AI output
+    let clean = aiText;
+    const match = aiText.match(/\{[\s\S]*\}/);
+    if (match) clean = match[0];
+    
+    let aiParsed: { suggestions: any[] };
+    try {
+      aiParsed = JSON.parse(clean);
+    } catch (e) {
+      console.error('[AI Parse Error]', aiText);
+      return NextResponse.json({ success: false, error: 'Failed to parse AI suggestions' }, { status: 500 });
     }
+
+    const suggestions = aiParsed.suggestions || [];
 
     // Save suggestions to database
     const savedSuggestions = await Promise.all(
@@ -189,7 +98,7 @@ export async function POST(
           data: {
             serverId: id,
             branchId: parsed.data.branchId || null,
-            schemaContext: JSON.stringify(schemaContext),
+            schemaContext: bs.compiledSchema,
             suggestionType: parsed.data.suggestionType,
             title: suggestion.title as string,
             description: suggestion.description as string,
@@ -198,9 +107,10 @@ export async function POST(
           },
         })
       )
-    )
+    );
 
     return NextResponse.json({
+      success: true,
       suggestions: savedSuggestions.map((s) => ({
         id: s.id,
         title: s.title,
@@ -210,11 +120,10 @@ export async function POST(
         status: s.status,
         createdAt: s.createdAt,
       })),
-      schemaUsed: schemaContext.length > 0,
       generatedAt: new Date().toISOString(),
-    })
-  } catch (error) {
+    });
+  } catch (error: any) {
     console.error('Error generating suggestions:', error)
-    return NextResponse.json({ error: 'Failed to generate suggestions' }, { status: 500 })
+    return NextResponse.json({ success: false, error: 'Failed to generate suggestions: ' + error.message }, { status: 500 })
   }
 }

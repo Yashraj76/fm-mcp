@@ -95,7 +95,7 @@ export function AiAssistantDialog() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Fetch server schemas
+  // Fetch server schemas (tools only now, backend handles schema context)
   const { data: schemaData, isLoading: isLoadingSchemas } = useQuery({
     queryKey: ['ai-schemas', currentServerId],
     queryFn: async () => {
@@ -104,23 +104,11 @@ export function AiAssistantDialog() {
       // Fetch tools
       const toolsRes = await fetch(`/api/servers/${currentServerId}/tools`)
       if (!toolsRes.ok) throw new Error('Failed to fetch tools')
-      const tools = await toolsRes.json()
-
-      // Fetch AI suggestions to get schema context
-      const suggestRes = await fetch(`/api/servers/${currentServerId}/ai/suggest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          layoutNames: [],
-          scriptNames: [],
-          existingTools: tools.map((t: Record<string, unknown>) => t.name),
-        }),
-      })
-      if (!suggestRes.ok) throw new Error('Failed to fetch schemas')
-      const suggestData = await suggestRes.json()
+      const toolsJson = await toolsRes.json()
+      const tools = toolsJson.data ?? []
 
       return {
-        schemas: suggestData.schemaContext || [],
+        schemas: [], // Deprecated, backend handles schema context now
         tools: tools.map((t: Record<string, unknown>) => t.name as string),
       }
     },
@@ -130,27 +118,31 @@ export function AiAssistantDialog() {
   // Accept suggestion mutation
   const acceptMutation = useMutation({
     mutationFn: async (suggestion: AiSuggestion) => {
-      const tools = (suggestion.proposedConfig.tools as Array<Record<string, unknown>>) || []
+      // The new AI prompt returns a single tool in proposedConfig, or sometimes an array
+      const proposed = suggestion.proposedConfig as any
+      const tools = Array.isArray(proposed.tools) ? proposed.tools : [proposed]
 
-      const results = []
+      const results: any[] = []
       for (const toolDef of tools) {
+        if (!toolDef.name) continue // Skip if invalid
+
         const payload = {
           name: toolDef.name,
           description: toolDef.description,
-          category: toolDef.category || suggestion.category,
-          fmMethod: toolDef.fmMethod,
-          fmLayout: toolDef.fmLayout || null,
-          fmScript: toolDef.fmScript || null,
+          category: toolDef.category || suggestion.category || suggestion.suggestionType,
+          fmMethod: suggestion.fmMethod || toolDef.fmMethod || toolDef.handlerConfig?.type || 'find',
+          fmLayout: suggestion.fmLayout || toolDef.fmLayout || toolDef.handlerConfig?.layout || null,
+          fmScript: suggestion.fmScript || toolDef.fmScript || toolDef.handlerConfig?.script || null,
           inputSchema: typeof toolDef.inputSchema === 'string'
             ? toolDef.inputSchema
             : JSON.stringify(toolDef.inputSchema || { type: 'object', properties: {} }),
           outputSchema: JSON.stringify({ type: 'object', properties: {} }),
-          handlerConfig: JSON.stringify({
-            method: toolDef.fmMethod,
-            layout: toolDef.fmLayout,
-            script: toolDef.fmScript,
-            recordIdField: 'recordId',
-          }),
+          handlerConfig: typeof toolDef.handlerConfig === 'string'
+            ? toolDef.handlerConfig
+            : JSON.stringify(toolDef.handlerConfig || {
+                method: suggestion.fmMethod || 'find',
+                layout: suggestion.fmLayout || '',
+              }),
           isAiGenerated: true,
           branchId: useAppStore.getState().currentBranchId,
         }
@@ -179,27 +171,12 @@ export function AiAssistantDialog() {
   // Send message mutation
   const sendMessageMutation = useMutation({
     mutationFn: async (message: string) => {
-      const tools = schemaData?.tools || []
-      const layoutNames: string[] = []
-      const scriptNames: string[] = []
-
-      for (const schema of schemaData?.schemas || []) {
-        for (const layout of schema.layouts) {
-          layoutNames.push(layout.name)
-        }
-        for (const script of schema.scripts) {
-          scriptNames.push(script.name)
-        }
-      }
-
       const res = await fetch(`/api/servers/${currentServerId}/ai/suggest`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          layoutNames,
-          scriptNames,
-          existingTools: tools,
-          query: message,
+          suggestionType: 'tool_suggestion',
+          context: message,
         }),
       })
       if (!res.ok) throw new Error('Failed to get AI response')
@@ -308,8 +285,10 @@ export function AiAssistantDialog() {
   // Reset on close
   useEffect(() => {
     if (!showAiDialog) {
-      setMessages([])
-      setInputValue('')
+      queueMicrotask(() => {
+        setMessages([])
+        setInputValue('')
+      })
     }
   }, [showAiDialog])
 

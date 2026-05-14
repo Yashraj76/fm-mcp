@@ -114,6 +114,7 @@ export const useAppStore = create<AppState>()(
         currentBranchId: state.currentBranchId,
         sidebarOpen: state.sidebarOpen,
         serverMode: state.serverMode,
+        // NOTE: Dialog states are intentionally NOT persisted — they always start closed
       }),
     }
   )

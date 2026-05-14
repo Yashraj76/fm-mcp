@@ -1,195 +1,325 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { z } from 'zod'
+import { withFMSession } from '@/lib/filemaker/session'
 
-const executeToolSchema = z.object({
-  inputs: z.record(z.string(), z.unknown()).optional(),
-  testMode: z.boolean().default(true),
-})
-
-// POST /api/servers/[id]/tools/[toolId]/execute - Execute a tool
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string; toolId: string }> }
+  { params }: { params: Promise<{ id: string, toolId: string }> }
 ) {
+  const startTime = Date.now()
+  let requestBody = ''
+  
   try {
-    const { id, toolId } = await params
-    const tool = await db.tool.findFirst({
-      where: { id: toolId, serverId: id },
+    const { toolId } = await params
+    const bodyText = await request.text()
+    requestBody = bodyText
+    const body = bodyText ? JSON.parse(bodyText) : {}
+    
+    const tool = await db.tool.findUnique({
+      where: { id: toolId },
       include: {
-        branch: { select: { name: true, isDefault: true } },
-        server: { select: { name: true, connections: { include: { connection: true } } } },
-      },
+        server: {
+          include: {
+            connections: {
+              include: { connection: true }
+            }
+          }
+        }
+      }
     })
-
+    
     if (!tool) {
-      return NextResponse.json({ error: 'Tool not found' }, { status: 404 })
+      return NextResponse.json({ success: false, error: 'Tool not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
     if (!tool.isEnabled) {
-      return NextResponse.json({ error: 'Tool is disabled' }, { status: 400 })
+      return NextResponse.json({ success: false, error: 'Tool is disabled', code: 'TOOL_DISABLED' }, { status: 400 })
     }
 
-    const body = await request.json()
-    const parsed = executeToolSchema.safeParse(body)
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
+    const handlerConfig = JSON.parse(tool.handlerConfig || '{}')
+    const fmMethod = tool.fmMethod || handlerConfig.type
+    const fmLayout = tool.fmLayout || handlerConfig.layout
+    const fmScript = tool.fmScript || handlerConfig.script
+    
+    // Choose connection (for now, use first connection linked to server, or handlerConfig.connectionId)
+    const connectionId = handlerConfig.connectionId || (tool.server.connections[0] ? tool.server.connections[0].connectionId : null)
+    
+    if (!connectionId) {
+      throw new Error('No FileMaker connection associated with this tool/server')
     }
 
-    const inputs = parsed.data.inputs || JSON.parse(tool.testConfig || '{}')
-    const startTime = Date.now()
+    const connection = tool.server.connections.find(c => c.connectionId === connectionId)?.connection
+      || await db.fMConnection.findUnique({ where: { id: connectionId }})
 
-    // Create execution log as pending
-    const execution = await db.toolExecution.create({
-      data: {
-        toolId,
-        requestId: `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        requestBody: JSON.stringify(inputs),
-        status: 'pending',
-      },
+    if (!connection) {
+      throw new Error('FileMaker connection not found')
+    }
+
+    // Execute with session
+    const result = await withFMSession(connection, async (client) => {
+      // ===== SEQUENTIAL MULTI-TABLE =====
+      if (fmMethod === 'multi-step' || handlerConfig.method === 'sequential-multi-table') {
+        const steps = handlerConfig.steps
+        if (!Array.isArray(steps) || steps.length === 0) {
+          throw new Error('Multi-step handler requires a "steps" array in handlerConfig with at least one step.')
+        }
+        const stepResults: unknown[] = []
+        // Runtime params start from the user-supplied body
+        const runtimeParams: Record<string, unknown> = { ...(body as Record<string, unknown>) }
+        const year = new Date().getFullYear()
+
+        for (const step of steps) {
+          if (step.api !== 'data-api') throw new Error(`Unsupported step api: ${step.api}`)
+          const layout = step.layout
+          if (!layout) throw new Error(`Step ${step.stepIndex}: layout is required`)
+
+          const fieldMappings: Record<string, string> = step.fieldMappings || {}
+          const staticFilters: Record<string, string> = step.staticFilters || {}
+          const stepLimit = Number(step.limit) || 500
+
+          // ── JOIN MODE: build OR query from a previous step's extracted array ──
+          if (step.joinField && step.joinFrom && Array.isArray(runtimeParams[step.joinFrom])) {
+            const ids = runtimeParams[step.joinFrom] as unknown[]
+            if (ids.length === 0) {
+              stepResults.push({ response: { data: [], dataInfo: { foundCount: 0 } }, _skipped: 'empty join set' })
+              continue
+            }
+
+            // FM can reject date ranges in large OR queries → fetch by ID join only, filter dates client-side
+            // Chunk to avoid FM URL length limits (max ~100 criteria per request is safe)
+            const CHUNK_SIZE = 100
+            let allData: any[] = []
+            let totalFound = 0
+            for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+              const chunk = ids.slice(i, i + CHUNK_SIZE)
+              const orQuery = chunk.map(id => ({ [step.joinField]: `=${String(id)}` }))
+              try {
+                const chunkResult = await client.find(layout, orQuery, stepLimit, 1, step.sort)
+                const chunkData = (chunkResult as any)?.response?.data || []
+                allData = allData.concat(chunkData)
+                totalFound += (chunkResult as any)?.response?.dataInfo?.foundCount || 0
+              } catch (err: any) {
+                // FM "401 no records" is not a fatal error — chunk just had no matches
+                if (!err.message?.includes('No records match')) throw err
+              }
+            }
+
+            // Apply staticFilters client-side (handles date ranges safely)
+            const clientFiltered = allData.filter(record => {
+              const fd = record?.fieldData || {}
+              for (const [fmField, rawVal] of Object.entries(staticFilters)) {
+                const expandedVal = (rawVal as string)
+                  .replace('{year}', String(year))
+                  .replace('{yearStart}', `1/1/${year}`)
+                  .replace('{yearEnd}', `12/31/${year}`)
+                // Date range filter: "1/1/2026...12/31/2026"
+                if (expandedVal.includes('...')) {
+                  const [startStr, endStr] = expandedVal.split('...')
+                  const recVal = fd[fmField]
+                  if (!recVal) return false
+                  try {
+                    // Parse MM/DD/YYYY timezone-safely (avoid UTC offset shifting)
+                    const parseLocal = (s: string) => {
+                      const [m, d, y] = s.trim().split('/').map(Number)
+                      return new Date(y, m - 1, d).getTime()
+                    }
+                    const recTs = parseLocal(String(recVal))
+                    const startTs = parseLocal(startStr)
+                    const endTs = parseLocal(endStr)
+                    if (recTs < startTs || recTs > endTs) return false
+                  } catch { return false }
+                } else {
+                  // Exact match filter
+                  if (String(fd[fmField]) !== expandedVal) return false
+                }
+              }
+              return true
+            })
+
+            stepResults.push({
+              response: {
+                data: clientFiltered.slice(0, stepLimit),
+                dataInfo: {
+                  foundCount: clientFiltered.length,
+                  returnedCount: Math.min(clientFiltered.length, stepLimit),
+                  _rawFetchedCount: allData.length,
+                  _clientFiltered: true,
+                  layout,
+                }
+              }
+            })
+            continue
+          }
+
+
+          // ── STANDARD MODE: build single criterion from fieldMappings + staticFilters ──
+          const query: Record<string, unknown> = {}
+          // From user-supplied params via fieldMappings
+          for (const [inputKey, fmField] of Object.entries(fieldMappings)) {
+            if (runtimeParams[inputKey] !== undefined) {
+              query[fmField as string] = runtimeParams[inputKey]
+            }
+          }
+          // Hardcoded static filters (e.g. ValidUser = "1")
+          for (const [fmField, fmVal] of Object.entries(staticFilters)) {
+            // Auto-expand year placeholders
+            query[fmField] = (fmVal as string)
+              .replace('{year}', String(year))
+              .replace('{yearStart}', `1/1/${year}`)
+              .replace('{yearEnd}', `12/31/${year}`)
+          }
+          // Legacy: auto-inject current year into OrderEnteredDate if mapped but not supplied
+          if (fieldMappings.orderEnteredDate !== undefined && runtimeParams.orderEnteredDate === undefined) {
+            query[fieldMappings.orderEnteredDate] = `1/1/${year}...12/31/${year}`
+          }
+
+          let stepResult;
+          if (Object.keys(query).length === 0) {
+            stepResult = await client.listRecords(layout, stepLimit, 1)
+          } else {
+            stepResult = await client.find(layout, [query], stepLimit, 1)
+          }
+          stepResults.push(stepResult)
+
+          // ── EXTRACTION ──
+          if (step.extractField && step.useExtractedAs) {
+            const allRecords: any[] = (stepResult as any)?.response?.data || []
+            if (allRecords.length === 0) {
+              return { stepResults, message: `No records found in step ${step.stepIndex}, aborting chain` }
+            }
+
+            if (step.extractMode === 'all') {
+              // Collect the field value from EVERY record (for OR join in next step)
+              const allValues = allRecords
+                .map((r: any) => r?.fieldData?.[step.extractField])
+                .filter((v: unknown) => v !== undefined && v !== null && v !== '')
+              runtimeParams[step.useExtractedAs] = [...new Set(allValues)] // deduplicate
+            } else {
+              // Default: extract from first record only
+              const firstRecord = allRecords[0]?.fieldData
+              if (firstRecord?.[step.extractField] !== undefined) {
+                runtimeParams[step.useExtractedAs] = firstRecord[step.extractField]
+              } else {
+                return { stepResults, message: `Extract field "${step.extractField}" not found in step ${step.stepIndex} result` }
+              }
+            }
+          }
+        }
+
+        return { stepResults, runtimeParams }
+      }
+
+      // ===== SINGLE TABLE OPERATIONS =====
+      switch (fmMethod) {
+        case 'find':
+          if (!fmLayout) throw new Error('Layout required for find')
+          // Apply field mappings: translate input param names → FM field names (inputKey → fmField)
+          const fieldMappings: Record<string, string> = handlerConfig.fieldMappings || {}
+          const RESERVED_PARAMS = new Set(['limit', 'offset', 'sort', '_limit', '_offset'])
+          const { limit: bodyLimit, offset: bodyOffset, ...fieldBody } = body as Record<string, unknown>
+          const effectiveLimit = Number(bodyLimit) || Number(handlerConfig.limit) || 50
+          const effectiveOffset = Number(bodyOffset) || 1
+          const rawQuery = Array.isArray(fieldBody) ? fieldBody : [fieldBody]
+          const mappedQuery = rawQuery.map((criterion: Record<string, unknown>) => {
+            const mapped: Record<string, unknown> = {}
+            for (const [inputKey, inputVal] of Object.entries(criterion)) {
+              if (RESERVED_PARAMS.has(inputKey)) continue
+              // Forward mapping: inputKey → fmField
+              const fmField = fieldMappings[inputKey] || inputKey
+              mapped[fmField] = inputVal
+            }
+            return mapped
+          })
+          
+          const isEmptyQuery = mappedQuery.length === 1 && Object.keys(mappedQuery[0]).length === 0
+          if (isEmptyQuery) {
+            return client.listRecords(fmLayout, effectiveLimit, effectiveOffset)
+          }
+          
+          return client.find(fmLayout, mappedQuery, effectiveLimit, effectiveOffset)
+          
+        case 'create':
+          if (!fmLayout) throw new Error('Layout required for create')
+          return client.createRecord(fmLayout, body)
+          
+        case 'get':
+          if (!fmLayout) throw new Error('Layout required for get')
+          if (!(body as any).recordId) throw new Error('recordId required in body for get')
+          return client.getRecord(fmLayout, (body as any).recordId)
+          
+        case 'update':
+          if (!fmLayout) throw new Error('Layout required for update')
+          if (!(body as any).recordId) throw new Error('recordId required in body for update')
+          const { recordId, ...updateData } = body as any
+          return client.updateRecord(fmLayout, recordId, updateData)
+          
+        case 'delete':
+          if (!fmLayout) throw new Error('Layout required for delete')
+          if (!(body as any).recordId) throw new Error('recordId required in body for delete')
+          return client.deleteRecord(fmLayout, (body as any).recordId)
+          
+        case 'list':
+          if (!fmLayout) throw new Error('Layout required for list')
+          return client.listRecords(fmLayout, (body as any).limit || 100, (body as any).offset || 1)
+          
+        case 'script':
+          if (!fmLayout) throw new Error('Layout required for script')
+          if (!fmScript) throw new Error('Script name required')
+          const param = typeof body === 'object' ? JSON.stringify(body) : String(body)
+          return client.runScript(fmLayout, fmScript, param)
+          
+        default:
+          throw new Error(`Unsupported handler type: ${fmMethod}`)
+      }
     })
-
-    // Simulate tool execution
-    const simulatedLatency = 100 + Math.floor(Math.random() * 900)
-    await new Promise((resolve) => setTimeout(resolve, simulatedLatency))
 
     const duration = Date.now() - startTime
-
-    // Generate realistic mock response based on fmMethod
-    let mockResponse: Record<string, unknown>
-    const method = tool.fmMethod || 'find'
-
-    switch (method) {
-      case 'create':
-        mockResponse = {
-          success: true,
-          action: 'create',
-          recordId: `rec_${Date.now().toString(36)}`,
-          modId: Math.floor(Math.random() * 1000),
-          layout: tool.fmLayout || 'Unknown',
-          createdTimestamp: new Date().toISOString(),
-          data: inputs,
-        }
-        break
-
-      case 'read':
-        mockResponse = {
-          success: true,
-          action: 'read',
-          layout: tool.fmLayout || 'Unknown',
-          recordId: (inputs as Record<string, unknown>)?.recordId || 'rec_default',
-          modId: Math.floor(Math.random() * 1000),
-          data: {
-            id: (inputs as Record<string, unknown>)?.recordId || 'rec_default',
-            name: 'Sample Record',
-            createdAt: '2024-12-15T10:30:00Z',
-            modifiedAt: new Date().toISOString(),
-            status: 'Active',
-            ...inputs,
-          },
-        }
-        break
-
-      case 'update':
-        mockResponse = {
-          success: true,
-          action: 'update',
-          recordId: (inputs as Record<string, unknown>)?.recordId || 'rec_default',
-          modId: Math.floor(Math.random() * 1000),
-          layout: tool.fmLayout || 'Unknown',
-          updatedFields: Object.keys(inputs).filter((k) => k !== 'recordId'),
-          updatedTimestamp: new Date().toISOString(),
-        }
-        break
-
-      case 'delete':
-        mockResponse = {
-          success: true,
-          action: 'delete',
-          recordId: (inputs as Record<string, unknown>)?.recordId || 'rec_default',
-          layout: tool.fmLayout || 'Unknown',
-          deletedTimestamp: new Date().toISOString(),
-        }
-        break
-
-      case 'find':
-        const totalFound = Math.floor(Math.random() * 100) + 1
-        mockResponse = {
-          success: true,
-          action: 'find',
-          layout: tool.fmLayout || 'Unknown',
-          query: inputs,
-          totalRecordCount: totalFound,
-          foundCount: Math.min(totalFound, 20),
-          data: Array.from({ length: Math.min(totalFound, 5) }, (_, i) => ({
-            recordId: `rec_${(Date.now() + i).toString(36)}`,
-            modId: Math.floor(Math.random() * 1000),
-            fieldData: {
-              id: i + 1,
-              name: `Sample Record ${i + 1}`,
-              createdAt: '2024-12-15T10:30:00Z',
-              status: ['Active', 'Pending', 'Completed'][i % 3],
-            },
-          })),
-        }
-        break
-
-      case 'script':
-        mockResponse = {
-          success: true,
-          action: 'script',
-          script: tool.fmScript || 'Unknown',
-          scriptResult: 0,
-          scriptError: null,
-          executionTime: `${(duration / 1000).toFixed(2)}s`,
-          output: {
-            message: `Script "${tool.fmScript}" completed successfully`,
-            recordsAffected: Math.floor(Math.random() * 50),
-          },
-        }
-        break
-
-      default:
-        mockResponse = {
-          success: true,
-          action: 'custom',
-          tool: tool.name,
-          inputs,
-          output: {
-            message: 'Custom tool executed successfully',
-            result: { processed: true, timestamp: new Date().toISOString() },
-          },
-        }
-    }
-
-    // Determine success/failure (90% success)
-    const isSuccess = Math.random() > 0.1
-
-    const executionResult = await db.toolExecution.update({
-      where: { id: execution.id },
+    
+    // Save execution history
+    await db.toolExecution.create({
       data: {
-        responseStatus: isSuccess ? 200 : 500,
-        responseBody: JSON.stringify(isSuccess ? mockResponse : { success: false, error: 'Simulated execution error' }),
+        toolId,
+        requestBody,
+        responseStatus: 200,
+        responseBody: JSON.stringify(result),
         duration,
-        error: isSuccess ? null : 'Simulated execution error: FM Data API returned an error',
-        status: isSuccess ? 'success' : 'error',
-      },
-    })
+        status: 'success'
+      }
+    }).catch(e => console.error('[Execution History] Failed to save', e))
 
     return NextResponse.json({
-      executionId: executionResult.id,
-      requestId: executionResult.requestId,
-      status: executionResult.status,
-      duration: executionResult.duration,
-      responseStatus: executionResult.responseStatus,
-      result: isSuccess ? mockResponse : { success: false, error: 'Simulated execution error' },
+      success: true,
+      status: 200,
+      duration,
+      data: result
     })
-  } catch (error) {
-    console.error('Error executing tool:', error)
-    return NextResponse.json({ error: 'Failed to execute tool' }, { status: 500 })
+
+  } catch (error: any) {
+    const duration = Date.now() - startTime
+    console.error('[Tool Execution Failed]', error)
+    
+    try {
+      const { toolId } = await params
+      await db.toolExecution.create({
+        data: {
+          toolId,
+          requestBody,
+          responseStatus: 500,
+          error: error.message,
+          duration,
+          status: 'error'
+        }
+      })
+    } catch(e) {
+      console.error('[Execution History] Failed to save error', e)
+    }
+
+    return NextResponse.json({ 
+      success: false,
+      status: 500, 
+      duration, 
+      error: error.message || 'Execution failed',
+      code: 'FM_EXECUTION_ERROR'
+    }, { status: 500 })
   }
 }

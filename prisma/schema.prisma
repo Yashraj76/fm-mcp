@@ -7,44 +7,79 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============ FILEMAKER CONNECTIONS ============
+// ============ FILEMAKER SERVER CONNECTIONS (Admin API) ============
+
+model FMServerConnection {
+  id                     String   @id @default(cuid())
+  name                   String
+  host                   String
+  port                   Int      @default(443)
+  adminUsername          String
+  adminPasswordEncrypted String
+  sslVerify              Boolean  @default(true)
+  status                 String   @default("unknown") // online | error | unknown
+  lastTestedAt           DateTime?
+  lastError              String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  connections FMConnection[]
+}
+
+// ============ FILEMAKER CONNECTIONS (File-level) ============
 
 model FMConnection {
-  id          String   @id @default(cuid())
-  name        String
-  host        String
-  port        Int      @default(443)
-  database    String
-  username    String
-  password    String
-  authType    String   @default("basic") // basic, oauth, clamid
-  clientId    String?
+  id           String   @id @default(cuid())
+  name         String
+  host         String
+  port         Int      @default(443)
+  database     String
+  username     String
+  password     String
+  authType     String   @default("basic")
+  clientId     String?
   clientSecret String?
   refreshToken String?
   accessToken  String?
   tokenExpiry  DateTime?
-  sslVerify   Boolean  @default(true)
-  version     String?
-  status      String   @default("disconnected") // connected, disconnected, error
-  lastTested  DateTime?
-  lastError   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  sslVerify    Boolean  @default(true)
+  version      String?
+  status       String   @default("disconnected")
+  lastTested   DateTime?
+  lastError    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  servers FMConnectionServer[]
-  schemaCache FMSchemaCache[]
+  // Optional FK to FM Server (Admin API server)
+  serverConnectionId String?
+  serverConnection   FMServerConnection? @relation(fields: [serverConnectionId], references: [id], onDelete: SetNull)
+
+  servers       FMConnectionServer[]
+  schemaCache   FMSchemaCache[]
+  browsedSchema BrowsedSchema?
+  relationshipGraph RelationshipGraph?
 }
 
-model FMConnectionServer {
-  id           String   @id @default(cuid())
-  connectionId String
-  serverId     String
-  fileNames    String   // JSON array of file names
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
+// ============ BROWSED SCHEMA (per Connection) ============
 
-  connection FMConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  server     McpServer   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+model BrowsedSchema {
+  id           String       @id @default(cuid())
+  connectionId String       @unique
+  connection   FMConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  rawLayouts             String @default("[]")
+  rawScripts             String @default("[]")
+  rawLayoutMeta          String @default("{}")
+  rawODataTables         String @default("[]")
+  rawODataMeta           String @default("{}")
+  suggestedRelationships String @default("[]")
+  selectedLayouts        String @default("[]")
+  selectedTables         String @default("[]")
+  selectedScripts        String @default("[]")
+  compiledSchema         String @default("{}")
+
+  fetchedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ============ SCHEMA CACHE ============
@@ -53,11 +88,11 @@ model FMSchemaCache {
   id           String   @id @default(cuid())
   connectionId String
   databaseName String
-  layouts      String   // JSON array of layout metadata
-  scripts      String   // JSON array of script metadata
-  tables       String   // JSON array of table metadata
-  fields       String   // JSON array of field metadata
-  relationships String // JSON array of relationship metadata
+  layouts      String
+  scripts      String
+  tables       String
+  fields       String
+  relationships String
   cachedAt     DateTime @default(now())
 
   connection FMConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
@@ -70,84 +105,99 @@ model McpServer {
   name        String
   description String?
   version     String   @default("1.0.0")
-  status      String   @default("draft") // draft, staging, deployed
+  status      String   @default("draft")
   serverUrl   String?
   sseToken    String?
   proxyUrl    String?
-  config      String   // JSON - full server configuration
+  config      String
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  connections    FMConnectionServer[]
-  branches       Branch[]
-  deployments    Deployment[]
-  tools          Tool[]
+  connections FMConnectionServer[]
+  branches    Branch[]
+  deployments Deployment[]
+  tools       Tool[]
+  toolGenerationJobs ToolGenerationJob[]
 }
 
-// ============ BRANCHES (Git-like) ============
+// ============ CONNECTION ↔ SERVER JOIN ============
+
+model FMConnectionServer {
+  id           String   @id @default(cuid())
+  connectionId String
+  serverId     String
+  fileNames    String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  connection FMConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  server     McpServer   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+}
+
+// ============ BRANCHES ============
 
 model Branch {
-  id          String   @id @default(cuid())
-  serverId    String
-  name        String
-  parentId    String?
-  parent      Branch?  @relation("BranchTree", fields: [parentId], references: [id])
-  children    Branch[] @relation("BranchTree")
-  status      String   @default("active") // active, merged, archived, deleted
-  isDefault   Boolean  @default(false)
+  id            String   @id @default(cuid())
+  serverId      String
+  name          String
+  parentId      String?
+  parent        Branch?  @relation("BranchTree", fields: [parentId], references: [id])
+  children      Branch[] @relation("BranchTree")
+  status        String   @default("active")
+  isDefault     Boolean  @default(false)
   commitMessage String?
-  commitHash  String?  @unique
-  snapshot    String   // JSON - full branch state snapshot
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  commitHash    String?  @unique
+  snapshot      String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  server     McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  tools      Tool[]
+  server McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  tools  Tool[]
 }
 
 // ============ TOOLS ============
 
 model Tool {
-  id          String   @id @default(cuid())
-  branchId    String
-  serverId    String
-  name        String
-  description String
-  category    String?  // e.g., "CRUD", "Find", "Script", "Custom"
-  inputSchema String   // JSON schema for tool inputs
-  outputSchema String? // JSON schema for tool outputs
-  handlerConfig String // JSON - how the tool maps to FM Data API
-  fmLayout    String?  // FileMaker layout name
-  fmScript    String?  // FileMaker script name
-  fmMethod    String?  // create, read, update, delete, find, script, custom
-  isEnabled   Boolean  @default(true)
-  version     Int      @default(1)
-  isAiGenerated Boolean @default(false)
-  testConfig  String?  // JSON - saved test parameters
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  branchId      String
+  serverId      String
+  name          String
+  description   String
+  category      String?
+  inputSchema   String
+  outputSchema  String?
+  handlerConfig String
+  fmLayout      String?
+  fmScript      String?
+  fmMethod      String?
+  isEnabled     Boolean  @default(true)
+  version       Int      @default(1)
+  isAiGenerated Boolean  @default(false)
+  testConfig    String?
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  branch    Branch    @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  server    McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  branch     Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  server     McpServer     @relation(fields: [serverId], references: [id], onDelete: Cascade)
   executions ToolExecution[]
-  versions  ToolVersion[]
+  versions   ToolVersion[]
 }
 
 // ============ TOOL VERSIONS ============
 
 model ToolVersion {
-  id          String   @id @default(cuid())
-  toolId      String
-  version     Int
-  name        String
-  description String
-  inputSchema String
-  outputSchema String?
+  id            String   @id @default(cuid())
+  toolId        String
+  version       Int
+  name          String
+  description   String
+  inputSchema   String
+  outputSchema  String?
   handlerConfig String
-  snapshot    String   // JSON - full tool state
-  changeLog   String?
-  createdAt   DateTime @default(now())
+  snapshot      String
+  changeLog     String?
+  createdAt     DateTime @default(now())
 
   tool Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
 }
@@ -155,16 +205,16 @@ model ToolVersion {
 // ============ TOOL EXECUTIONS ============
 
 model ToolExecution {
-  id          String   @id @default(cuid())
-  toolId      String
-  requestId   String?
-  requestBody String?  // JSON
+  id             String   @id @default(cuid())
+  toolId         String
+  requestId      String?
+  requestBody    String?
   responseStatus Int?
-  responseBody String? // JSON
-  duration    Int?     // ms
-  error       String?
-  status      String   @default("pending") // pending, success, error, timeout
-  createdAt   DateTime @default(now())
+  responseBody   String?
+  duration       Int?
+  error          String?
+  status         String   @default("pending")
+  createdAt      DateTime @default(now())
 
   tool Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
 }
@@ -172,20 +222,20 @@ model ToolExecution {
 // ============ DEPLOYMENTS ============
 
 model Deployment {
-  id          String   @id @default(cuid())
-  serverId    String
-  branchId    String
-  branchName  String
-  branchSnapshot String // JSON - branch state at deploy time
-  status      String   @default("pending") // pending, deploying, deployed, failed, rolled_back
-  version     String
-  changelog   String?
-  deployedAt  DateTime?
-  rolledBackAt DateTime?
-  rollbackFrom String? // ID of deployment being rolled back to
-  configSnapshot String // JSON - full deployed config
-  toolCount   Int      @default(0)
-  createdAt   DateTime @default(now())
+  id             String    @id @default(cuid())
+  serverId       String
+  branchId       String
+  branchName     String
+  branchSnapshot String
+  status         String    @default("pending")
+  version        String
+  changelog      String?
+  deployedAt     DateTime?
+  rolledBackAt   DateTime?
+  rollbackFrom   String?
+  configSnapshot String
+  toolCount      Int       @default(0)
+  createdAt      DateTime  @default(now())
 
   server McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
 }
@@ -193,14 +243,70 @@ model Deployment {
 // ============ AI SUGGESTIONS ============
 
 model AiSuggestion {
+  id             String   @id @default(cuid())
+  serverId       String
+  branchId       String?
+  schemaContext  String
+  suggestionType String
+  title          String
+  description    String
+  proposedConfig String
+  status         String   @default("pending")
+  createdAt      DateTime @default(now())
+}
+
+// ============ APP SETTINGS (singleton row id="singleton") ============
+
+model AppSettings {
+  id                String   @id @default("singleton")
+  aiProvider        String   @default("anthropic")
+  aiModel           String   @default("claude-sonnet-4-5")
+  aiApiKeyEncrypted String   @default("")
+  aiBaseUrl         String   @default("")
+  aiMaxTokens       Int      @default(4096)
+  aiTemperature     Float    @default(0.7)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// ============ RELATIONSHIP GRAPH ============
+
+model RelationshipGraph {
+  id               String   @id @default(cuid())
+  connectionId     String   @unique
+  connection       FMConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  relationships    String   // JSON array of RelationshipEdge
+  generatedBy      String   @default("ai")  // "ai" | "manual"
+  generatedAt      DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// ============ TOOL GENERATION JOB ============
+
+model ToolGenerationJob {
   id          String   @id @default(cuid())
   serverId    String
-  branchId    String?
-  schemaContext String // JSON - FM schema used for suggestion
-  suggestionType String // tool_suggestion, optimization, error_fix
-  title       String
-  description String
-  proposedConfig String // JSON - proposed tool/branch config
-  status      String   @default("pending") // pending, accepted, rejected, modified
+  server      McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  status      String   @default("pending") // "pending"|"running"|"done"|"failed"
+  progress    Int      @default(0)         // 0-100
+  log         String   @default("[]")      // JSON array of log entries
+  toolsCreated Int     @default(0)
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
   createdAt   DateTime @default(now())
+}
+
+// ============ PLAYGROUND SESSION ============
+
+model PlaygroundSession {
+  id            String   @id @default(cuid())
+  serverId      String?
+  userMessage   String
+  agentPlan     String?  // JSON: steps the agent decided to take
+  stepLog       String   @default("[]") // JSON array of step results
+  finalResult   String?  // JSON
+  status        String   @default("running") // "running"|"done"|"error"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }

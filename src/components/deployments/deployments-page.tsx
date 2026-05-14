@@ -91,7 +91,7 @@ export function DeploymentsPage() {
 
   const { data: servers = [] } = useQuery<ServerItem[]>({
     queryKey: ['servers'],
-    queryFn: () => fetch('/api/servers').then(r => r.json()),
+    queryFn: () => fetch('/api/servers').then(r => r.json()).then(res => res.data ?? []),
   })
 
   const { data: deployments = [], isLoading, isError, error } = useQuery<DeploymentItem[]>({
@@ -106,7 +106,7 @@ export function DeploymentsPage() {
         }
         throw new Error('Failed to load deployments')
       }
-      return res.json()
+      return res.json().then(r => r.data ?? [])
     },
     enabled: !!currentServerId,
     retry: 1,

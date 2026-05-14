@@ -23,7 +23,7 @@ export async function GET(
 
     if (!server) {
       return NextResponse.json(
-        { error: 'Server not found' },
+        { success: false, error: 'Server not found', code: 'NOT_FOUND' },
         { status: 404 }
       )
     }
@@ -97,24 +97,27 @@ export async function GET(
     }
 
     return NextResponse.json({
-      serverId: server.id,
-      serverName: server.name,
-      serverVersion: server.version,
-      sse: sseConfig,
-      proxy: proxyConfig,
-      claudeDesktop: claudeConfig,
-      toolCount: toolDefinitions.length,
-      connectedDatabases: server.connections.map((c) => ({
-        connectionId: c.connectionId,
-        databaseName: c.connection.database,
-        host: c.connection.host,
-        isActive: c.isActive,
-      })),
+      success: true,
+      data: {
+        serverId: server.id,
+        serverName: server.name,
+        serverVersion: server.version,
+        sse: sseConfig,
+        proxy: proxyConfig,
+        claudeDesktop: claudeConfig,
+        toolCount: toolDefinitions.length,
+        connectedDatabases: server.connections.map((c) => ({
+          connectionId: c.connectionId,
+          databaseName: c.connection.database,
+          host: c.connection.host,
+          isActive: c.isActive,
+        })),
+      }
     })
   } catch (error) {
-    console.error('Error generating config:', error)
+    console.error('[API Error]', error)
     return NextResponse.json(
-      { error: 'Failed to generate configuration' },
+      { success: false, error: 'Failed to generate configuration', code: 'SERVER_ERROR' },
       { status: 500 }
     )
   }

@@ -1,94 +1,93 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
+import { db } from '@/lib/db'
+import { encrypt, decrypt } from '@/lib/crypto'
+import { z, ZodError } from 'zod'
 
 const settingsSchema = z.object({
-  general: z.object({
-    theme: z.enum(['dark', 'light', 'system']).optional(),
-    autoSave: z.boolean().optional(),
-    connectionTimeout: z.number().int().min(5).max(120).optional(),
-  }).optional(),
-  filemakerApi: z.object({
-    dataApiVersion: z.enum(['v1', 'v2', 'latest']).optional(),
-    maxRecordsPerRequest: z.number().int().min(1).max(10000).optional(),
-    portalDepthLimit: z.number().int().min(1).max(10).optional(),
-    defaultLayout: z.string().optional(),
-  }).optional(),
-  ai: z.object({
-    provider: z.enum(['openai', 'anthropic', 'google', 'ollama', 'custom']).optional(),
-    apiKey: z.string().optional(),
-    model: z.string().optional(),
-    baseUrl: z.string().optional(),
-    maxTokens: z.number().int().min(1).optional().nullable(),
-    temperature: z.number().min(0).max(2).optional(),
-    maxSuggestions: z.number().int().min(1).max(100).optional(),
-    autoSuggestOnSchemaLoad: z.boolean().optional(),
-    toolGenerationEnabled: z.boolean().optional(),
-    schemaAnalysisEnabled: z.boolean().optional(),
-    rateLimitPerMinute: z.number().int().min(1).max(1000).optional().nullable(),
-    monthlyBudget: z.number().int().min(0).optional().nullable(),
-    enableToolTesting: z.boolean().optional(),
-    verboseLogging: z.boolean().optional(),
-  }).optional(),
-  security: z.object({
-    encryptCredentials: z.boolean().optional(),
-    tokenExpiryMinutes: z.number().int().min(1).max(1440).optional(),
-    auditLogging: z.boolean().optional(),
-    allowedOrigins: z.array(z.string()).optional(),
-  }).optional(),
+  aiProvider: z.enum(['anthropic', 'openai', 'google', 'ollama', 'custom']).optional(),
+  aiModel: z.string().min(1).optional(),
+  aiApiKey: z.string().optional(),      // plain-text input, stored encrypted
+  aiBaseUrl: z.string().optional(),
+  aiMaxTokens: z.number().int().min(1).max(32768).optional(),
+  aiTemperature: z.number().min(0).max(2).optional(),
 })
-
-const defaultSettings = {
-  general: { theme: 'dark', autoSave: true, connectionTimeout: 30 },
-  filemakerApi: { dataApiVersion: 'v2', maxRecordsPerRequest: 100, portalDepthLimit: 5, defaultLayout: '' },
-  ai: {
-    provider: 'openai', apiKey: '', model: '', baseUrl: '', maxTokens: 4096, temperature: 0.7,
-    maxSuggestions: 10, autoSuggestOnSchemaLoad: true, toolGenerationEnabled: true,
-    schemaAnalysisEnabled: true, rateLimitPerMinute: 60, monthlyBudget: null,
-    enableToolTesting: true, verboseLogging: false,
-  },
-  security: { encryptCredentials: true, tokenExpiryMinutes: 15, auditLogging: true, allowedOrigins: [] as string[] },
-}
-
-let settings = { ...defaultSettings }
 
 function maskKey(key: string): string {
   if (!key || key.length <= 8) return key ? '••••' : ''
   return key.slice(0, 4) + '••••' + key.slice(-4)
 }
 
-export async function GET() {
-  const masked = JSON.parse(JSON.stringify(settings))
-  if (masked.ai?.apiKey) {
-    masked.ai.apiKeyMasked = maskKey(masked.ai.apiKey)
-    delete masked.ai.apiKey
-  }
-  return NextResponse.json(masked)
+async function getOrCreateSettings() {
+  return db.appSettings.upsert({
+    where: { id: 'singleton' },
+    create: { id: 'singleton' },
+    update: {},
+  })
 }
 
-export async function PUT(request: NextRequest) {
+export async function GET() {
   try {
-    const body = await request.json()
-    const parsed = settingsSchema.safeParse(body)
-    if (!parsed.success) {
-      return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })
+    const settings = await getOrCreateSettings()
+    const decryptedKey = settings.aiApiKeyEncrypted ? decrypt(settings.aiApiKeyEncrypted) : ''
+    return NextResponse.json({
+      success: true,
+      data: {
+        aiProvider: settings.aiProvider,
+        aiModel: settings.aiModel,
+        aiApiKeyMasked: maskKey(decryptedKey),
+        aiApiKeySet: decryptedKey.length > 0,
+        aiBaseUrl: settings.aiBaseUrl,
+        aiMaxTokens: settings.aiMaxTokens,
+        aiTemperature: settings.aiTemperature,
+        updatedAt: settings.updatedAt,
+      },
+    })
+  } catch (e) {
+    console.error('[settings GET]', e)
+    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  try {
+    const body = await req.json()
+    const parsed = settingsSchema.parse(body)
+
+    const updateData: any = {}
+    if (parsed.aiProvider !== undefined) updateData.aiProvider = parsed.aiProvider
+    if (parsed.aiModel !== undefined) updateData.aiModel = parsed.aiModel
+    if (parsed.aiApiKey !== undefined && parsed.aiApiKey !== '') {
+      updateData.aiApiKeyEncrypted = encrypt(parsed.aiApiKey)
     }
-    settings = {
-      general: { ...settings.general, ...parsed.data.general },
-      filemakerApi: { ...settings.filemakerApi, ...parsed.data.filemakerApi },
-      ai: { ...settings.ai, ...parsed.data.ai },
-      security: { ...settings.security, ...parsed.data.security },
+    if (parsed.aiBaseUrl !== undefined) updateData.aiBaseUrl = parsed.aiBaseUrl
+    if (parsed.aiMaxTokens !== undefined) updateData.aiMaxTokens = parsed.aiMaxTokens
+    if (parsed.aiTemperature !== undefined) updateData.aiTemperature = parsed.aiTemperature
+
+    const settings = await db.appSettings.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', ...updateData },
+      update: updateData,
+    })
+
+    const decryptedKey = settings.aiApiKeyEncrypted ? decrypt(settings.aiApiKeyEncrypted) : ''
+    return NextResponse.json({
+      success: true,
+      data: {
+        aiProvider: settings.aiProvider,
+        aiModel: settings.aiModel,
+        aiApiKeyMasked: maskKey(decryptedKey),
+        aiApiKeySet: decryptedKey.length > 0,
+        aiBaseUrl: settings.aiBaseUrl,
+        aiMaxTokens: settings.aiMaxTokens,
+        aiTemperature: settings.aiTemperature,
+        updatedAt: settings.updatedAt,
+      },
+    })
+  } catch (e) {
+    if (e instanceof ZodError) {
+      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.errors }, { status: 400 })
     }
-    if (parsed.data.ai?.apiKey !== undefined && parsed.data.ai.apiKey !== '') {
-      settings.ai.apiKey = parsed.data.ai.apiKey
-    }
-    const masked = JSON.parse(JSON.stringify(settings))
-    if (masked.ai?.apiKey) {
-      masked.ai.apiKeyMasked = maskKey(masked.ai.apiKey)
-      delete masked.ai.apiKey
-    }
-    return NextResponse.json({ message: 'Settings saved successfully', settings: masked })
-  } catch (error) {
-    console.error('Error saving settings:', error)
-    return NextResponse.json({ error: 'Failed to save settings' }, { status: 500 })
+    console.error('[settings PUT]', e)
+    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import {
@@ -62,49 +62,64 @@ export function ConnectionDialog() {
 
   const isEditing = !!editingConnectionId
 
-  const [draft, setDraft] = useState<ConnectionFormData>(emptyForm)
+  // Single source of truth for the form — always controlled
+  const [form, setForm] = useState<ConnectionFormData>(emptyForm)
+  const [seeded, setSeeded] = useState(false) // tracks if we've applied server data to form
   const [showPassword, setShowPassword] = useState(false)
   const [errors, setErrors] = useState<Partial<Record<keyof ConnectionFormData, string>>>({})
-  const [dirty, setDirty] = useState(false)
 
   // Fetch connection data for editing
   const { data: existingConnection } = useQuery({
     queryKey: ['connection', editingConnectionId],
-    queryFn: () => fetch(`/api/connections/${editingConnectionId}`).then((r) => r.json()),
+    queryFn: () =>
+      fetch(`/api/connections/${editingConnectionId}`)
+        .then((r) => r.json())
+        .then((res) => res.data),
     enabled: isEditing && showConnectionDialog,
   })
 
-  // Compute the effective form data: use draft if dirty, otherwise use server data
-  const form = useMemo<ConnectionFormData>(() => {
-    if (!showConnectionDialog) return emptyForm
-    if (isEditing && existingConnection && !dirty) {
-      return {
-        name: existingConnection.name,
-        host: existingConnection.host,
-        port: existingConnection.port,
-        database: existingConnection.database,
-        username: existingConnection.username,
-        password: existingConnection.password || '',
-        authType: existingConnection.authType,
-        clientId: existingConnection.clientId || '',
-        clientSecret: existingConnection.clientSecret || '',
-        sslVerify: existingConnection.sslVerify,
-      }
+  // Seed form from server data ONCE when it arrives (edit mode only)
+  useEffect(() => {
+    if (isEditing && existingConnection && !seeded) {
+      queueMicrotask(() => {
+        setForm({
+          name: existingConnection.name ?? '',
+          host: existingConnection.host ?? '',
+          port: existingConnection.port ?? 443,
+          database: existingConnection.database ?? '',
+          username: existingConnection.username ?? '',
+          password: existingConnection.password ?? '',
+          authType: existingConnection.authType ?? 'basic',
+          clientId: existingConnection.clientId ?? '',
+          clientSecret: existingConnection.clientSecret ?? '',
+          sslVerify: existingConnection.sslVerify ?? true,
+        })
+        setSeeded(true)
+      })
     }
-    return draft
-  }, [showConnectionDialog, isEditing, existingConnection, dirty, draft])
+  }, [isEditing, existingConnection, seeded])
 
+  // Reset form when dialog opens/closes
+  useEffect(() => {
+    if (!showConnectionDialog) {
+      queueMicrotask(() => {
+        setForm(emptyForm)
+        setSeeded(false)
+        setErrors({})
+        setShowPassword(false)
+      })
+    }
+  }, [showConnectionDialog])
+
+  // Update a single field without touching the rest
   const updateField = useCallback(
     <K extends keyof ConnectionFormData>(key: K, value: ConnectionFormData[K]) => {
-      setDraft((prev) => ({ ...prev, [key]: value }))
-      setDirty(true)
+      setForm((prev) => ({ ...prev, [key]: value }))
       setErrors((prev) => {
-        if (prev[key]) {
-          const next = { ...prev }
-          delete next[key]
-          return next
-        }
-        return prev
+        if (!prev[key]) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
       })
     },
     []
@@ -165,15 +180,25 @@ export function ConnectionDialog() {
 
   const testMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/connections/${id}/test`)
+      const res = await fetch(`/api/connections/${id}/test`, { method: 'POST' })
       return res.json()
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['connections'] })
+      queryClient.invalidateQueries({ queryKey: ['stats'] })
       toast({
         title: data.success ? 'Connection Successful' : 'Connection Failed',
-        description: data.message,
+        description: data.success
+          ? 'Successfully connected to FileMaker Server.'
+          : (data.error || 'Could not connect to FileMaker Server.'),
         variant: data.success ? 'default' : 'destructive',
+      })
+    },
+    onError: () => {
+      toast({
+        title: 'Test Failed',
+        description: 'Unable to reach the test endpoint.',
+        variant: 'destructive',
       })
     },
   })
@@ -185,24 +210,25 @@ export function ConnectionDialog() {
   }
 
   const handleTest = () => {
+    if (!validate()) return
     if (isEditing && editingConnectionId) {
-      if (!validate()) return
       saveMutation.mutate(form, {
-        onSuccess: () => {
-          queryClient.invalidateQueries({ queryKey: ['connections'] })
-          testMutation.mutate(editingConnectionId)
+        onSuccess: (res) => {
+          const id = res?.data?.id || editingConnectionId
+          testMutation.mutate(id)
+        },
+      })
+    } else {
+      saveMutation.mutate(form, {
+        onSuccess: (res) => {
+          const id = res?.data?.id
+          if (id) testMutation.mutate(id)
         },
       })
     }
   }
 
   const handleOpenChange = (open: boolean) => {
-    if (!open) {
-      setDraft(emptyForm)
-      setErrors({})
-      setShowPassword(false)
-      setDirty(false)
-    }
     setShowConnectionDialog(open)
   }
 
@@ -408,27 +434,25 @@ export function ConnectionDialog() {
               type="button"
               variant="outline"
               onClick={() => handleOpenChange(false)}
-              disabled={saveMutation.isPending}
+              disabled={saveMutation.isPending || testMutation.isPending}
             >
               Cancel
             </Button>
-            {isEditing && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleTest}
-                disabled={saveMutation.isPending || testMutation.isPending}
-              >
-                {testMutation.isPending ? (
-                  <Loader2 className="size-4 mr-2 animate-spin" />
-                ) : (
-                  <Zap className="size-4 mr-2" />
-                )}
-                Save & Test
-              </Button>
-            )}
-            <Button type="submit" disabled={saveMutation.isPending}>
-              {saveMutation.isPending && <Loader2 className="size-4 mr-2 animate-spin" />}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleTest}
+              disabled={saveMutation.isPending || testMutation.isPending}
+            >
+              {((saveMutation.isPending && testMutation.isPending) || testMutation.isPending) ? (
+                <Loader2 className="size-4 mr-2 animate-spin" />
+              ) : (
+                <Zap className="size-4 mr-2" />
+              )}
+              {isEditing ? 'Save & Test' : 'Create & Test'}
+            </Button>
+            <Button type="submit" disabled={saveMutation.isPending || testMutation.isPending}>
+              {saveMutation.isPending && !testMutation.isPending && <Loader2 className="size-4 mr-2 animate-spin" />}
               {isEditing ? 'Update Connection' : 'Create Connection'}
             </Button>
           </DialogFooter>

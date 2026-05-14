@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
 import { ToolDialog } from '@/components/tools/tool-dialog'
+import { AiSuggestDialog } from '@/components/tools/ai-suggest-dialog'
 import {
   Card,
   CardContent,
@@ -48,6 +49,8 @@ import {
   Play,
   Copy,
   Trash2,
+  Brain,
+  Loader2,
   History,
   MoreHorizontal,
   Filter,
@@ -85,6 +88,9 @@ export function ToolsPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false)
+
+  const [aiPrefilledData, setAiPrefilledData] = useState<any>(null)
 
   // Fetch tools
   const { data: tools = [], isLoading } = useQuery({
@@ -93,7 +99,7 @@ export function ToolsPage() {
       if (!currentServerId) return []
       const res = await fetch(`/api/servers/${currentServerId}/tools`)
       if (!res.ok) throw new Error('Failed to fetch tools')
-      return res.json()
+      return res.json().then((r: { data?: unknown[] }) => r.data ?? [])
     },
     enabled: !!currentServerId,
   })
@@ -160,6 +166,33 @@ export function ToolsPage() {
     },
   })
 
+  // Generate All Tools Mutation
+  const generateAllMutation = useMutation({
+    mutationFn: async () => {
+      setIsGeneratingAll(true)
+      const res = await fetch(`/api/servers/${currentServerId}/ai/generate-server-tools`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branchId: currentBranchId })
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to generate tools')
+      }
+      return data
+    },
+    onSuccess: (data) => {
+      setIsGeneratingAll(false)
+      toast.success(`Generated ${data.count} tools successfully!`)
+      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId] })
+      triggerRefreshTools()
+    },
+    onError: (err: any) => {
+      setIsGeneratingAll(false)
+      toast.error(err.message || 'Failed to generate tools')
+    }
+  })
+
   // Filter tools
   const filteredTools = useMemo(() => {
     return tools.filter((tool: Record<string, unknown>) => {
@@ -214,6 +247,17 @@ export function ToolsPage() {
           >
             <Plus className="size-3.5" />
             New Tool
+          </Button>
+          <Button
+            id="auto-generate-btn"
+            variant="secondary"
+            size="sm"
+            onClick={() => generateAllMutation.mutate()}
+            disabled={isGeneratingAll}
+            className="gap-1.5 bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20"
+          >
+            {isGeneratingAll ? <Loader2 className="size-3.5 animate-spin" /> : <Brain className="size-3.5" />}
+            <span className="hidden sm:inline">{isGeneratingAll ? 'Generating...' : 'Auto-Generate'}</span>
           </Button>
         </div>
       </div>
@@ -327,7 +371,11 @@ export function ToolsPage() {
         </div>
       )}
 
-      <ToolDialog />
+      <ToolDialog prefilledData={aiPrefilledData} />
+      <AiSuggestDialog onSuggestionSuccess={(data) => {
+        setAiPrefilledData(data)
+        setShowToolDialog(true)
+      }} />
     </div>
   )
 }
@@ -353,170 +401,39 @@ function ToolCard({
   const categoryColor = CATEGORY_COLORS[category] || CATEGORY_COLORS.Custom
 
   return (
-    <Card
-      className={cn(
-        'group hover:border-primary/40 transition-all duration-200',
-        !(tool.isEnabled as boolean) && 'opacity-60'
-      )}
-    >
-      <CardContent className="p-4 space-y-3">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-start gap-2 min-w-0">
-            <div className={cn('flex-shrink-0 size-8 rounded-lg flex items-center justify-center mt-0.5', categoryColor)}>
-              <CategoryIcon className="size-4" />
+    <AlertDialog>
+      <Card
+        className={cn(
+          'group hover:border-primary/40 transition-all duration-200',
+          !(tool.isEnabled as boolean) && 'opacity-60'
+        )}
+      >
+        <CardContent className="p-4 space-y-3">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-2 min-w-0">
+              <div className={cn('flex-shrink-0 size-8 rounded-lg flex items-center justify-center mt-0.5', categoryColor)}>
+                <CategoryIcon className="size-4" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold truncate flex items-center gap-1.5">
+                  {tool.name as string}
+                  {(tool.isAiGenerated as boolean) && (
+                    <Zap className="size-3 text-violet-400 flex-shrink-0" />
+                  )}
+                </h3>
+                <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                  {tool.description as string}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold truncate flex items-center gap-1.5">
-                {tool.name as string}
-                {(tool.isAiGenerated as boolean) && (
-                  <Zap className="size-3 text-violet-400 flex-shrink-0" />
-                )}
-              </h3>
-              <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
-                {tool.description as string}
-              </p>
-            </div>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-              >
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onClick={onEdit} className="gap-2">
-                <Wrench className="size-3.5" />
-                Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onTest} className="gap-2">
-                <Play className="size-3.5" />
-                Test in Playground
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onDuplicate} className="gap-2">
-                <Copy className="size-3.5" />
-                Duplicate
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <AlertDialogTrigger asChild>
-                <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="gap-2 text-destructive focus:text-destructive">
-                  <Trash2 className="size-3.5" />
-                  Delete
-                </DropdownMenuItem>
-              </AlertDialogTrigger>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-
-        {/* Tags */}
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline" className={cn('text-[10px]', categoryColor)}>
-            {category}
-          </Badge>
-          {(tool.fmLayout as string) && (
-            <Badge variant="secondary" className="text-[10px] gap-0.5">
-              <Database className="size-2.5" />
-              {tool.fmLayout as string}
-            </Badge>
-          )}
-          {(tool.fmScript as string) && (
-            <Badge variant="secondary" className="text-[10px] gap-0.5">
-              <FileCode className="size-2.5" />
-              {tool.fmScript as string}
-            </Badge>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline" className="text-[10px] font-mono">
-              v{tool.version as number}
-            </Badge>
-          </div>
-          <Switch
-            checked={tool.isEnabled as boolean}
-            onCheckedChange={onToggle}
-            className="scale-75"
-          />
-        </div>
-      </CardContent>
-
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete Tool</AlertDialogTitle>
-          <AlertDialogDescription>
-            Are you sure you want to delete &quot;{tool.name as string}&quot;? This action cannot be undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </Card>
-  )
-}
-
-// ===== Tool List Item =====
-function ToolListItem({
-  tool,
-  onEdit,
-  onTest,
-  onDuplicate,
-  onDelete,
-  onToggle,
-}: {
-  tool: Record<string, unknown>
-  onEdit: () => void
-  onTest: () => void
-  onDuplicate: () => void
-  onDelete: () => void
-  onToggle: () => void
-}) {
-  const category = (tool.category as string) || 'Custom'
-  const categoryColor = CATEGORY_COLORS[category] || CATEGORY_COLORS.Custom
-
-  return (
-    <Card className={cn('hover:border-primary/40 transition-colors', !(tool.isEnabled as boolean) && 'opacity-60')}>
-      <CardContent className="p-3">
-        <div className="flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-semibold truncate">
-                {tool.name as string}
-                {(tool.isAiGenerated as boolean) && (
-                  <Zap className="size-3 text-violet-400 inline ml-1" />
-                )}
-              </h3>
-              <Badge variant="outline" className={cn('text-[10px]', categoryColor)}>
-                {category}
-              </Badge>
-            </div>
-            <p className="text-xs text-muted-foreground truncate mt-0.5">
-              {tool.description as string}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {(tool.fmLayout as string) && (
-              <Badge variant="secondary" className="text-[10px] gap-0.5 hidden sm:inline-flex">
-                <Database className="size-2.5" />
-                {tool.fmLayout as string}
-              </Badge>
-            )}
-            <Badge variant="outline" className="text-[10px] font-mono">
-              v{tool.version as number}
-            </Badge>
-            <Switch checked={tool.isEnabled as boolean} onCheckedChange={onToggle} className="scale-75" />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                >
                   <MoreHorizontal className="size-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -543,8 +460,143 @@ function ToolListItem({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </div>
-      </CardContent>
+
+          {/* Tags */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className={cn('text-[10px]', categoryColor)}>
+              {category}
+            </Badge>
+            {(tool.fmLayout as string) && (
+              <Badge variant="secondary" className="text-[10px] gap-0.5">
+                <Database className="size-2.5" />
+                {tool.fmLayout as string}
+              </Badge>
+            )}
+            {(tool.fmScript as string) && (
+              <Badge variant="secondary" className="text-[10px] gap-0.5">
+                <FileCode className="size-2.5" />
+                {tool.fmScript as string}
+              </Badge>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-1">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline" className="text-[10px] font-mono">
+                v{tool.version as number}
+              </Badge>
+            </div>
+            <Switch
+              checked={tool.isEnabled as boolean}
+              onCheckedChange={onToggle}
+              className="scale-75"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete Tool</AlertDialogTitle>
+          <AlertDialogDescription>
+            Are you sure you want to delete &quot;{tool.name as string}&quot;? This action cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+// ===== Tool List Item =====
+function ToolListItem({
+  tool,
+  onEdit,
+  onTest,
+  onDuplicate,
+  onDelete,
+  onToggle,
+}: {
+  tool: Record<string, unknown>
+  onEdit: () => void
+  onTest: () => void
+  onDuplicate: () => void
+  onDelete: () => void
+  onToggle: () => void
+}) {
+  const category = (tool.category as string) || 'Custom'
+  const categoryColor = CATEGORY_COLORS[category] || CATEGORY_COLORS.Custom
+
+  return (
+    <AlertDialog>
+      <Card className={cn('hover:border-primary/40 transition-colors', !(tool.isEnabled as boolean) && 'opacity-60')}>
+        <CardContent className="p-3">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold truncate">
+                  {tool.name as string}
+                  {(tool.isAiGenerated as boolean) && (
+                    <Zap className="size-3 text-violet-400 inline ml-1" />
+                  )}
+                </h3>
+                <Badge variant="outline" className={cn('text-[10px]', categoryColor)}>
+                  {category}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                {tool.description as string}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {(tool.fmLayout as string) && (
+                <Badge variant="secondary" className="text-[10px] gap-0.5 hidden sm:inline-flex">
+                  <Database className="size-2.5" />
+                  {tool.fmLayout as string}
+                </Badge>
+              )}
+              <Badge variant="outline" className="text-[10px] font-mono">
+                v{tool.version as number}
+              </Badge>
+              <Switch checked={tool.isEnabled as boolean} onCheckedChange={onToggle} className="scale-75" />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                    <MoreHorizontal className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={onEdit} className="gap-2">
+                    <Wrench className="size-3.5" />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onTest} className="gap-2">
+                    <Play className="size-3.5" />
+                    Test in Playground
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={onDuplicate} className="gap-2">
+                    <Copy className="size-3.5" />
+                    Duplicate
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <AlertDialogTrigger asChild>
+                    <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="gap-2 text-destructive focus:text-destructive">
+                      <Trash2 className="size-3.5" />
+                      Delete
+                    </DropdownMenuItem>
+                  </AlertDialogTrigger>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <AlertDialogContent>
         <AlertDialogHeader>
@@ -560,7 +612,7 @@ function ToolListItem({
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
-    </Card>
+    </AlertDialog>
   )
 }
 
@@ -587,15 +639,24 @@ function EmptyState({
           <p className="text-sm text-muted-foreground mt-1">
             {hasTools
               ? 'Try adjusting your search or filter criteria to find what you are looking for.'
-              : 'Tools are the building blocks of your MCP server. Create your first tool to get started, or let AI suggest tools based on your FileMaker schema.'}
+              : 'Create your first tool manually, use AI to suggest one, or auto-generate a full suite of tools based on the schema.'}
           </p>
         </div>
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
           {!hasTools && (
-            <Button variant="outline" onClick={onAiSuggest} className="gap-1.5">
-              <Sparkles className="size-3.5" />
-              AI Suggest Tools
-            </Button>
+            <>
+              <Button variant="outline" onClick={onAiSuggest} className="gap-1.5">
+                <Sparkles className="size-3.5" />
+                Single Tool
+              </Button>
+              <Button variant="secondary" onClick={() => {
+                const btn = document.getElementById('auto-generate-btn');
+                if (btn) btn.click();
+              }} className="gap-1.5 bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20">
+                <Brain className="size-3.5" />
+                Auto-Generate Suite
+              </Button>
+            </>
           )}
           <Button onClick={onCreateNew} className="gap-1.5">
             <Plus className="size-3.5" />

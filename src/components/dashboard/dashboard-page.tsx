@@ -85,12 +85,12 @@ export function DashboardPage() {
 
   const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
     queryKey: ['stats'],
-    queryFn: () => fetch('/api/stats').then((r) => r.json()),
+    queryFn: () => fetch('/api/stats').then((r) => r.json()).then(res => res.data),
   })
 
   const { data: connections } = useQuery<ConnectionSummary[]>({
     queryKey: ['connections-summary'],
-    queryFn: () => fetch('/api/connections').then((r) => r.json()),
+    queryFn: () => fetch('/api/connections').then((r) => r.json()).then(res => res.data),
   })
 
   const statCards = [
@@ -240,7 +240,7 @@ export function DashboardPage() {
                       <p className="text-sm leading-tight">{activity.message}</p>
                       <div className="flex items-center gap-1 mt-1">
                         <Clock className="size-3 text-muted-foreground" />
-                        <span className="text-xs text-muted-foreground">
+                        <span className="text-xs text-muted-foreground" suppressHydrationWarning>
                           {formatDistanceToNow(new Date(activity.timestamp), {
                             addSuffix: true,
                           })}
@@ -310,7 +310,7 @@ export function DashboardPage() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       {conn.lastTested && (
-                        <span className="text-xs text-muted-foreground hidden sm:inline">
+                        <span className="text-xs text-muted-foreground hidden sm:inline" suppressHydrationWarning>
                           {formatDistanceToNow(new Date(conn.lastTested), {
                             addSuffix: true,
                           })}

@@ -56,7 +56,7 @@ export function AiSuggestionCard({
   const categoryColor = CATEGORY_COLORS[suggestion.category] || CATEGORY_COLORS.Custom
 
   // Extract tool configs for preview
-  const proposedTools = (suggestion.proposedConfig.tools as Array<Record<string, unknown>>) || []
+  const proposedTools = (suggestion.proposedConfig.tools as Array<Record<string, any>>) || []
   const isMultiTool = proposedTools.length > 1
   const isOptimization = suggestion.type === 'optimization'
 
@@ -119,7 +119,7 @@ export function AiSuggestionCard({
         {/* Tool preview chips */}
         {isMultiTool && (
           <div className="flex flex-wrap gap-1.5">
-            {proposedTools.slice(0, 5).map((tool, i) => (
+            {proposedTools.slice(0, 5).map((tool: any, i) => (
               <Badge key={i} variant="secondary" className="text-[10px] font-mono">
                 {(tool.name as string) || `Tool ${i + 1}`}
               </Badge>

@@ -33,7 +33,7 @@ export function BranchDialog() {
 
   const { data: branches = [] } = useQuery<BranchOption[]>({
     queryKey: ['branches-options', currentServerId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/branches`).then(r => r.json()),
+    queryFn: () => fetch(`/api/servers/${currentServerId}/branches`).then(r => r.json()).then(res => res.data ?? []),
     enabled: showBranchDialog && !!currentServerId,
   })
 

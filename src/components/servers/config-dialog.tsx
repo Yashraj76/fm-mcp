@@ -72,7 +72,7 @@ export function ConfigDialog() {
 
   const { data: config, isLoading, isError } = useQuery<ConfigData>({
     queryKey: ['config', currentServerId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/config`).then(r => r.json()),
+    queryFn: () => fetch(`/api/servers/${currentServerId}/config`).then(r => r.json()).then(res => res.data),
     enabled: showConfigDialog && !!currentServerId,
   })
 

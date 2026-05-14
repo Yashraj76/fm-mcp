@@ -42,13 +42,13 @@ export async function GET(
     })
 
     if (!tool) {
-      return NextResponse.json({ error: 'Tool not found' }, { status: 404 })
+      return NextResponse.json({ success: false, error: 'Tool not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
-    return NextResponse.json(tool)
+    return NextResponse.json({ success: true, data: tool })
   } catch (error) {
-    console.error('Error fetching tool:', error)
-    return NextResponse.json({ error: 'Failed to fetch tool' }, { status: 500 })
+    console.error('[API Error]', error)
+    return NextResponse.json({ success: false, error: 'Failed to fetch tool', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }
 
@@ -95,10 +95,10 @@ export async function PUT(
       data: updateData,
     })
 
-    return NextResponse.json(updatedTool)
+    return NextResponse.json({ success: true, data: updatedTool })
   } catch (error) {
-    console.error('Error updating tool:', error)
-    return NextResponse.json({ error: 'Failed to update tool' }, { status: 500 })
+    console.error('[API Error]', error)
+    return NextResponse.json({ success: false, error: 'Failed to update tool', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }
 
@@ -115,10 +115,9 @@ export async function DELETE(
     }
 
     await db.tool.delete({ where: { id: toolId } })
-
-    return NextResponse.json({ message: 'Tool deleted successfully' })
+    return NextResponse.json({ success: true, data: null })
   } catch (error) {
-    console.error('Error deleting tool:', error)
-    return NextResponse.json({ error: 'Failed to delete tool' }, { status: 500 })
+    console.error('[API Error]', error)
+    return NextResponse.json({ success: false, error: 'Failed to delete tool', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }

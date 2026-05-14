@@ -278,7 +278,7 @@ export function SettingsPage() {
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">Temperature</Label>
-                <div className="flex items-center gap-2"><Slider value={[edited.ai.temperature]} onValueChange={v => update('ai', 'temperature', v[0])} min={0} max={2} step={0.1} className="flex-1" /><span className="text-xs font-mono text-muted-foreground w-8 text-right">{edited.ai.temperature.toFixed(1)}</span></div>
+                <div className="flex items-center gap-2"><Slider value={[edited.ai.temperature ?? 0.7]} onValueChange={v => update('ai', 'temperature', v[0])} min={0} max={2} step={0.1} className="flex-1" /><span className="text-xs font-mono text-muted-foreground w-8 text-right">{(edited.ai.temperature ?? 0.7).toFixed(1)}</span></div>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">Max Suggestions</Label>
@@ -320,7 +320,7 @@ export function SettingsPage() {
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-sm">Monthly Budget (tokens)</Label>
-                    {edited.ai.monthlyBudget === null ? <Badge variant="outline" className="text-xs text-green-500 border-green-500/30">No limit</Badge> : <span className="text-xs font-mono text-muted-foreground">{(edited.ai.monthlyBudget / 1000).toFixed(0)}K</span>}
+                    {(edited.ai.monthlyBudget === null || edited.ai.monthlyBudget === undefined) ? <Badge variant="outline" className="text-xs text-green-500 border-green-500/30">No limit</Badge> : <span className="text-xs font-mono text-muted-foreground">{(edited.ai.monthlyBudget / 1000).toFixed(0)}K</span>}
                   </div>
                   <Slider value={[edited.ai.monthlyBudget ?? 0]} onValueChange={v => update('ai', 'monthlyBudget', v[0] === 0 ? null : v[0])} min={0} max={10000000} step={100000} />
                   <p className="text-xs text-muted-foreground">Set to 0 for no budget limit</p>

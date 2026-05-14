@@ -27,6 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { SchemaBuilder, type JsonSchema } from '@/components/tools/schema-builder'
+import { MultiTableBuilder, type ToolStep } from '@/components/tools/multi-table-builder'
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import {
@@ -42,9 +43,10 @@ import {
   XCircle,
   Copy,
   RotateCcw,
+  GitFork,
 } from 'lucide-react'
 
-const CATEGORIES = ['CRUD', 'Find', 'Script', 'Custom'] as const
+const CATEGORIES = ['CRUD', 'Find', 'Script', 'Custom', 'Multi-Table'] as const
 const FM_METHODS = [
   { value: 'create', label: 'Create Record' },
   { value: 'read', label: 'Read Record' },
@@ -98,6 +100,7 @@ function getDefaultFormData(): ToolFormData {
       script: null,
       recordIdField: 'recordId',
       requestParams: [],
+      steps: [],
     },
   }
 }
@@ -125,6 +128,8 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     data: unknown
   } | null>(null)
   const [testBody, setTestBody] = useState('{}')
+  const [handlerConfigStr, setHandlerConfigStr] = useState('{}')
+  const [multiTableSteps, setMultiTableSteps] = useState<ToolStep[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
   const testPanelRef = useRef<HTMLDivElement>(null)
 
@@ -137,7 +142,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     queryFn: async () => {
       const res = await fetch(`/api/servers/${currentServerId}/tools/${editingToolId}`)
       if (!res.ok) throw new Error('Failed to fetch tool')
-      return res.json()
+      return res.json().then((r: { data?: unknown }) => r.data)
     },
     enabled: isEditing && !!currentServerId && !!editingToolId,
   })
@@ -158,44 +163,67 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
           ? JSON.parse(existingTool.handlerConfig)
           : existingTool.handlerConfig
 
-        setFormData({
-          name: existingTool.name || '',
-          description: existingTool.description || '',
-          category: existingTool.category || 'Custom',
-          fmMethod: existingTool.fmMethod || 'custom',
-          fmLayout: existingTool.fmLayout || '',
-          fmScript: existingTool.fmScript || '',
-          recordIdField: (handlerConfig as Record<string, unknown>)?.recordIdField as string || 'recordId',
-          isEnabled: existingTool.isEnabled ?? true,
-          inputSchema: inputSchema || { type: 'object', properties: {} },
-          outputSchema: outputSchema || { type: 'object', properties: {} },
-          handlerConfig: handlerConfig || {},
+        queueMicrotask(() => {
+          setFormData({
+            name: existingTool.name || '',
+            description: existingTool.description || '',
+            category: existingTool.category || 'Custom',
+            fmMethod: existingTool.fmMethod || 'custom',
+            fmLayout: existingTool.fmLayout || '',
+            fmScript: existingTool.fmScript || '',
+            recordIdField: (handlerConfig as Record<string, unknown>)?.recordIdField as string || 'recordId',
+            isEnabled: existingTool.isEnabled ?? true,
+            inputSchema: inputSchema || { type: 'object', properties: {} },
+            outputSchema: outputSchema || { type: 'object', properties: {} },
+            handlerConfig: handlerConfig || {},
+            // If this is a multi-table tool, override category
+            category: Array.isArray(handlerConfig?.steps) && handlerConfig.steps.length > 0
+              ? 'Multi-Table'
+              : existingTool.category || 'Custom',
+          })
+          setHandlerConfigStr(JSON.stringify(handlerConfig || {}, null, 2))
+          // Restore multi-table steps into the visual builder
+          if (Array.isArray(handlerConfig?.steps) && handlerConfig.steps.length > 0) {
+            setMultiTableSteps(handlerConfig.steps)
+          }
         })
       } catch {
         toast.error('Failed to parse existing tool data')
       }
     } else if (prefilledData) {
-      setFormData((prev) => ({
-        ...prev,
-        ...prefilledData,
-        inputSchema: prefilledData.inputSchema || prev.inputSchema,
-        outputSchema: prefilledData.outputSchema || prev.outputSchema,
-        handlerConfig: prefilledData.handlerConfig || prev.handlerConfig,
-      }))
+      queueMicrotask(() => {
+        setFormData((prev) => ({
+          ...prev,
+          ...prefilledData,
+          inputSchema: prefilledData.inputSchema || prev.inputSchema,
+          outputSchema: prefilledData.outputSchema || prev.outputSchema,
+          handlerConfig: prefilledData.handlerConfig || prev.handlerConfig,
+        }))
+        if (prefilledData.handlerConfig) {
+          setHandlerConfigStr(JSON.stringify(prefilledData.handlerConfig, null, 2))
+          // Restore multi-table steps if present
+          const hc = prefilledData.handlerConfig as any
+          if (Array.isArray(hc?.steps)) setMultiTableSteps(hc.steps)
+        }
+      })
     }
   }, [existingTool, isEditing, prefilledData])
 
   // Reset form on dialog close
   useEffect(() => {
     if (!isOpen) {
-      setFormData(getDefaultFormData())
-      setActiveTab('basic')
-      setTestResult(null)
-      setTestBody('{}')
+      queueMicrotask(() => {
+        setFormData(getDefaultFormData())
+        setActiveTab('basic')
+        setTestResult(null)
+        setTestBody('{}')
+        setHandlerConfigStr('{}')
+        setMultiTableSteps([])
+      })
     }
   }, [isOpen])
 
-  // Sync fmMethod to category
+  // Sync fmMethod to category — skip if multi-table steps are active
   useEffect(() => {
     const methodToCategory: Record<string, string> = {
       create: 'CRUD',
@@ -205,18 +233,29 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       find: 'Find',
       script: 'Script',
     }
+    // Don't override category when multi-table mode is active
+    if (multiTableSteps.length > 0 || formData.category === 'Multi-Table') return
     if (methodToCategory[formData.fmMethod]) {
-      setFormData((prev) => ({
-        ...prev,
-        category: methodToCategory[prev.fmMethod],
-        handlerConfig: {
-          ...prev.handlerConfig,
-          method: prev.fmMethod,
-          layout: prev.fmLayout || prev.handlerConfig.layout,
-          script: prev.fmScript || prev.handlerConfig.script,
-          recordIdField: prev.recordIdField,
-        },
-      }))
+      queueMicrotask(() => {
+        setFormData((prev) => ({
+          ...prev,
+          category: methodToCategory[prev.fmMethod],
+          handlerConfig: {
+            ...prev.handlerConfig,
+            method: prev.fmMethod,
+            layout: prev.fmLayout || prev.handlerConfig.layout,
+            script: prev.fmScript || prev.handlerConfig.script,
+            recordIdField: prev.recordIdField,
+          },
+        }))
+        setHandlerConfigStr(JSON.stringify({
+          ...formData.handlerConfig,
+          method: formData.fmMethod,
+          layout: formData.fmLayout || formData.handlerConfig.layout,
+          script: formData.fmScript || formData.handlerConfig.script,
+          recordIdField: formData.recordIdField,
+        }, null, 2))
+      })
     }
   }, [formData.fmMethod, formData.fmLayout, formData.fmScript, formData.recordIdField])
 
@@ -227,11 +266,31 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
   // Create/Update mutation
   const saveMutation = useMutation({
     mutationFn: async (data: ToolFormData) => {
+      let finalConfig = data.handlerConfig;
+      // If multi-table steps exist, merge them into handlerConfig
+      if (multiTableSteps.length > 0) {
+        finalConfig = { ...finalConfig, steps: multiTableSteps, method: 'sequential-multi-table' }
+      }
+      try {
+        // Allow manual JSON override via the advanced editor
+        const editorParsed = JSON.parse(handlerConfigStr)
+        if (editorParsed?.steps?.length > 0) {
+          // Ensure method is always sequential-multi-table when steps exist
+          finalConfig = { ...editorParsed, method: 'sequential-multi-table' }
+        } else if (multiTableSteps.length > 0) {
+          finalConfig = { ...editorParsed, steps: multiTableSteps, method: 'sequential-multi-table' }
+        } else {
+          finalConfig = editorParsed
+        }
+      } catch (e) {
+        console.warn('Using fallback handlerConfig, invalid JSON in advanced editor')
+      }
+
       const payload = {
         ...data,
         inputSchema: JSON.stringify(data.inputSchema),
         outputSchema: JSON.stringify(data.outputSchema),
-        handlerConfig: JSON.stringify(data.handlerConfig),
+        handlerConfig: JSON.stringify(finalConfig),
         branchId: currentBranchId,
       }
 
@@ -344,7 +403,9 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
         else if (prop.type === 'object') sampleBody[key] = {}
       }
       if (Object.keys(sampleBody).length > 0) {
-        setTestBody(JSON.stringify(sampleBody, null, 2))
+        queueMicrotask(() => {
+          setTestBody(JSON.stringify(sampleBody, null, 2))
+        })
       }
     }
   }, [activeTab, formData.inputSchema.properties])
@@ -379,7 +440,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
           <>
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
               <div className="px-6 pt-2">
-                <TabsList className="w-full grid grid-cols-5">
+              <TabsList className="w-full grid grid-cols-6">
                   <TabsTrigger value="basic" className="text-xs gap-1">
                     <Wrench className="size-3" />
                     <span className="hidden sm:inline">Basic</span>
@@ -387,6 +448,10 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                   <TabsTrigger value="fm-mapping" className="text-xs gap-1">
                     <Database className="size-3" />
                     <span className="hidden sm:inline">FileMaker</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="multi-table" className="text-xs gap-1">
+                    <GitFork className="size-3" />
+                    <span className="hidden sm:inline">Multi-Table</span>
                   </TabsTrigger>
                   <TabsTrigger value="input-schema" className="text-xs gap-1">
                     <FileJson className="size-3" />
@@ -543,17 +608,50 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                     </div>
                   )}
 
-                  <div className="bg-muted/20 rounded-lg p-4 border">
-                    <h4 className="text-sm font-medium mb-2">Request Parameter Mapping</h4>
+                  <div className="bg-muted/20 rounded-lg p-4 border mt-4">
+                    <h4 className="text-sm font-medium mb-2">Advanced Handler JSON <span className="text-xs text-muted-foreground font-normal">(optional override)</span></h4>
                     <p className="text-xs text-muted-foreground mb-3">
-                      Configure how tool input parameters map to FileMaker field requests.
+                      Manually edit the full handler config. For multi-table tools, use the Multi-Table tab instead.
                     </p>
-                    <div className="bg-muted/30 rounded-lg p-3 font-mono text-[11px] overflow-auto max-h-32 custom-scrollbar border">
-                      <pre className="text-muted-foreground">
-                        {JSON.stringify(formData.handlerConfig, null, 2)}
-                      </pre>
-                    </div>
+                    <Textarea
+                      className="font-mono text-xs min-h-[140px] custom-scrollbar"
+                      value={handlerConfigStr}
+                      onChange={(e) => setHandlerConfigStr(e.target.value)}
+                      onBlur={() => {
+                        try {
+                          const val = JSON.parse(handlerConfigStr)
+                          updateField('handlerConfig', val)
+                        } catch (e) {
+                          toast.error('Invalid JSON in Handler Config')
+                        }
+                      }}
+                    />
                   </div>
+                </TabsContent>
+
+                {/* ===== MULTI-TABLE TAB ===== */}
+                <TabsContent value="multi-table" className="mt-0 space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold">Multi-Table Steps</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Build sequential FM Data API steps or OData calls that chain together across multiple layouts or tables.
+                      Use this for cross-table lookups, OData $expand, and atomic $batch writes.
+                    </p>
+                  </div>
+                  <MultiTableBuilder
+                    steps={multiTableSteps}
+                    connectionId={formData.handlerConfig?.connectionId as string || ''}
+                    onChange={(steps) => {
+                      setMultiTableSteps(steps)
+                      // Keep category in sync
+                      if (steps.length > 1) updateField('category', 'Multi-Table')
+                    }}
+                  />
+                  {multiTableSteps.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground border border-dashed rounded px-2 py-1.5">
+                      ✓ {multiTableSteps.length} step{multiTableSteps.length > 1 ? 's' : ''} configured. These will be saved to <code className="font-mono bg-muted px-1 rounded">handlerConfig.steps</code>.
+                    </p>
+                  )}
                 </TabsContent>
 
                 {/* ===== INPUT SCHEMA TAB ===== */}

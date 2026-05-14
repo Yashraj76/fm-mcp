@@ -41,12 +41,12 @@ export function ServerDialog() {
 
   const { data: connections = [], isLoading: loadingConnections } = useQuery<ConnectionItem[]>({
     queryKey: ['connections'],
-    queryFn: () => fetch('/api/connections').then(r => r.json()),
+    queryFn: () => fetch('/api/connections').then(r => r.json()).then(res => res.data ?? []),
   })
 
   const { data: existingServer } = useQuery({
     queryKey: ['server', editingServerId],
-    queryFn: () => fetch(`/api/servers/${editingServerId}`).then(r => r.json()),
+    queryFn: () => fetch(`/api/servers/${editingServerId}`).then(r => r.json()).then(res => res.data),
     enabled: isEditing,
   })
 

@@ -61,8 +61,22 @@ interface ExecutionHistoryItem {
   createdAt: string
 }
 
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ServerPlayground } from './server-playground'
+
+
 export function ToolPlayground() {
-  const { currentServerId } = useAppStore()
+  const { currentServerId, setCurrentServer } = useAppStore()
+
+  // Fetch all servers for the dropdown
+  const { data: servers = [], isLoading: isLoadingServers } = useQuery({
+    queryKey: ['servers'],
+    queryFn: async () => {
+      const res = await fetch('/api/servers')
+      if (!res.ok) throw new Error('Failed to fetch servers')
+      return res.json().then((r: { data?: Array<{ id: string; name: string }> }) => r.data ?? [])
+    },
+  })
 
   // Fetch tools for selector
   const { data: tools = [], isLoading: isLoadingTools } = useQuery({
@@ -71,14 +85,50 @@ export function ToolPlayground() {
       if (!currentServerId) return []
       const res = await fetch(`/api/servers/${currentServerId}/tools`)
       if (!res.ok) throw new Error('Failed to fetch tools')
-      return res.json()
+      return res.json().then((r: { data?: unknown[] }) => r.data ?? [])
     },
     enabled: !!currentServerId,
   })
 
   return (
-    <div className="flex flex-col h-full">
-      <ToolPlaygroundContent tools={tools} isLoadingTools={isLoadingTools} />
+    <div className="flex flex-col h-full gap-3">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-shrink-0">
+        <h1 className="text-2xl font-bold flex items-center gap-2">
+          <Terminal className="size-6" />
+          Tool Playground
+        </h1>
+        
+        <div className="w-[250px]">
+          <Select 
+            value={currentServerId || undefined} 
+            onValueChange={setCurrentServer}
+            disabled={isLoadingServers}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select a server to test..." />
+            </SelectTrigger>
+            <SelectContent>
+              {servers.map(s => (
+                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <Tabs defaultValue="manual" className="flex-1 flex flex-col min-h-0">
+        <TabsList className="w-fit mb-2">
+          <TabsTrigger value="manual">Manual Tester</TabsTrigger>
+          <TabsTrigger value="agent">Server AI Agent</TabsTrigger>
+        </TabsList>
+        <TabsContent value="manual" className="flex-1 min-h-0 m-0 data-[state=inactive]:hidden flex flex-col">
+          <ToolPlaygroundContent tools={tools} isLoadingTools={isLoadingTools} />
+        </TabsContent>
+        <TabsContent value="agent" className="flex-1 min-h-0 m-0 data-[state=inactive]:hidden flex flex-col">
+          <ServerPlayground />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }
@@ -103,16 +153,18 @@ function ToolPlaygroundContent({
   // Auto-generate request body from input schema when tool changes
   useEffect(() => {
     if (!selectedTool) {
-      setRequestBody('{\n  \n}')
+      queueMicrotask(() => {
+        setRequestBody('{\n  \n}')
+        setResponse(null)
+      })
       return
     }
-
     try {
       const inputSchema =
         typeof selectedTool.inputSchema === 'string'
           ? JSON.parse(selectedTool.inputSchema)
           : selectedTool.inputSchema
-
+ 
       if (inputSchema?.properties) {
         const sampleBody: Record<string, unknown> = {}
         for (const [key, value] of Object.entries(inputSchema.properties)) {
@@ -124,12 +176,18 @@ function ToolPlaygroundContent({
           else if (prop.type === 'object') sampleBody[key] = {}
           else sampleBody[key] = null
         }
-        setRequestBody(JSON.stringify(sampleBody, null, 2))
+        queueMicrotask(() => {
+          setRequestBody(JSON.stringify(sampleBody, null, 2))
+        })
       }
     } catch {
-      setRequestBody('{\n  \n}')
+      queueMicrotask(() => {
+        setRequestBody('{\n  \n}')
+      })
     }
-    setResponse(null)
+    queueMicrotask(() => {
+      setResponse(null)
+    })
   }, [selectedToolId, selectedTool])
 
   const handleExecute = useCallback(async () => {
@@ -158,9 +216,11 @@ function ToolPlaygroundContent({
       )
       const result = await res.json()
       const execResult: ExecutionResult = {
-        status: result.status,
-        duration: result.duration,
-        data: result.data,
+        status: result.status || res.status,
+        duration: result.duration || 0,
+        data: result.success === false 
+          ? { error: result.error, code: result.code, details: result.details } 
+          : result.data,
       }
       setResponse(execResult)
 
@@ -170,10 +230,10 @@ function ToolPlaygroundContent({
         toolId: selectedToolId,
         toolName: selectedTool.name as string,
         requestBody,
-        responseStatus: result.status,
-        responseBody: JSON.stringify(result.data, null, 2),
-        duration: result.duration,
-        status: result.status >= 200 && result.status < 300 ? 'success' : 'error',
+        responseStatus: execResult.status,
+        responseBody: JSON.stringify(execResult.data, null, 2),
+        duration: execResult.duration,
+        status: execResult.status >= 200 && execResult.status < 300 ? 'success' : 'error',
         createdAt: new Date().toISOString(),
       }
       setHistory((prev) => [historyItem, ...prev])
@@ -212,14 +272,6 @@ function ToolPlaygroundContent({
 
   return (
     <div className="flex flex-col h-full gap-3">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-shrink-0">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Terminal className="size-6" />
-          Tool Playground
-        </h1>
-      </div>
-
       {/* Main panels */}
       <ResizablePanelGroup direction="vertical" className="flex-1 min-h-0">
         <ResizablePanel defaultSize={showHistory ? 70 : 85} minSize={40}>
@@ -369,11 +421,22 @@ function ToolPlaygroundContent({
                     </div>
 
                     {/* Response Body */}
-                    <div className="flex-1 bg-muted/30 rounded-lg p-3 font-mono text-xs overflow-auto min-h-0 border">
-                      <pre className="whitespace-pre-wrap">
-                        {JSON.stringify(response.data, null, 2)}
-                      </pre>
-                    </div>
+                    <Tabs defaultValue="json" className="flex-1 flex flex-col min-h-0 mt-2">
+                      <div className="flex items-center justify-between mb-1.5 flex-shrink-0">
+                        <TabsList className="h-7">
+                          <TabsTrigger value="json" className="text-[10px] px-2 py-0.5">JSON</TabsTrigger>
+                          <TabsTrigger value="table" className="text-[10px] px-2 py-0.5">Table</TabsTrigger>
+                        </TabsList>
+                      </div>
+                      <TabsContent value="json" className="flex-1 bg-muted/30 rounded-lg p-3 font-mono text-xs overflow-auto min-h-0 border m-0 data-[state=inactive]:hidden">
+                        <pre className="whitespace-pre-wrap">
+                          {JSON.stringify(response.data, null, 2)}
+                        </pre>
+                      </TabsContent>
+                      <TabsContent value="table" className="flex-1 bg-muted/30 rounded-lg overflow-auto min-h-0 border m-0 data-[state=inactive]:hidden">
+                        <ResponseTable data={response.data} />
+                      </TabsContent>
+                    </Tabs>
                   </>
                 ) : (
                   <div className="flex-1 flex items-center justify-center">
@@ -520,6 +583,74 @@ function AutoGeneratedForm({
           </div>
         )
       })}
+    </div>
+  )
+}
+
+// ===== Response Table Formatter =====
+function ResponseTable({ data }: { data: any }) {
+  if (!data) return <div className="p-4 text-xs text-muted-foreground text-center">No data available</div>
+
+  let records: any[] = []
+  
+  if (data.stepResults && Array.isArray(data.stepResults)) {
+    // Multi-step tool result
+    records = data.stepResults.flatMap((step: any) => {
+      if (step?.response?.data && Array.isArray(step.response.data)) {
+        return step.response.data.map((r: any) => ({
+          recordId: r.recordId,
+          ...r.fieldData
+        }))
+      }
+      return []
+    })
+  } else if (data.response && Array.isArray(data.response.data)) {
+    // Standard FileMaker single-table result
+    records = data.response.data.map((r: any) => ({
+      recordId: r.recordId,
+      ...r.fieldData
+    }))
+  } else if (Array.isArray(data)) {
+    records = data
+  } else if (typeof data === 'object') {
+    records = [data]
+  }
+
+  if (records.length === 0) {
+    return <div className="p-4 text-xs text-muted-foreground text-center">Empty array or no records</div>
+  }
+
+  // Get all unique keys
+  const keys = Array.from(new Set(records.flatMap(r => Object.keys(r))))
+
+  return (
+    <div className="w-full h-full overflow-auto custom-scrollbar">
+      <table className="w-full text-xs text-left">
+        <thead className="bg-muted/50 text-muted-foreground sticky top-0 border-b backdrop-blur-sm">
+          <tr>
+            {keys.map((key) => (
+              <th key={key} className="px-3 py-2 font-medium truncate max-w-[150px]">{key}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y">
+          {records.map((r, i) => (
+            <tr key={i} className="hover:bg-muted/30 transition-colors">
+              {keys.map((key) => {
+                let val = r[key]
+                if (typeof val === 'object' && val !== null) {
+                  val = JSON.stringify(val)
+                }
+                return (
+                  <td key={key} className="px-3 py-2 truncate max-w-[200px]" title={String(val ?? '')}>
+                    {String(val ?? '')}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

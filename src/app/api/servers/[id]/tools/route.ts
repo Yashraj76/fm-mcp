@@ -31,7 +31,7 @@ export async function GET(
 
     const server = await db.mcpServer.findUnique({ where: { id } })
     if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
     const whereClause: Record<string, unknown> = { serverId: id }
@@ -60,10 +60,10 @@ export async function GET(
       },
     })
 
-    return NextResponse.json(tools)
+    return NextResponse.json({ success: true, data: tools })
   } catch (error) {
-    console.error('Error fetching tools:', error)
-    return NextResponse.json({ error: 'Failed to fetch tools' }, { status: 500 })
+    console.error('[API Error]', error)
+    return NextResponse.json({ success: false, error: 'Failed to fetch tools', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }
 
@@ -76,7 +76,7 @@ export async function POST(
     const { id } = await params
     const server = await db.mcpServer.findUnique({ where: { id } })
     if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
     const body = await request.json()
@@ -111,7 +111,7 @@ export async function POST(
     })
     if (existingTool) {
       return NextResponse.json(
-        { error: 'A tool with this name already exists in this branch' },
+        { success: false, error: 'A tool with this name already exists in this branch', code: 'DUPLICATE' },
         { status: 409 }
       )
     }
@@ -123,9 +123,9 @@ export async function POST(
       },
     })
 
-    return NextResponse.json(tool, { status: 201 })
+    return NextResponse.json({ success: true, data: tool }, { status: 201 })
   } catch (error) {
-    console.error('Error creating tool:', error)
-    return NextResponse.json({ error: 'Failed to create tool' }, { status: 500 })
+    console.error('[API Error]', error)
+    return NextResponse.json({ success: false, error: 'Failed to create tool', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }

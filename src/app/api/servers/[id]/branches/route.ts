@@ -33,10 +33,10 @@ export async function GET(
       },
     })
 
-    return NextResponse.json(branches)
+    return NextResponse.json({ success: true, data: branches })
   } catch (error) {
-    console.error('Error fetching branches:', error)
-    return NextResponse.json({ error: 'Failed to fetch branches' }, { status: 500 })
+    console.error('[API Error]', error)
+    return NextResponse.json({ success: false, error: 'Failed to fetch branches', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }
 
@@ -49,7 +49,7 @@ export async function POST(
     const { id } = await params
     const server = await db.mcpServer.findUnique({ where: { id } })
     if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
     const body = await request.json()
@@ -103,9 +103,9 @@ export async function POST(
       },
     })
 
-    return NextResponse.json(branch, { status: 201 })
+    return NextResponse.json({ success: true, data: branch }, { status: 201 })
   } catch (error) {
-    console.error('Error creating branch:', error)
-    return NextResponse.json({ error: 'Failed to create branch' }, { status: 500 })
+    console.error('[API Error]', error)
+    return NextResponse.json({ success: false, error: 'Failed to create branch', code: 'SERVER_ERROR' }, { status: 500 })
   }
 }
