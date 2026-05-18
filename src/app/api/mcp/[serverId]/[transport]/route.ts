@@ -55,6 +55,15 @@ async function handleMcpRequest(
   const server = await db.mcpServer.findUnique({ where: { id: serverId } })
   if (!server) return errResponse('Server not found', 404)
 
+  // Sanitize server name → valid MCP identifier (no spaces, special chars)
+  // mcp-remote prefixes tool names with this value: "mcp_{serverName}_{toolName}"
+  const safeName = server.name
+    .toLowerCase()
+    .replace(/\s+/g, '_')          // spaces → underscores
+    .replace(/[^a-z0-9_-]/g, '')   // strip anything else
+    .slice(0, 32)                   // max 32 chars (leaves room for tool name in 64-char limit)
+    || `server_${serverId.slice(0, 8)}`  // fallback if name is empty after sanitize
+
   const handler = createMcpHandler(
     async (mcpServer) => {
       const tools = await db.tool.findMany({
@@ -132,7 +141,7 @@ async function handleMcpRequest(
         }
       }
     },
-    { serverInfo: { name: server.name, version: server.version } },
+    { serverInfo: { name: safeName, version: server.version } },
     {
       basePath: `/api/mcp/${serverId}`,
       maxDuration: 60,

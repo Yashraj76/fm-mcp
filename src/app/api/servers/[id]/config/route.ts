@@ -37,6 +37,14 @@ export async function GET(
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
     const mcpBase = `${baseUrl}/api/mcp/${server.id}`
 
+    // Sanitize server name → valid MCP identifier (mcp-remote prefixes tool names with it)
+    const safeName = server.name
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_-]/g, '')
+      .slice(0, 32)
+      || `server_${server.id.slice(0, 8)}`
+
     // Fetch API key metadata (prefix only — never the raw key)
     const apiKeyRecord = await db.mcpApiKey.findUnique({ where: { serverId: server.id } }).catch(() => null)
     const authNote = apiKeyRecord
@@ -46,7 +54,7 @@ export async function GET(
     // Streamable HTTP — Cursor, VS Code, ChatGPT, Claude Code
     const streamableHttpConfig = {
       mcpServers: {
-        [server.name]: {
+        [safeName]: {
           url: `${mcpBase}/mcp`,
           headers: { Authorization: 'Bearer <your-api-key>' },
         },
@@ -57,7 +65,7 @@ export async function GET(
     // SSE — Claude Desktop, Claude.ai (requires REDIS_URL on server)
     const sseConfig = {
       mcpServers: {
-        [server.name]: {
+        [safeName]: {
           url: `${mcpBase}/sse`,
           headers: { Authorization: 'Bearer <your-api-key>' },
         },
@@ -69,7 +77,7 @@ export async function GET(
     // mcp-remote proxy — stdio clients that cannot use HTTP transport
     const mcpRemoteConfig = {
       mcpServers: {
-        [server.name]: {
+        [safeName]: {
           command: 'npx',
           args: ['-y', 'mcp-remote', `${mcpBase}/mcp`, '--header', 'Authorization: Bearer <your-api-key>'],
         },
@@ -79,7 +87,7 @@ export async function GET(
     // Legacy proxy config (backward compat)
     const proxyConfig = {
       mcpServers: {
-        [server.name]: {
+        [safeName]: {
           command: 'node',
           args: [
             `${baseUrl}/api/mcp/proxy?serverId=${server.id}`,
