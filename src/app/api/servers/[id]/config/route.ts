@@ -35,33 +35,59 @@ export async function GET(
     }))
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const mcpBase = `${baseUrl}/api/mcp/${server.id}`
 
-    // SSE Configuration Format
-    const sseConfig = {
+    // Sanitize server name → valid MCP identifier (mcp-remote prefixes tool names with it)
+    const safeName = server.name
+      .toLowerCase()
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_-]/g, '')
+      .slice(0, 32)
+      || `server_${server.id.slice(0, 8)}`
+
+    // Fetch API key metadata (prefix only — never the raw key)
+    const apiKeyRecord = await db.mcpApiKey.findUnique({ where: { serverId: server.id } }).catch(() => null)
+    const authNote = apiKeyRecord
+      ? `Bearer <your-api-key>  (prefix: ${apiKeyRecord.keyPrefix}…)`
+      : `No API key generated yet — POST /api/servers/${server.id}/api-key to create one`
+
+    // Streamable HTTP — Cursor, VS Code, ChatGPT, Claude Code
+    const streamableHttpConfig = {
       mcpServers: {
-        [server.name]: {
-          transport: {
-            type: 'sse',
-            url: `${baseUrl}/api/mcp/sse?serverId=${server.id}&token=${server.sseToken}`,
-            headers: {
-              Authorization: `Bearer ${server.sseToken}`,
-            },
-          },
+        [safeName]: {
+          url: `${mcpBase}/mcp`,
+          headers: { Authorization: 'Bearer <your-api-key>' },
         },
       },
-      tools: toolDefinitions,
-      metadata: {
-        serverName: server.name,
-        serverVersion: server.version,
-        toolCount: toolDefinitions.length,
-        generatedAt: new Date().toISOString(),
+      _authNote: authNote,
+    }
+
+    // SSE — Claude Desktop, Claude.ai (requires REDIS_URL on server)
+    const sseConfig = {
+      mcpServers: {
+        [safeName]: {
+          url: `${mcpBase}/sse`,
+          headers: { Authorization: 'Bearer <your-api-key>' },
+        },
+      },
+      _authNote: authNote,
+      _note: 'SSE requires REDIS_URL configured on the server',
+    }
+
+    // mcp-remote proxy — stdio clients that cannot use HTTP transport
+    const mcpRemoteConfig = {
+      mcpServers: {
+        [safeName]: {
+          command: 'npx',
+          args: ['-y', 'mcp-remote', `${mcpBase}/mcp`, '--header', 'Authorization: Bearer <your-api-key>'],
+        },
       },
     }
 
-    // Proxy/stdio Configuration Format
+    // Legacy proxy config (backward compat)
     const proxyConfig = {
       mcpServers: {
-        [server.name]: {
+        [safeName]: {
           command: 'node',
           args: [
             `${baseUrl}/api/mcp/proxy?serverId=${server.id}`,
@@ -75,25 +101,6 @@ export async function GET(
           },
         },
       },
-      tools: toolDefinitions,
-      metadata: {
-        serverName: server.name,
-        serverVersion: server.version,
-        toolCount: toolDefinitions.length,
-        generatedAt: new Date().toISOString(),
-      },
-    }
-
-    // Claude Desktop compatible configuration
-    const claudeConfig = {
-      mcpServers: {
-        [server.name]: {
-          url: `${baseUrl}/api/mcp/sse?serverId=${server.id}&token=${server.sseToken}`,
-          headers: {
-            'Authorization': `Bearer ${server.sseToken}`,
-          },
-        },
-      },
     }
 
     return NextResponse.json({
@@ -102,17 +109,26 @@ export async function GET(
         serverId: server.id,
         serverName: server.name,
         serverVersion: server.version,
+        endpoints: {
+          streamableHttp: `${mcpBase}/mcp`,
+          sse: `${mcpBase}/sse`,
+        },
+        hasApiKey: !!apiKeyRecord,
+        streamableHttp: streamableHttpConfig,
         sse: sseConfig,
+        mcpRemote: mcpRemoteConfig,
         proxy: proxyConfig,
-        claudeDesktop: claudeConfig,
+        // Kept for backward compat
+        claudeDesktop: sseConfig,
         toolCount: toolDefinitions.length,
+        tools: toolDefinitions,
         connectedDatabases: server.connections.map((c) => ({
           connectionId: c.connectionId,
           databaseName: c.connection.database,
           host: c.connection.host,
           isActive: c.isActive,
         })),
-      }
+      },
     })
   } catch (error) {
     console.error('[API Error]', error)

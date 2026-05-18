@@ -8,7 +8,7 @@ const toolSuggestionSchema = z.object({
   description: z.string().describe('Description of what the tool does'),
   inputSchema: z.object({
     type: z.literal('object'),
-    properties: z.record(z.object({
+    properties: z.record(z.string(), z.object({
       type: z.string(),
       description: z.string().optional()
     })),
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       prompt: `Generate an MCP tool configuration for FileMaker based on this request: "${prompt}". 
       Return a useful tool name in snake_case, a clear description, the required input schema (JSON schema format), 
       the best FileMaker method (create, read, update, delete, find, script, custom), and an appropriate category.`,
-      maxTokens: aiConfig.maxTokens || 1024,
+      maxOutputTokens: aiConfig.maxTokens || 1024,
       temperature: aiConfig.temperature ?? 0.7,
     })
 

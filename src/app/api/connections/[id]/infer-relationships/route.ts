@@ -49,7 +49,7 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       const aiText = await callAI({
         systemPrompt: INFER_RELATIONSHIPS_PROMPT,
         userMessage: JSON.stringify(inputPayload, null, 2),
-        maxTokens: 8192,
+        maxOutputTokens: 8192,
       });
       
       let clean = aiText;

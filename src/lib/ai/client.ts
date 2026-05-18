@@ -41,7 +41,7 @@ export function buildModel(provider: string, model: string, apiKey: string, base
 export interface AICallOptions {
   systemPrompt: string
   userMessage: string
-  maxTokens?: number
+  maxOutputTokens?: number
 }
 
 export async function callAI(options: AICallOptions): Promise<string> {
@@ -54,7 +54,7 @@ export async function callAI(options: AICallOptions): Promise<string> {
     model,
     system: options.systemPrompt,
     prompt: options.userMessage,
-    maxTokens: options.maxTokens || settings.maxTokens,
+    maxOutputTokens: options.maxOutputTokens || settings.maxTokens,
   })
   return result.text
 }
@@ -77,7 +77,7 @@ Return ONLY a valid JSON array, no prose. Each item: { "from": string, "to": str
   const text = await callAI({
     systemPrompt,
     userMessage: `Analyze this FileMaker schema and return relationship suggestions:\n\n${schemaStr}`,
-    maxTokens: 2048,
+    maxOutputTokens: 2048,
   })
 
   // Extract JSON from response

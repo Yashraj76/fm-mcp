@@ -79,7 +79,7 @@ const CATEGORY_ICONS: Record<string, typeof Database> = {
 }
 
 export function ToolsPage() {
-  const { currentServerId, setShowToolDialog, setShowAiDialog, setCurrentView, triggerRefreshTools, refreshTools } =
+  const { currentServerId, currentBranchId, setShowToolDialog, setShowAiDialog, setCurrentView, triggerRefreshTools, refreshTools } =
     useAppStore()
   const queryClient = useQueryClient()
 
@@ -195,7 +195,7 @@ export function ToolsPage() {
 
   // Filter tools
   const filteredTools = useMemo(() => {
-    return tools.filter((tool: Record<string, unknown>) => {
+    return (tools as any[]).filter((tool: any) => {
       const name = (tool.name as string).toLowerCase()
       const desc = (tool.description as string).toLowerCase()
       const category = tool.category as string
@@ -214,7 +214,7 @@ export function ToolsPage() {
     })
   }, [tools, searchQuery, categoryFilter, statusFilter])
 
-  const enabledCount = tools.filter((t: Record<string, unknown>) => t.isEnabled as boolean).length
+  const enabledCount = (tools as any[]).filter((t: any) => t.isEnabled).length
   const totalCount = tools.length
 
   return (
@@ -333,7 +333,7 @@ export function ToolsPage() {
         />
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 flex-1 overflow-y-auto pr-1 custom-scrollbar">
-          {filteredTools.map((tool: Record<string, unknown>) => (
+          {(filteredTools as any[]).map((tool: any) => (
             <ToolCard
               key={tool.id as string}
               tool={tool}
@@ -352,7 +352,7 @@ export function ToolsPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-2 flex-1 overflow-y-auto pr-1 custom-scrollbar">
-          {filteredTools.map((tool: Record<string, unknown>) => (
+          {(filteredTools as any[]).map((tool: any) => (
             <ToolListItem
               key={tool.id as string}
               tool={tool}

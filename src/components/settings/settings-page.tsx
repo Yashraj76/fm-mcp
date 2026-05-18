@@ -32,6 +32,13 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  RefreshCw,
+  Trash2,
+  Copy,
+  Check,
+  Eye,
+  EyeOff,
+  Info,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -74,6 +81,185 @@ const defaults: SettingsData = {
     enableToolTesting: true, verboseLogging: false,
   },
   security: { encryptCredentials: true, tokenExpiryMinutes: 15, auditLogging: true, allowedOrigins: [] },
+}
+
+// ─── API Tokens Card ───────────────────────────────────────────────────────
+
+interface ServerListItem { id: string; name: string }
+interface ApiKeyMeta { keyPrefix: string; createdAt: string; lastUsedAt: string | null }
+
+function ApiTokensCard() {
+  const [selectedServerId, setSelectedServerId] = useState<string>('')
+  const [newKey, setNewKey] = useState<string | null>(null)
+  const [shown, setShown] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const queryClient = useQueryClient()
+
+  const { data: servers, isLoading: serversLoading } = useQuery<ServerListItem[]>({
+    queryKey: ['servers-list-for-tokens'],
+    queryFn: () => fetch('/api/servers').then(r => r.json()).then(res =>
+      (res.data ?? []).map((s: { id: string; name: string }) => ({ id: s.id, name: s.name }))
+    ),
+  })
+
+  const { data: apiKeyMeta, refetch: refetchMeta } = useQuery<ApiKeyMeta | null>({
+    queryKey: ['api-key-meta-settings', selectedServerId],
+    queryFn: () =>
+      fetch(`/api/servers/${selectedServerId}/api-key`).then(r => r.json()).then(res => res.data),
+    enabled: !!selectedServerId,
+  })
+
+  const generateMutation = useMutation({
+    mutationFn: () =>
+      fetch(`/api/servers/${selectedServerId}/api-key`, { method: 'POST' }).then(r => r.json()),
+    onSuccess: (res) => {
+      if (res.success) {
+        setNewKey(res.data.apiKey)
+        setShown(false)
+        setCopied(false)
+        toast.success('Token generated — copy it now!')
+        refetchMeta()
+        queryClient.invalidateQueries({ queryKey: ['config', selectedServerId] })
+      } else {
+        toast.error(res.error || 'Failed to generate token')
+      }
+    },
+    onError: () => toast.error('Failed to generate token'),
+  })
+
+  const revokeMutation = useMutation({
+    mutationFn: () =>
+      fetch(`/api/servers/${selectedServerId}/api-key`, { method: 'DELETE' }).then(r => r.json()),
+    onSuccess: (res) => {
+      if (res.success) {
+        setNewKey(null)
+        toast.success('Token revoked')
+        refetchMeta()
+      } else {
+        toast.error(res.error || 'Failed to revoke token')
+      }
+    },
+    onError: () => toast.error('Failed to revoke token'),
+  })
+
+  const handleCopy = async () => {
+    if (!newKey) return
+    await navigator.clipboard.writeText(newKey)
+    setCopied(true)
+    toast.success('Token copied')
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <Card className="md:col-span-2">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Key className="size-4 text-muted-foreground" />
+          API Tokens
+        </CardTitle>
+        <CardDescription>Generate bearer tokens to authenticate MCP clients with your servers</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Info banner */}
+        <div className="flex items-start gap-3 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2.5">
+          <Info className="size-4 text-blue-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-blue-300">
+            Each MCP server has one active API token. Generate a token here and paste it into your MCP client
+            config (<code className="font-mono">Authorization: Bearer &lt;token&gt;</code>). Rotating creates a new token and immediately invalidates the old one.
+          </p>
+        </div>
+
+        {/* Server picker */}
+        <div className="space-y-1.5">
+          <Label className="text-sm font-medium">Select Server</Label>
+          {serversLoading ? (
+            <Skeleton className="h-9 w-full" />
+          ) : (
+            <Select value={selectedServerId} onValueChange={(v) => { setSelectedServerId(v); setNewKey(null) }}>
+              <SelectTrigger className="h-9 text-sm">
+                <SelectValue placeholder="Choose an MCP server..." />
+              </SelectTrigger>
+              <SelectContent>
+                {(servers ?? []).map(s => (
+                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {selectedServerId && (
+          <>
+            <Separator />
+            {/* Current token status */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium">Current Token</Label>
+                {apiKeyMeta ? (
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-xs">Active</Badge>
+                    <span>Prefix: <code className="font-mono">{apiKeyMeta.keyPrefix}…</code></span>
+                    <span>Created {new Date(apiKeyMeta.createdAt).toLocaleDateString()}</span>
+                    {apiKeyMeta.lastUsedAt && <span>· Used {new Date(apiKeyMeta.lastUsedAt).toLocaleDateString()}</span>}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">No token generated yet for this server.</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {apiKeyMeta && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5 text-xs"
+                    onClick={() => {
+                      if (confirm('Revoke this token? All clients using it will lose access immediately.')) {
+                        revokeMutation.mutate()
+                      }
+                    }}
+                    disabled={revokeMutation.isPending}
+                  >
+                    {revokeMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                    Revoke
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={() => generateMutation.mutate()}
+                  disabled={generateMutation.isPending}
+                >
+                  {generateMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                  {apiKeyMeta ? 'Rotate Token' : 'Generate Token'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Newly generated token reveal */}
+            {newKey && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs text-amber-500">
+                  <Info className="size-3.5" />
+                  <span>Copy this token now — it will not be shown again after you leave this page.</span>
+                </div>
+                <div className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2 border font-mono text-sm">
+                  <span className="flex-1 text-green-500 break-all">
+                    {shown ? newKey : '•'.repeat(Math.min(newKey.length, 48))}
+                  </span>
+                  <button onClick={() => setShown(s => !s)} className="text-muted-foreground hover:text-foreground shrink-0">
+                    {shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                  <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={handleCopy}>
+                    {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
 }
 
 export function SettingsPage() {
@@ -354,6 +540,9 @@ export function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* API Tokens */}
+        <ApiTokensCard />
       </div>
     </div>
   )

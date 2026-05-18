@@ -15,7 +15,7 @@ const crudToolSchema = z.object({
   fmLayout: z.string().describe('Exact layout name from the schema'),
   inputSchema: z.object({
     type: z.string().default('object'),
-    properties: z.record(z.any()),
+    properties: z.record(z.string(), z.any()),
     required: z.array(z.string()).optional().default([])
   }),
   handlerConfig: z.object({
@@ -150,7 +150,7 @@ STRICT RULES:
       model: aiModel,
       schema: responseSchema,
       prompt,
-      maxTokens: aiConfig.maxTokens || 4096,
+      maxOutputTokens: aiConfig.maxTokens || 4096,
       temperature: 0.3, // low temp for deterministic field names
     })
 

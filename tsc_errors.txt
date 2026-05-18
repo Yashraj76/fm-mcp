@@ -1,0 +1,102 @@
+create-custom-tools.ts(55,7): error TS2353: Object literal may only specify known properties, and 'steps' does not exist in type 'Without<ToolCreateInput, ToolUncheckedCreateInput> & ToolUncheckedCreateInput'.
+examples/websocket/frontend.tsx(4,20): error TS2307: Cannot find module 'socket.io-client' or its corresponding type declarations.
+examples/websocket/server.ts(2,24): error TS2307: Cannot find module 'socket.io' or its corresponding type declarations.
+scratch/check-passwords.ts(7,67): error TS2339: Property 'passwordEncrypted' does not exist on type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; }'.
+scratch/test-find.ts(6,29): error TS18047: 'tool' is possibly 'null'.
+scratch/test-find.ts(10,23): error TS2345: Argument of type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; } | null' is not assignable to parameter of type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; }'.
+  Type 'null' is not assignable to type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; }'.
+scratch/test-multi.ts(2,10): error TS2305: Module '"../src/lib/filemaker/multi-executor"' has no exported member 'MultiExecutor'.
+skills/ASR/scripts/asr.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/image-edit/scripts/image-edit.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/image-generation/scripts/image-generation.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/image-understand/scripts/image-understand.ts(1,36): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/LLM/scripts/chat.ts(1,34): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/podcast-generate/generate.ts(13,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/stock-analysis-skill/src/analyzer.ts(6,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/stock-analysis-skill/src/dataFetcher.ts(5,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/stock-analysis-skill/src/dividend.ts(7,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/stock-analysis-skill/src/index.ts(15,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/stock-analysis-skill/src/rumorScanner.ts(9,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/stock-analysis-skill/src/watchlist.ts(7,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/TTS/tts.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/video-generation/scripts/video.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/video-understand/scripts/video-understand.ts(1,36): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/VLM/scripts/vlm.ts(1,36): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/web-reader/scripts/web-reader.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+skills/web-search/scripts/web_search.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
+src/app/api/connections/[id]/schema/selections/route.ts(11,21): error TS2554: Expected 2-3 arguments, but got 1.
+src/app/api/connections/[id]/schema/selections/route.ts(75,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
+src/app/api/deployments/[id]/rollback/route.ts(21,30): error TS2339: Property 'snapshot' does not exist on type '{ id: string; status: string; createdAt: Date; version: string; branchId: string; serverId: string; branchName: string; branchSnapshot: string; changelog: string | null; deployedAt: Date | null; rolledBackAt: Date | null; rollbackFrom: string | null; configSnapshot: string; toolCount: number; }'.
+src/app/api/deployments/route.ts(38,9): error TS2353: Object literal may only specify known properties, and 'environment' does not exist in type '(Without<DeploymentCreateInput, DeploymentUncheckedCreateInput> & DeploymentUncheckedCreateInput) | (Without<...> & DeploymentCreateInput)'.
+src/app/api/playground/history/route.ts(13,18): error TS2353: Object literal may only specify known properties, and 'executedAt' does not exist in type 'ToolExecutionOrderByWithRelationInput | ToolExecutionOrderByWithRelationInput[]'.
+src/app/api/server-connections/[id]/route.ts(71,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
+src/app/api/server-connections/route.ts(55,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
+src/app/api/servers/[id]/ai/generate-server-tools/route.ts(18,19): error TS2554: Expected 2-3 arguments, but got 1.
+src/app/api/servers/[id]/ai/generate-server-tools/route.ts(153,7): error TS2353: Object literal may only specify known properties, and 'maxTokens' does not exist in type 'Omit<CallSettings, "stopSequences"> & { system?: string | SystemModelMessage | SystemModelMessage[] | undefined; allowSystemInMessages?: boolean | undefined; } & { ...; } & { ...; } & { ...; }'.
+src/app/api/settings/route.ts(88,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
+src/app/api/tools/[id]/route.ts(62,24): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
+src/app/api/tools/route.ts(52,24): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
+src/app/api/tools/suggest/route.ts(11,19): error TS2554: Expected 2-3 arguments, but got 1.
+src/app/api/tools/suggest/route.ts(56,7): error TS2353: Object literal may only specify known properties, and 'maxTokens' does not exist in type 'Omit<CallSettings, "stopSequences"> & { system?: string | SystemModelMessage | SystemModelMessage[] | undefined; allowSystemInMessages?: boolean | undefined; } & { ...; } & { ...; } & { ...; }'.
+src/components/ai/ai-assistant-dialog.tsx(132,75): error TS2339: Property 'suggestionType' does not exist on type 'AiSuggestion'.
+src/components/ai/ai-assistant-dialog.tsx(133,32): error TS2339: Property 'fmMethod' does not exist on type 'AiSuggestion'.
+src/components/ai/ai-assistant-dialog.tsx(134,32): error TS2339: Property 'fmLayout' does not exist on type 'AiSuggestion'.
+src/components/ai/ai-assistant-dialog.tsx(135,32): error TS2339: Property 'fmScript' does not exist on type 'AiSuggestion'.
+src/components/ai/ai-assistant-dialog.tsx(143,36): error TS2339: Property 'fmMethod' does not exist on type 'AiSuggestion'.
+src/components/ai/ai-assistant-dialog.tsx(144,36): error TS2339: Property 'fmLayout' does not exist on type 'AiSuggestion'.
+src/components/ai/ai-suggestion-card.tsx(120,9): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
+src/components/tools/tool-dialog.tsx(154,49): error TS2339: Property 'inputSchema' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(155,37): error TS2339: Property 'inputSchema' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(156,26): error TS2339: Property 'inputSchema' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(157,43): error TS2339: Property 'outputSchema' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(158,33): error TS2339: Property 'outputSchema' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(159,39): error TS2339: Property 'outputSchema' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(160,28): error TS2339: Property 'outputSchema' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(162,51): error TS2339: Property 'handlerConfig' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(163,37): error TS2339: Property 'handlerConfig' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(164,26): error TS2339: Property 'handlerConfig' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(168,32): error TS2339: Property 'name' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(169,39): error TS2339: Property 'description' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(170,36): error TS2339: Property 'category' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(171,36): error TS2339: Property 'fmMethod' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(172,36): error TS2339: Property 'fmLayout' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(173,36): error TS2339: Property 'fmScript' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(175,37): error TS2339: Property 'isEnabled' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(180,13): error TS1117: An object literal cannot have multiple properties with the same name.
+src/components/tools/tool-dialog.tsx(182,30): error TS2339: Property 'category' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(420,28): error TS2339: Property 'isAiGenerated' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(428,43): error TS2339: Property 'version' does not exist on type '{}'.
+src/components/tools/tool-dialog.tsx(428,76): error TS2339: Property 'name' does not exist on type '{}'.
+src/components/tools/tool-playground.tsx(126,34): error TS2322: Type 'unknown[]' is not assignable to type 'Record<string, unknown>[]'.
+  Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+src/components/tools/tool-playground.tsx(564,48): error TS2345: Argument of type 'boolean' is not assignable to parameter of type 'string'.
+src/components/tools/tool-playground.tsx(578,33): error TS2345: Argument of type 'string | number' is not assignable to parameter of type 'string'.
+  Type 'number' is not assignable to type 'string'.
+src/components/tools/tools-page.tsx(176,42): error TS2304: Cannot find name 'currentBranchId'.
+src/components/tools/tools-page.tsx(198,25): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => value is unknown, thisArg?: any): unknown[]', gave the following error.
+    Argument of type '(tool: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => value is unknown'.
+      Types of parameters 'tool' and 'value' are incompatible.
+        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+  Overload 2 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => unknown, thisArg?: any): unknown[]', gave the following error.
+    Argument of type '(tool: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => unknown'.
+      Types of parameters 'tool' and 'value' are incompatible.
+        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+src/components/tools/tools-page.tsx(217,37): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => value is unknown, thisArg?: any): unknown[]', gave the following error.
+    Argument of type '(t: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => value is unknown'.
+      Types of parameters 't' and 'value' are incompatible.
+        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+  Overload 2 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => unknown, thisArg?: any): unknown[]', gave the following error.
+    Argument of type '(t: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => unknown'.
+      Types of parameters 't' and 'value' are incompatible.
+        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+src/components/tools/tools-page.tsx(336,30): error TS2345: Argument of type '(tool: Record<string, unknown>) => JSX.Element' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => Element'.
+  Types of parameters 'tool' and 'value' are incompatible.
+    Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+src/components/tools/tools-page.tsx(355,30): error TS2345: Argument of type '(tool: Record<string, unknown>) => JSX.Element' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => Element'.
+  Types of parameters 'tool' and 'value' are incompatible.
+    Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+src/lib/ai/client.ts(57,5): error TS2353: Object literal may only specify known properties, and 'maxTokens' does not exist in type 'CallSettings & { system?: string | SystemModelMessage | SystemModelMessage[] | undefined; allowSystemInMessages?: boolean | undefined; } & { ...; } & { ...; }'.
+src/lib/tools/job-runner.ts(141,49): error TS2304: Cannot find name 'tool'.
+test-prisma.ts(10,55): error TS18046: 'err' is of type 'unknown'.

@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
         success: false,
         error: 'Validation failed',
         code: 'VALIDATION_ERROR',
-        details: error.errors,
+        details: error.issues,
       }, { status: 400 })
     }
     console.error('[API Error]', error)

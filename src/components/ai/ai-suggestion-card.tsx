@@ -9,12 +9,16 @@ import { cn } from '@/lib/utils'
 
 export interface AiSuggestion {
   id: string
-  type: 'tool_suggestion' | 'optimization' | 'error_fix'
+  type?: 'tool_suggestion' | 'optimization' | 'error_fix'
+  suggestionType: 'tool_suggestion' | 'optimization' | 'error_fix'
   title: string
   description: string
   confidence: number
   category: string
   proposedConfig: Record<string, unknown>
+  fmMethod?: string
+  fmLayout?: string
+  fmScript?: string
 }
 
 interface AiSuggestionCardProps {
@@ -56,7 +60,7 @@ export function AiSuggestionCard({
   const categoryColor = CATEGORY_COLORS[suggestion.category] || CATEGORY_COLORS.Custom
 
   // Extract tool configs for preview
-  const proposedTools = (suggestion.proposedConfig.tools as Array<Record<string, any>>) || []
+  const proposedTools = ((suggestion.proposedConfig as any).tools as any[]) || []
   const isMultiTool = proposedTools.length > 1
   const isOptimization = suggestion.type === 'optimization'
 
@@ -117,7 +121,7 @@ export function AiSuggestionCard({
 
       <CardContent className="space-y-3">
         {/* Tool preview chips */}
-        {isMultiTool && (
+        {isMultiTool ? (
           <div className="flex flex-wrap gap-1.5">
             {proposedTools.slice(0, 5).map((tool: any, i) => (
               <Badge key={i} variant="secondary" className="text-[10px] font-mono">
@@ -130,11 +134,11 @@ export function AiSuggestionCard({
               </Badge>
             )}
           </div>
-        )}
+        ) : null}
 
-        {isOptimization && suggestion.proposedConfig.recommendation && (
+        {isOptimization && !!(suggestion.proposedConfig as any).recommendation && (
           <div className="bg-muted/30 rounded-lg p-2 text-xs text-muted-foreground">
-            💡 {suggestion.proposedConfig.recommendation as string}
+            💡 {(suggestion.proposedConfig as any).recommendation as string}
           </div>
         )}
 
