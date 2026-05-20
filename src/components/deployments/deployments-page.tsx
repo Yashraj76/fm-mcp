@@ -137,7 +137,7 @@ export function DeploymentsPage() {
 
   const rollbackMutation = useMutation({
     mutationFn: (deploymentId: string) =>
-      fetch(`/api/servers/${currentServerId}/deployments/${deploymentId}/rollback`, { method: 'POST' }).then(r => r.json()),
+      fetch(`/api/deployments/${deploymentId}/rollback`, { method: 'POST' }).then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments'] })
       triggerRefreshDeployments()

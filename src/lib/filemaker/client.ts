@@ -114,14 +114,12 @@ export class FileMakerClient {
 
   async getScripts(): Promise<any> {
     try {
-      return await this.fetch('/_scripts')
+      // Correct FM Data API endpoint is /scripts (not /_scripts)
+      return await this.fetch('/scripts')
     } catch (e: any) {
-      // Older FM Server versions (pre-19.2) don't support /_scripts endpoint
-      if (e.message?.includes('404') || e.message?.includes('Non-JSON')) {
-        console.warn('[FileMakerClient] /_scripts not supported on this server, returning empty list')
-        return { response: { scripts: [] } }
-      }
-      throw e
+      // FM server may not expose script listing — non-fatal
+      console.warn('[FileMakerClient] /scripts not supported on this server:', e.message)
+      return { response: { scripts: [] } }
     }
   }
 

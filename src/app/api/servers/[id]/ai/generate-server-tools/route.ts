@@ -156,28 +156,44 @@ STRICT RULES:
 
     const generatedTools = object.tools || []
 
-    // Map to DB schema
-    const toolsData = generatedTools.map((tool, index) => ({
-      serverId: id,
-      branchId,
-      name: tool.name,
-      description: tool.description,
-      category: tool.fmMethod === 'find' || tool.fmMethod === 'list' ? 'Find' : 'CRUD',
-      fmMethod: tool.fmMethod,
-      fmLayout: tool.fmLayout,
-      inputSchema: JSON.stringify(tool.inputSchema),
-      handlerConfig: JSON.stringify(tool.handlerConfig),
-      isEnabled: true,
-      isAiGenerated: true,
-      sortOrder: index
-    }))
+    // Save tools to DB sequentially (no transaction — AI call already took >5s so
+    // $transaction would timeout; each create is individually atomic and that's fine)
+    const createdTools: any[] = []
+    for (let i = 0; i < generatedTools.length; i++) {
+      const tool = generatedTools[i]
+      
+      // Skip if a tool with this name already exists on the server (idempotency)
+      const existing = await db.tool.findFirst({ where: { serverId: id, name: tool.name } })
+      if (existing) { createdTools.push(existing); continue; }
 
-    await db.tool.createMany({ data: toolsData })
+      const baseTool = await db.tool.create({
+        data: {
+          serverId: id,
+          name: tool.name,
+          description: tool.description,
+          category: tool.fmMethod === 'find' || tool.fmMethod === 'list' ? 'Find' : 'CRUD',
+          fmMethod: tool.fmMethod,
+          fmLayout: tool.fmLayout,
+          inputSchema: JSON.stringify(tool.inputSchema),
+          handlerConfig: JSON.stringify(tool.handlerConfig),
+          isEnabled: true,
+          isAiGenerated: true,
+          sortOrder: i
+        }
+      })
+
+      if (branchId) {
+        await db.branchTool.create({
+          data: { branchId, toolId: baseTool.id, action: 'added' }
+        })
+      }
+      createdTools.push(baseTool)
+    }
 
     return NextResponse.json({
       success: true,
       data: object,
-      count: toolsData.length
+      count: createdTools.length
     }, { status: 201 })
 
   } catch (error: any) {

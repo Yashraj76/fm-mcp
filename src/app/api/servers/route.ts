@@ -95,19 +95,25 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // Create default branch
-    const commitHash = `sha_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
-    await db.branch.create({
+    // Always create main branch on server creation
+    const mainBranch = await db.branch.create({
       data: {
-        serverId: server.id,
         name: 'main',
+        serverId: server.id,
         isDefault: true,
+        isProtected: true,
+        description: 'Production branch — always live',
         status: 'active',
-        commitMessage: 'Initial commit',
-        commitHash,
-        snapshot: JSON.stringify({ tools: [], connections: connectionIds || [], config }),
       },
     })
+
+    const { log, LOG_ACTIONS } = await import('@/lib/logging/logger');
+    log({
+      action: LOG_ACTIONS.BRANCH_CREATED,
+      entityType: 'branch', entityId: mainBranch.id, entityName: 'main',
+      serverId: server.id,
+      meta: { isDefault: true, isProtected: true },
+    });
 
     // Start background job to generate tools if there are connections
     if (connectionIds && connectionIds.length > 0) {

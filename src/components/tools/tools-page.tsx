@@ -62,6 +62,8 @@ import {
   FileCode,
   Puzzle,
   PackageOpen,
+  Server,
+  GitBranch,
 } from 'lucide-react'
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -79,8 +81,18 @@ const CATEGORY_ICONS: Record<string, typeof Database> = {
 }
 
 export function ToolsPage() {
-  const { currentServerId, currentBranchId, setShowToolDialog, setShowAiDialog, setCurrentView, triggerRefreshTools, refreshTools } =
-    useAppStore()
+  const {
+    currentServerId,
+    currentBranchId,
+    setCurrentServer,
+    setCurrentBranch,
+    setShowToolDialog,
+    setShowAiDialog,
+    setCurrentView,
+    triggerRefreshTools,
+    refreshTools
+  } = useAppStore()
+  
   const queryClient = useQueryClient()
 
   // Filters
@@ -92,12 +104,46 @@ export function ToolsPage() {
 
   const [aiPrefilledData, setAiPrefilledData] = useState<any>(null)
 
+  // Fetch servers
+  const { data: servers = [], isLoading: isLoadingServers } = useQuery<any[]>({
+    queryKey: ['servers'],
+    queryFn: async () => {
+      const res = await fetch('/api/servers')
+      if (!res.ok) throw new Error('Failed to fetch servers')
+      return res.json().then(r => r.data)
+    }
+  })
+
+  // Selected server object helper
+  const selectedServer = useMemo(() => {
+    return servers.find(s => s.id === currentServerId)
+  }, [servers, currentServerId])
+
+  // Handle server selection change
+  const handleServerChange = (serverId: string) => {
+    setCurrentServer(serverId)
+    const serverObj = servers.find(s => s.id === serverId)
+    if (serverObj?.branches) {
+      const defBranch = serverObj.branches.find((b: any) => b.isDefault)
+      if (defBranch) {
+        setCurrentBranch(defBranch.id)
+      } else {
+        setCurrentBranch(null)
+      }
+    } else {
+      setCurrentBranch(null)
+    }
+  }
+
   // Fetch tools
   const { data: tools = [], isLoading } = useQuery({
-    queryKey: ['tools', currentServerId, refreshTools],
+    queryKey: ['tools', currentServerId, currentBranchId, refreshTools],
     queryFn: async () => {
       if (!currentServerId) return []
-      const res = await fetch(`/api/servers/${currentServerId}/tools`)
+      const url = currentBranchId
+        ? `/api/branches/${currentBranchId}/tools`
+        : `/api/servers/${currentServerId}/tools`
+      const res = await fetch(url)
       if (!res.ok) throw new Error('Failed to fetch tools')
       return res.json().then((r: { data?: unknown[] }) => r.data ?? [])
     },
@@ -107,10 +153,16 @@ export function ToolsPage() {
   // Toggle enabled mutation
   const toggleMutation = useMutation({
     mutationFn: async ({ id, isEnabled }: { id: string; isEnabled: boolean }) => {
-      const res = await fetch(`/api/servers/${currentServerId}/tools/${id}`, {
+      const url = currentBranchId
+        ? `/api/branches/${currentBranchId}/tools/${id}`
+        : `/api/servers/${currentServerId}/tools/${id}`
+      const body = currentBranchId
+        ? { enabled: !isEnabled }
+        : { isEnabled: !isEnabled }
+      const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isEnabled: !isEnabled }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) throw new Error('Failed to toggle tool')
       return res.json()
@@ -126,14 +178,22 @@ export function ToolsPage() {
   // Duplicate mutation
   const duplicateMutation = useMutation({
     mutationFn: async (tool: Record<string, unknown>) => {
-      const res = await fetch(`/api/servers/${currentServerId}/tools`, {
+      const url = currentBranchId
+        ? `/api/branches/${currentBranchId}/tools`
+        : `/api/servers/${currentServerId}/tools`
+      const body = {
+        name: `${(tool.name as string)} (Copy)`,
+        description: (tool.description as string) || '',
+        category: (tool.category as string) || 'custom',
+        handlerType: (tool.fmMethod as string) || 'find',
+        inputSchema: typeof tool.inputSchema === 'string' ? JSON.parse(tool.inputSchema) : tool.inputSchema,
+        handlerConfig: typeof tool.handlerConfig === 'string' ? JSON.parse(tool.handlerConfig) : tool.handlerConfig,
+        enabled: tool.isEnabled ?? true,
+      }
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...(tool as Record<string, string>),
-          name: `${(tool.name as string)} (Copy)`,
-          isAiGenerated: false,
-        }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) throw new Error('Failed to duplicate tool')
       return res.json()
@@ -151,7 +211,10 @@ export function ToolsPage() {
   // Delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/servers/${currentServerId}/tools/${id}`, {
+      const url = currentBranchId
+        ? `/api/branches/${currentBranchId}/tools/${id}`
+        : `/api/servers/${currentServerId}/tools/${id}`
+      const res = await fetch(url, {
         method: 'DELETE',
       })
       if (!res.ok) throw new Error('Failed to delete tool')
@@ -220,52 +283,139 @@ export function ToolsPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Wrench className="size-6" />
-            Tools
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {totalCount} tools defined · {enabledCount} enabled
-          </p>
+      <div className="flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 mb-6 border-b pb-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="size-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center border border-indigo-500/20">
+              <Wrench className="size-5" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Tools</h1>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {currentServerId ? `${totalCount} tools defined · ${enabledCount} enabled` : 'Select a server to view and manage tools'}
+              </p>
+            </div>
+          </div>
+
+          {/* Server & Branch Selectors */}
+          <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0">
+            <div className="flex items-center gap-1.5 bg-muted/40 border rounded-lg px-2.5 py-1">
+              <Server className="size-3.5 text-muted-foreground" />
+              <span className="text-[11px] font-medium text-muted-foreground mr-0.5">Server:</span>
+              <Select value={currentServerId || 'none'} onValueChange={handleServerChange}>
+                <SelectTrigger className="h-7 border-none bg-transparent hover:bg-muted/80 shadow-none px-2 focus:ring-0 w-[160px] text-xs font-semibold">
+                  <SelectValue placeholder="Select Server" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none" disabled>Select a Server</SelectItem>
+                  {servers.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedServer && (
+              <div className="flex items-center gap-1.5 bg-muted/40 border rounded-lg px-2.5 py-1 animate-in fade-in slide-in-from-left-2 duration-200">
+                <GitBranch className="size-3.5 text-muted-foreground" />
+                <span className="text-[11px] font-medium text-muted-foreground mr-0.5">Branch:</span>
+                <Select 
+                  value={currentBranchId || 'none'} 
+                  onValueChange={(val) => setCurrentBranch(val === 'none' ? null : val)}
+                >
+                  <SelectTrigger className="h-7 border-none bg-transparent hover:bg-muted/80 shadow-none px-2 focus:ring-0 w-[140px] text-xs font-semibold">
+                    <SelectValue placeholder="Select Branch" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedServer.branches?.map((b: any) => (
+                      <SelectItem key={b.id} value={b.id}>
+                        {b.name} {b.isDefault && '(default)'}
+                      </SelectItem>
+                    )) || <SelectItem value="none" disabled>No branches</SelectItem>}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center gap-2 w-full xl:w-auto xl:justify-end">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setShowAiDialog(true)}
-            className="gap-1.5"
+            className="gap-1.5 flex-1 xl:flex-initial"
+            disabled={!currentServerId}
           >
             <Sparkles className="size-3.5" />
-            <span className="hidden sm:inline">AI Suggest</span>
+            <span>AI Suggest</span>
           </Button>
+
           <Button
             size="sm"
             onClick={() => setShowToolDialog(true)}
-            className="gap-1.5"
+            className="gap-1.5 flex-1 xl:flex-initial"
+            disabled={!currentServerId}
           >
             <Plus className="size-3.5" />
-            New Tool
+            <span>New Tool</span>
           </Button>
+
           <Button
             id="auto-generate-btn"
             variant="secondary"
             size="sm"
             onClick={() => generateAllMutation.mutate()}
-            disabled={isGeneratingAll}
-            className="gap-1.5 bg-indigo-500/10 text-indigo-500 hover:bg-indigo-500/20"
+            disabled={isGeneratingAll || !currentServerId}
+            className="gap-1.5 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/10 flex-1 xl:flex-initial"
           >
             {isGeneratingAll ? <Loader2 className="size-3.5 animate-spin" /> : <Brain className="size-3.5" />}
-            <span className="hidden sm:inline">{isGeneratingAll ? 'Generating...' : 'Auto-Generate'}</span>
+            <span>{isGeneratingAll ? 'Generating...' : 'Auto-Generate'}</span>
           </Button>
         </div>
       </div>
 
-      {/* Filter Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mb-4">
-        <div className="relative flex-1 w-full sm:max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+      {/* Main Content Area */}
+      {!currentServerId ? (
+        <div className="flex-1 flex flex-col items-center justify-center border border-dashed rounded-xl p-8 bg-muted/5 min-h-[350px]">
+          <div className="max-w-md text-center space-y-4">
+            <div className="mx-auto size-16 rounded-2xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center border border-indigo-500/20 shadow-inner animate-pulse">
+              <Server className="size-8" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold tracking-tight">No Server Selected</h2>
+              <p className="text-sm text-muted-foreground">
+                To view, test, and manage FileMaker MCP tools, you need to select an active MCP server first.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 items-center justify-center pt-2">
+              <Select value="none" onValueChange={handleServerChange}>
+                <SelectTrigger className="w-[260px] h-10 font-medium border-primary/20 hover:border-primary/40 focus:ring-1 focus:ring-indigo-500">
+                  <SelectValue placeholder="Select an MCP Server" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none" disabled>Choose a server...</SelectItem>
+                  {servers.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Don't have a server yet? Go to the <button onClick={() => setCurrentView('servers')} className="text-indigo-400 hover:underline font-semibold transition-colors">Servers page</button> to create one.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Filter Bar */}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mb-4">
+            <div className="relative flex-1 w-full sm:max-w-sm">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -369,6 +519,8 @@ export function ToolsPage() {
             />
           ))}
         </div>
+      )}
+      </>
       )}
 
       <ToolDialog prefilledData={aiPrefilledData} />

@@ -6,14 +6,22 @@ const createToolSchema = z.object({
   name: z.string().min(1, 'Tool name is required'),
   description: z.string().min(1, 'Description is required'),
   category: z.string().optional(),
-  branchId: z.string().min(1, 'Branch ID is required'),
-  inputSchema: z.string().min(1, 'Input schema (JSON) is required'),
-  outputSchema: z.string().optional(),
-  handlerConfig: z.string().min(1, 'Handler config (JSON) is required'),
+  branchId: z.string().optional(), // optional — not all create flows pass a branchId
+  inputSchema: z.union([z.string(), z.record(z.string(), z.any())]).optional().transform(
+    (v) => v === undefined ? '{}' : (typeof v === 'string' ? v : JSON.stringify(v))
+  ),
+  outputSchema: z.union([z.string(), z.record(z.string(), z.any())]).optional().nullable().transform(
+    (v) => v === undefined || v === null ? null : (typeof v === 'string' ? v : JSON.stringify(v))
+  ),
+  handlerConfig: z.union([z.string(), z.record(z.string(), z.any())]).optional().transform(
+    (v) => v === undefined ? '{}' : (typeof v === 'string' ? v : JSON.stringify(v))
+  ),
   fmLayout: z.string().optional(),
   fmScript: z.string().optional(),
   fmMethod: z.enum(['create', 'read', 'update', 'delete', 'find', 'script', 'custom']).optional(),
-  isEnabled: z.boolean().default(true),
+  // Accept both `isEnabled` and `enabled` (UI uses `enabled` in duplicate flow)
+  isEnabled: z.boolean().optional(),
+  enabled: z.boolean().optional(),
   testConfig: z.string().optional(),
   sortOrder: z.number().int().default(0),
 })
@@ -35,17 +43,6 @@ export async function GET(
     }
 
     const whereClause: Record<string, unknown> = { serverId: id }
-    if (branchId) {
-      whereClause.branchId = branchId
-    } else {
-      // Default to the default branch's tools
-      const defaultBranch = await db.branch.findFirst({
-        where: { serverId: id, isDefault: true, status: 'active' },
-      })
-      if (defaultBranch) {
-        whereClause.branchId = defaultBranch.id
-      }
-    }
     if (category) {
       whereClause.category = category
     }
@@ -55,7 +52,7 @@ export async function GET(
       orderBy: { sortOrder: 'asc' },
       include: {
         _count: {
-          select: { executions: true, versions: true },
+          select: { executions: true },
         },
       },
     })
@@ -101,11 +98,10 @@ export async function POST(
       }
     }
 
-    // Check for duplicate tool name in the same branch
+    // Check for duplicate tool name in the same server
     const existingTool = await db.tool.findFirst({
       where: {
         serverId: id,
-        branchId: parsed.data.branchId,
         name: parsed.data.name,
       },
     })
@@ -116,9 +112,12 @@ export async function POST(
       )
     }
 
+    const { branchId, enabled, isEnabled, ...restData } = parsed.data;
     const tool = await db.tool.create({
       data: {
-        ...parsed.data,
+        ...restData,
+        // Resolve `enabled` alias → `isEnabled`
+        isEnabled: isEnabled ?? enabled ?? true,
         serverId: id,
       },
     })

@@ -134,7 +134,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
       const res = await fetch(`/api/connections/${connectionId}/infer-relationships`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ selectedLayouts: Array.from(selectedLayouts) }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
@@ -142,13 +142,14 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
         const next = [...prev]
         const rels = data.data.relationships || [];
         rels.forEach((s: any) => {
-          if (!next.some(r => r.from === s.fromLayout && r.to === s.toLayout && r.key === s.fromKey)) {
+          // AI now outputs from/to/key/confidence/reason directly — no remapping needed
+          if (!next.some(r => r.from === s.from && r.to === s.to && r.key === s.key)) {
             next.push({
-              from: s.fromLayout,
-              to: s.toLayout,
-              key: s.fromKey,
+              from: s.from,
+              to: s.to,
+              key: s.key,
               confidence: s.confidence || 'medium',
-              reason: s.label || s.source || 'AI Inferred'
+              reason: s.reason || s.source || 'AI Inferred'
             })
           }
         })

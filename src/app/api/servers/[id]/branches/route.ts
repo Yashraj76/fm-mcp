@@ -1,111 +1,85 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { z } from 'zod'
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { log, LOG_ACTIONS } from '@/lib/logging/logger';
+import { z } from 'zod';
 
-const createBranchSchema = z.object({
-  name: z.string().min(1, 'Branch name is required'),
-  parentId: z.string().optional(),
-  commitMessage: z.string().optional(),
-})
-
-// GET /api/servers/[id]/branches - List branches for a server
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
-    if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
-    }
-
-    const branches = await db.branch.findMany({
-      where: { serverId: id },
-      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
-      include: {
-        _count: {
-          select: { tools: true, children: true },
-        },
-        parent: {
-          select: { id: true, name: true, commitHash: true },
-        },
-      },
-    })
-
-    return NextResponse.json({ success: true, data: branches })
-  } catch (error) {
-    console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Failed to fetch branches', code: 'SERVER_ERROR' }, { status: 500 })
-  }
+export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const branches = await prisma.branch.findMany({
+    where: { serverId: (await params).id },
+    include: {
+      _count: { select: { tools: true, deployments: true } },
+    },
+    orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+  });
+  return NextResponse.json({ success: true, data: branches });
 }
 
-// POST /api/servers/[id]/branches - Create a new branch
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
-    if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
-    }
+const CreateBranchSchema = z.object({
+  name: z.string().min(1).regex(/^[a-z0-9\-\/]+$/, 'Lowercase letters, numbers, hyphens, slashes only'),
+  description: z.string().optional(),
+  fromBranchId: z.string().optional(), // fork from this branch; defaults to main
+});
 
-    const body = await request.json()
-    const parsed = createBranchSchema.safeParse(body)
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const body = CreateBranchSchema.parse(await req.json());
 
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
-    }
+  // Find source branch (default: main)
+  const sourceBranch = body.fromBranchId
+    ? await prisma.branch.findUnique({ where: { id: body.fromBranchId } })
+    : await prisma.branch.findFirst({ where: { serverId: (await params).id, isDefault: true } });
 
-    // Check for duplicate branch name
-    const existingBranch = await db.branch.findFirst({
-      where: { serverId: id, name: parsed.data.name },
-    })
-    if (existingBranch) {
-      return NextResponse.json(
-        { error: 'A branch with this name already exists' },
-        { status: 409 }
-      )
-    }
-
-    // Determine parent branch
-    let parentId = parsed.data.parentId
-    if (!parentId) {
-      const defaultBranch = await db.branch.findFirst({
-        where: { serverId: id, isDefault: true },
-      })
-      parentId = defaultBranch?.id
-    }
-
-    // Get parent snapshot if exists
-    let snapshot = JSON.stringify({ tools: [], connections: [], config: server.config })
-    if (parentId) {
-      const parent = await db.branch.findUnique({ where: { id: parentId } })
-      if (parent) {
-        snapshot = parent.snapshot
-      }
-    }
-
-    const branch = await db.branch.create({
-      data: {
-        serverId: id,
-        name: parsed.data.name,
-        parentId,
-        status: 'active',
-        commitMessage: parsed.data.commitMessage || `Create branch ${parsed.data.name}`,
-        commitHash: `sha_${Date.now().toString(36)}`,
-        snapshot,
-      },
-    })
-
-    return NextResponse.json({ success: true, data: branch }, { status: 201 })
-  } catch (error) {
-    console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Failed to create branch', code: 'SERVER_ERROR' }, { status: 500 })
+  if (!sourceBranch) {
+    return NextResponse.json({ success: false, error: 'Source branch not found' }, { status: 404 });
   }
+
+  // Prevent duplicate branch names on same server
+  const existing = await prisma.branch.findUnique({
+    where: { serverId_name: { serverId: (await params).id, name: body.name } },
+  });
+  if (existing) {
+    return NextResponse.json({ success: false, error: `Branch "${body.name}" already exists` }, { status: 409 });
+  }
+
+  // Create branch
+  const branch = await prisma.branch.create({
+    data: {
+      name: body.name,
+      serverId: (await params).id,
+      description: body.description,
+      isDefault: false,
+      isProtected: false,
+      status: 'active',
+    },
+  });
+
+  // Fork all tools from source branch as "inherited"
+  const sourceTools = await getEffectiveTools(sourceBranch.id);
+  if (sourceTools.length > 0) {
+    await prisma.branchTool.createMany({
+      data: sourceTools.map(tool => ({
+        branchId: branch.id,
+        toolId: tool.id,
+        action: 'inherited',
+      })),
+    });
+  }
+
+  await log({
+    action: LOG_ACTIONS.BRANCH_CREATED,
+    entityType: 'branch', entityId: branch.id, entityName: branch.name,
+    serverId: (await params).id,
+    meta: { forkedFrom: sourceBranch.name, toolCount: sourceTools.length },
+  });
+
+  return NextResponse.json({ success: true, data: branch }, { status: 201 });
+}
+
+// Get all "effective" tools visible on a branch
+// (inherited tools that haven't been deleted, plus added tools)
+async function getEffectiveTools(branchId: string) {
+  const branchTools = await prisma.branchTool.findMany({
+    where: { branchId, action: { not: 'deleted' } },
+    include: { tool: true },
+  });
+  return branchTools.map(bt => bt.tool);
 }

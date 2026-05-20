@@ -122,7 +122,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
           continue;
         }
 
-        await prisma.tool.create({
+        const createdTool = await prisma.tool.create({
           data: {
             name: toolDef.name,
             description: toolDef.description,
@@ -132,9 +132,16 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
             category: toolDef.category ?? 'generated',
             fmMethod: toolDef.fmMethod || mapStrategy(toolDef.strategy),
             serverId,
-            branchId: defaultBranch.id,
             isAiGenerated: true
           },
+        });
+        await prisma.branchTool.create({
+          data: {
+            branchId: defaultBranch.id,
+            toolId: createdTool.id,
+            action: 'added',
+            overrideData: '{}'
+          }
         });
         saved++;
       } catch (e: any) {

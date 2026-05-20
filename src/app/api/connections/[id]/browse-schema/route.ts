@@ -16,7 +16,7 @@ async function fetchODataEntityNames(connection: any): Promise<string[]> {
     const port = connection.port ? `:${connection.port}` : ''
     const dbName = encodeURIComponent(connection.database)
     const url = `${host}${port}/fmi/odata/v4/${dbName}/`
-    const password = decrypt(connection.passwordEncrypted)
+    const password = decrypt(connection.password)
     const credentials = Buffer.from(`${connection.username}:${password}`).toString('base64')
 
     const dispatcher = new Agent({ connect: { rejectUnauthorized: connection.sslVerify } })
@@ -62,8 +62,17 @@ export async function POST(_req: NextRequest, { params }: Params) {
       const layoutsRes = await client.getLayouts()
       const allLayouts: string[] = (layoutsRes?.response?.layouts || []).map((l: any) => l.name)
 
-      const scriptsRes = await client.getScripts()
-      const allScripts: string[] = (scriptsRes?.response?.scripts || []).map((s: any) => s.name)
+      let allScripts: string[] = []
+      try {
+        const scriptsRes = await client.getScripts()
+        // Filter out folder entries and separators (name '-') — only keep runnable scripts
+        allScripts = (scriptsRes?.response?.scripts || [])
+          .filter((s: any) => !s.isFolder && s.name !== '-')
+          .map((s: any) => s.name)
+      } catch (scriptErr: any) {
+        // FM servers that don't support /scripts — non-fatal
+        console.warn('[browse-schema] Scripts endpoint not available:', scriptErr.message)
+      }
 
       return { layouts: allLayouts, scripts: allScripts }
     })

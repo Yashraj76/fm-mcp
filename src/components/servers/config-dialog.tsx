@@ -91,13 +91,13 @@ function RevealableToken({ value }: { value: string }) {
 }
 
 export function ConfigDialog() {
-  const { showConfigDialog, setShowConfigDialog, currentServerId } = useAppStore()
+  const { showConfigDialog, setShowConfigDialog, currentServerId, currentBranchId } = useAppStore()
   const queryClient = useQueryClient()
   const [newApiKey, setNewApiKey] = useState<string | null>(null)
 
   const { data: config, isLoading, isError } = useQuery<ConfigData>({
-    queryKey: ['config', currentServerId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/config`).then(r => r.json()).then(res => res.data),
+    queryKey: ['config', currentServerId, currentBranchId],
+    queryFn: () => fetch(`/api/servers/${currentServerId}/config?branchId=${currentBranchId || ''}`).then(r => r.json()).then(res => res.data),
     enabled: showConfigDialog && !!currentServerId,
   })
 

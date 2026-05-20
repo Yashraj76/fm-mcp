@@ -1,174 +1,127 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { z } from 'zod'
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { incrementVersion } from '@/lib/utils/version';
+import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 
-const deploySchema = z.object({
-  branchId: z.string().optional(),
-  changelog: z.string().optional(),
-  targetEnvironment: z.enum(['staging', 'production']).default('staging'),
-})
+// GET /api/servers/[id]/deployments — list deployments with all fields needed by UI
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { searchParams } = new URL(req.url);
+  const limit = parseInt(searchParams.get('limit') ?? '20');
+  const { id: serverId } = await params;
 
-// GET /api/servers/[id]/deployments - List deployments for a server
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
-    if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
-    }
+  const deployments = await prisma.deployment.findMany({
+    where: { serverId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: {
+      id: true, version: true, changelog: true, status: true,
+      isLive: true, deployedAt: true, branchId: true, snapshot: true,
+      createdAt: true,
+      branch: { select: { name: true } },
+    },
+  });
 
-    const deployments = await db.deployment.findMany({
-      where: { serverId: id },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        server: {
-          select: { name: true, version: true },
-        },
-      },
-    })
+  // Shape response to match what DeploymentsPage expects
+  const shaped = deployments.map((d) => {
+    const snap = safeParseJSON(d.snapshot, {} as any);
+    const toolCount: number = snap?.stats?.totalTools ?? snap?.tools?.length ?? 0;
+    return {
+      id: d.id,
+      serverId,
+      branchId: d.branchId,
+      branchName: d.branch?.name ?? '',
+      status: d.status,
+      version: d.version,
+      changelog: d.changelog,
+      deployedAt: d.deployedAt,
+      rolledBackAt: null,          // schema doesn't have this field; always null
+      rollbackFrom: null,
+      toolCount,
+      createdAt: d.createdAt,
+      configSnapshot: d.snapshot,  // alias snapshot → configSnapshot for UI
+      branchSnapshot: d.snapshot,
+    };
+  });
 
-    return NextResponse.json(deployments)
-  } catch (error) {
-    console.error('Error fetching deployments:', error)
-    return NextResponse.json({ error: 'Failed to fetch deployments' }, { status: 500 })
-  }
+  return NextResponse.json({ success: true, data: shaped });
 }
 
-// POST /api/servers/[id]/deployments - Create a new deployment
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+// POST /api/servers/[id]/deployments — manually create a deployment snapshot
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
+    const { id: serverId } = await params;
+    const body = await req.json().catch(() => ({}));
+    const changelog: string = body.changelog || 'Manual deployment';
+
+    const server = await prisma.mcpServer.findUnique({ where: { id: serverId } });
     if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 });
     }
 
-    const body = await request.json()
-    const parsed = deploySchema.safeParse(body)
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
+    const mainBranch = await prisma.branch.findFirst({
+      where: { serverId, isDefault: true },
+    });
+    if (!mainBranch) {
+      return NextResponse.json({ success: false, error: 'Main branch not found', code: 'NOT_FOUND' }, { status: 404 });
     }
 
-    // Determine which branch to deploy
-    let targetBranchId = parsed.data.branchId
-    if (!targetBranchId) {
-      const defaultBranch = await db.branch.findFirst({
-        where: { serverId: id, isDefault: true, status: 'active' },
-      })
-      targetBranchId = defaultBranch?.id
-      if (!targetBranchId) {
-        // Fall back to any active branch
-        const anyBranch = await db.branch.findFirst({
-          where: { serverId: id, status: 'active' },
-          orderBy: { isDefault: 'desc' },
-        })
-        targetBranchId = anyBranch?.id
-      }
-    }
-
-    if (!targetBranchId) {
-      return NextResponse.json({ error: 'No active branch found to deploy' }, { status: 400 })
-    }
-
-    const branch = await db.branch.findFirst({
-      where: { id: targetBranchId, serverId: id },
-      include: {
-        tools: { orderBy: { sortOrder: 'asc' } },
-      },
-    })
-
-    if (!branch) {
-      return NextResponse.json({ error: 'Branch not found' }, { status: 404 })
-    }
-
-    if (branch.status !== 'active') {
-      return NextResponse.json(
-        { error: 'Cannot deploy from a non-active branch' },
-        { status: 400 }
-      )
-    }
-
-    // Get tool count and build config snapshot
-    const toolCount = branch.tools.length
-    const enabledTools = branch.tools.filter((t) => t.isEnabled)
-    const configSnapshot = JSON.stringify({
-      server: {
-        name: server.name,
-        version: server.version,
-        description: server.description,
-      },
-      branch: {
-        name: branch.name,
-        commitHash: branch.commitHash,
-      },
-      tools: enabledTools.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: JSON.parse(t.inputSchema || '{}'),
-        handlerConfig: JSON.parse(t.handlerConfig || '{}'),
-        fmLayout: t.fmLayout,
-        fmScript: t.fmScript,
-        fmMethod: t.fmMethod,
-      })),
-    })
-
-    // Determine version number
-    const lastDeployment = await db.deployment.findFirst({
-      where: { serverId: id },
+    const lastDeployment = await prisma.deployment.findFirst({
+      where: { serverId },
       orderBy: { createdAt: 'desc' },
-    })
-    const versionParts = (lastDeployment?.version || '0.0.0').split('.')
-    const newVersion = `${versionParts[0]}.${parseInt(versionParts[1]) + 1}.0`
+    });
+    const nextVersion = incrementVersion(lastDeployment?.version ?? server.version);
 
-    // Create deployment with simulated delay
-    const deployment = await db.deployment.create({
-      data: {
-        serverId: id,
-        branchId: branch.id,
-        branchName: branch.name,
-        branchSnapshot: branch.snapshot,
-        status: 'deploying',
-        version: newVersion,
-        changelog: parsed.data.changelog || `Deploy branch '${branch.name}' as v${newVersion}`,
-        configSnapshot,
-        toolCount,
-      },
-    })
+    const allTools = await prisma.tool.findMany({ where: { serverId } });
+    const snapshot = {
+      version: nextVersion,
+      tools: allTools,
+      serverId,
+      serverName: server.name,
+      snapshotAt: new Date().toISOString(),
+      stats: { totalTools: allTools.length, added: 0, modified: 0, deleted: 0 },
+    };
 
-    // Simulate deployment process
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    const deployment = await prisma.$transaction(async (tx) => {
+      // Supersede existing live deployment
+      await tx.deployment.updateMany({
+        where: { serverId, isLive: true },
+        data: { isLive: false, status: 'superseded' },
+      });
 
-    // Complete the deployment
-    const completedDeployment = await db.deployment.update({
-      where: { id: deployment.id },
-      data: {
-        status: 'deployed',
-        deployedAt: new Date(),
-      },
-    })
+      const dep = await tx.deployment.create({
+        data: {
+          serverId,
+          branchId: mainBranch.id,
+          version: nextVersion,
+          snapshot: JSON.stringify(snapshot),
+          changelog,
+          status: 'active',
+          isLive: true,
+        },
+      });
 
-    // Update server status
-    const targetEnv = parsed.data.targetEnvironment
-    await db.mcpServer.update({
-      where: { id },
-      data: {
-        status: targetEnv === 'production' ? 'deployed' : 'staging',
-      },
-    })
+      await tx.mcpServer.update({ where: { id: serverId }, data: { version: nextVersion } });
+      return dep;
+    });
 
-    return NextResponse.json(completedDeployment, { status: 201 })
-  } catch (error) {
-    console.error('Error creating deployment:', error)
-    return NextResponse.json({ error: 'Failed to create deployment' }, { status: 500 })
+    log({
+      action: LOG_ACTIONS.DEPLOYMENT_CREATED,
+      entityType: 'deployment', entityId: deployment.id, entityName: `v${nextVersion}`,
+      serverId, deploymentId: deployment.id,
+      meta: { version: nextVersion, changelog, toolCount: allTools.length },
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: { id: deployment.id, version: nextVersion, toolCount: allTools.length },
+    }, { status: 201 });
+
+  } catch (error: any) {
+    console.error('[API Error] POST /api/servers/[id]/deployments', error);
+    return NextResponse.json(
+      { success: false, error: error.message || 'Failed to create deployment', code: 'SERVER_ERROR' },
+      { status: 500 }
+    );
   }
 }
