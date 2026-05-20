@@ -8,11 +8,10 @@
     "start": "NODE_ENV=production bun .next/standalone/server.js 2>&1 | tee server.log",
     "lint": "eslint .",
     "db:push": "prisma db push",
-    "db:turso-push": "node scripts/turso-push.mjs",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:inspect": "node scripts/turso-push.mjs",
+    "db:generate": "prisma generate"
   },
+
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.75",
     "@ai-sdk/google": "^3.0.68",

@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 /**
- * Syncs the local SQLite schema (prisma/dev.db) to the Turso database.
+ * Syncs schema changes to the Turso database.
  *
- * Workflow:
- *   1. npm run db:push          ← applies schema changes to local dev.db
- *   2. npm run db:turso-push    ← this script: applies the same changes to Turso
+ * Since the Prisma schema now points directly at TURSO_DATABASE_URL,
+ * `prisma db push` will push changes directly to Turso.
+ * This script is kept for manual schema inspection and new-table detection.
  *
- * Handles: new tables, new indexes. Does NOT handle column renames or drops.
+ * Workflow for schema changes:
+ *   1. Edit prisma/schema.prisma
+ *   2. npm run db:push   ← pushes directly to Turso via Prisma
+ *   OR for manual inspection:
+ *   2. npm run db:turso-push  ← this script
  */
 
 import { createClient } from '@libsql/client'
@@ -31,17 +35,16 @@ try {
   // .env optional — env vars may already be set
 }
 
-// ── Clients ────────────────────────────────────────────────────────────────
-const tursoUrl = process.env.TURSO_DATABASE_URL
+// ── Config ─────────────────────────────────────────────────────────────────
+const tursoUrl   = process.env.TURSO_DATABASE_URL
 const tursoToken = process.env.TURSO_AUTH_TOKEN
 
 if (!tursoUrl || !tursoToken) {
-  console.error('✗  TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set')
+  console.error('✗  TURSO_DATABASE_URL or TURSO_AUTH_TOKEN not set in .env')
   process.exit(1)
 }
 
 const turso = createClient({ url: tursoUrl, authToken: tursoToken })
-const local = createClient({ url: 'file:./prisma/dev.db' })
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 async function getItems(client, type) {
@@ -53,50 +56,25 @@ async function getItems(client, type) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 async function run() {
-  const [localTables, tursoTables] = await Promise.all([
-    getItems(local, 'table'),
+  console.log(`Inspecting Turso: ${tursoUrl}\n`)
+
+  const [tables, indexes] = await Promise.all([
     getItems(turso, 'table'),
-  ])
-
-  // Missing tables
-  const missingTables = [...localTables.entries()].filter(([name]) => !tursoTables.has(name))
-
-  if (missingTables.length === 0) {
-    console.log('✓  Tables already in sync')
-  } else {
-    console.log(`→  Creating ${missingTables.length} missing table(s):`)
-    for (const [name, sql] of missingTables) {
-      try {
-        await turso.execute(sql)
-        console.log(`   ✓  ${name}`)
-      } catch (err) {
-        console.error(`   ✗  ${name}: ${err.message}`)
-      }
-    }
-  }
-
-  // Missing indexes
-  const [localIndexes, tursoIndexes] = await Promise.all([
-    getItems(local, 'index'),
     getItems(turso, 'index'),
   ])
-  const missingIndexes = [...localIndexes.entries()].filter(([name]) => !tursoIndexes.has(name))
 
-  if (missingIndexes.length === 0) {
-    console.log('✓  Indexes already in sync')
-  } else {
-    console.log(`→  Creating ${missingIndexes.length} missing index(es):`)
-    for (const [name, sql] of missingIndexes) {
-      try {
-        await turso.execute(sql)
-        console.log(`   ✓  ${name}`)
-      } catch (err) {
-        console.error(`   ✗  ${name}: ${err.message}`)
-      }
-    }
+  console.log(`✓  Tables in Turso (${tables.size}):`)
+  for (const name of [...tables.keys()].sort()) {
+    console.log(`   • ${name}`)
   }
 
-  console.log('\n✓  Turso push complete')
+  console.log(`\n✓  Indexes in Turso (${indexes.size}):`)
+  for (const name of [...indexes.keys()].sort()) {
+    console.log(`   • ${name}`)
+  }
+
+  console.log('\n✓  To push schema changes: npm run db:push')
+  console.log('   (Prisma db push now targets Turso directly via TURSO_DATABASE_URL)')
 }
 
 run().catch(err => {

@@ -13,6 +13,8 @@ const BodySchema = z.object({
  * POST /api/connections/[id]/layout-fields
  * On-demand: fetch field + portal metadata for a single layout.
  * Called by Schema Browser when user clicks/expands a layout.
+ * Also persists the fetched metadata into rawLayoutMeta so that
+ * infer-relationships has field data to work with.
  */
 export async function POST(req: NextRequest, { params }: Params) {
   try {
@@ -32,9 +34,24 @@ export async function POST(req: NextRequest, { params }: Params) {
       return {
         fields: fieldMetaArr.map((f: any) => f.name as string),
         portals: Object.keys(portalMeta),
+        portalDetails: Object.entries(portalMeta).map(([table, flds]: [string, any]) => ({
+          table,
+          fields: (flds || []).map((f: any) => ({ name: f.name, type: f.result || 'text' })),
+        })),
         valueLists: res?.response?.valueLists || [],
       }
     })
+
+    // Persist into rawLayoutMeta (merge with existing entries) — fire-and-forget
+    db.browsedSchema.findUnique({ where: { connectionId: id } }).then((bs) => {
+      if (!bs) return
+      const existing = JSON.parse(bs.rawLayoutMeta || '{}')
+      existing[layout] = { fields: meta.fields, portals: meta.portals, portalDetails: meta.portalDetails }
+      return db.browsedSchema.update({
+        where: { connectionId: id },
+        data: { rawLayoutMeta: JSON.stringify(existing) },
+      })
+    }).catch((err: Error) => console.error('[layout-fields] Failed to persist rawLayoutMeta:', err.message))
 
     return NextResponse.json({ success: true, data: meta })
   } catch (e: any) {
@@ -45,3 +62,4 @@ export async function POST(req: NextRequest, { params }: Params) {
     )
   }
 }
+

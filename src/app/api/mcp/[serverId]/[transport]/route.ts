@@ -7,6 +7,24 @@ import { z } from 'zod'
 import bcrypt from 'bcryptjs'
 import { db } from '@/lib/db'
 import { executeMcpTool } from '@/lib/mcp/execute-tool'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
+
+async function getEffectiveTools(branchId: string) {
+  const branchTools = await db.branchTool.findMany({
+    where: { branchId, action: { not: 'deleted' } },
+    include: { tool: { include: { server: { include: { connections: { include: { connection: true } } } } } } },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  return branchTools.map(bt => {
+    const base = bt.tool;
+    const override = safeParseJSON(bt.overrideData, {});
+    return {
+      ...base,
+      ...override,
+    };
+  });
+}
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
@@ -66,21 +84,14 @@ async function handleMcpRequest(
 
   const handler = createMcpHandler(
     async (mcpServer) => {
-      const tools = await db.tool.findMany({
-        where: {
-          serverId,
-          isEnabled: true,
-          branch: { isDefault: true, status: 'active' },
-        },
-        include: {
-          server: {
-            include: {
-              connections: { include: { connection: true } },
-            },
-          },
-        },
-        orderBy: { sortOrder: 'asc' },
-      })
+      const mainBranch = await db.branch.findFirst({
+        where: { serverId, isDefault: true },
+      });
+      let tools: any[] = [];
+      if (mainBranch) {
+        tools = await getEffectiveTools(mainBranch.id);
+        tools = tools.filter((t: any) => t.isEnabled);
+      }
 
       for (const tool of tools) {
         try {

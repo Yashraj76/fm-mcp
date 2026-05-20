@@ -1,5 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
+
+async function getEffectiveTools(branchId: string) {
+  const branchTools = await db.branchTool.findMany({
+    where: { branchId, action: { not: 'deleted' } },
+    include: { tool: true },
+    orderBy: { createdAt: 'asc' },
+  });
+
+  return branchTools.map(bt => {
+    const base = bt.tool;
+    const override = safeParseJSON(bt.overrideData, {});
+    return { ...base, ...override };
+  });
+}
 
 // GET /api/servers/[id]/config - Generate MCP configuration
 export async function GET(
@@ -11,10 +26,6 @@ export async function GET(
     const server = await db.mcpServer.findUnique({
       where: { id },
       include: {
-        tools: {
-          where: { isEnabled: true, branch: { isDefault: true, status: 'active' } },
-          orderBy: { sortOrder: 'asc' },
-        },
         connections: {
           include: { connection: true },
         },
@@ -28,10 +39,27 @@ export async function GET(
       )
     }
 
-    const toolDefinitions = server.tools.map((tool) => ({
+    const searchParams = _request.nextUrl.searchParams
+    const reqBranchId = searchParams.get('branchId')
+
+    let targetBranch: any = null
+    if (reqBranchId) {
+      targetBranch = await db.branch.findFirst({ where: { serverId: id, id: reqBranchId } })
+    }
+    if (!targetBranch) {
+      targetBranch = await db.branch.findFirst({ where: { serverId: id, isDefault: true } })
+    }
+
+    let tools: any[] = []
+    if (targetBranch) {
+      tools = await getEffectiveTools(targetBranch.id)
+      tools = tools.filter(t => t.isEnabled)
+    }
+
+    const toolDefinitions = tools.map((tool) => ({
       name: tool.name,
       description: tool.description,
-      inputSchema: JSON.parse(tool.inputSchema || '{}'),
+      inputSchema: safeParseJSON(tool.inputSchema, {}),
     }))
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'

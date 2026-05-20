@@ -1,12 +1,13 @@
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["driverAdapters"]
+  provider = "prisma-client-js"
 }
+
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("TURSO_DATABASE_URL")
 }
+
 
 // ============ FILEMAKER SERVER CONNECTIONS (Admin API) ============
 
@@ -120,6 +121,7 @@ model McpServer {
   tools              Tool[]
   toolGenerationJobs ToolGenerationJob[]
   apiKey             McpApiKey?
+  logs               ActivityLog[]
 }
 
 // ============ MCP API KEYS ============
@@ -151,29 +153,44 @@ model FMConnectionServer {
 // ============ BRANCHES ============
 
 model Branch {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
+  name          String                           // "main" | "feature/xyz" | "hotfix/abc"
   serverId      String
-  name          String
-  parentId      String?
-  parent        Branch?  @relation("BranchTree", fields: [parentId], references: [id])
-  children      Branch[] @relation("BranchTree")
-  status        String   @default("active")
-  isDefault     Boolean  @default(false)
-  commitMessage String?
-  commitHash    String?  @unique
-  snapshot      String
+  server        McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  isDefault     Boolean   @default(false)        // true = this is "main"
+  isProtected   Boolean   @default(false)        // true = cannot delete (main is always protected)
+  description   String?
+  status        String    @default("active")     // "active" | "merged" | "archived"
+  mergedIntoId  String?                          // branch this was merged into
+  mergedAt      DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tools         BranchTool[]
+  deployments   Deployment[]
+  logs          ActivityLog[]
+
+  @@unique([serverId, name])
+}
+
+model BranchTool {
+  id            String   @id @default(cuid())
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  toolId        String
+  tool          Tool     @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  action        String   @default("inherited")  // "inherited"|"modified"|"added"|"deleted"
+  overrideData  String?  // JSON: local branch overrides to the tool (description, schema, config)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  server McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  tools  Tool[]
+  @@unique([branchId, toolId])
 }
 
 // ============ TOOLS ============
 
 model Tool {
   id            String   @id @default(cuid())
-  branchId      String
   serverId      String
   name          String
   description   String
@@ -192,28 +209,9 @@ model Tool {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  branch     Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
   server     McpServer     @relation(fields: [serverId], references: [id], onDelete: Cascade)
   executions ToolExecution[]
-  versions   ToolVersion[]
-}
-
-// ============ TOOL VERSIONS ============
-
-model ToolVersion {
-  id            String   @id @default(cuid())
-  toolId        String
-  version       Int
-  name          String
-  description   String
-  inputSchema   String
-  outputSchema  String?
-  handlerConfig String
-  snapshot      String
-  changeLog     String?
-  createdAt     DateTime @default(now())
-
-  tool Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  branchTools BranchTool[]
 }
 
 // ============ TOOL EXECUTIONS ============
@@ -236,22 +234,57 @@ model ToolExecution {
 // ============ DEPLOYMENTS ============
 
 model Deployment {
-  id             String    @id @default(cuid())
-  serverId       String
-  branchId       String
-  branchName     String
-  branchSnapshot String
-  status         String    @default("pending")
-  version        String
-  changelog      String?
-  deployedAt     DateTime?
-  rolledBackAt   DateTime?
-  rollbackFrom   String?
-  configSnapshot String
-  toolCount      Int       @default(0)
-  createdAt      DateTime  @default(now())
+  id            String   @id @default(cuid())
+  serverId      String
+  server        McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  version       String                           // semver: "1.0.0", "1.1.0", "2.0.0"
+  snapshot      String                           // JSON: complete server+tools state at this moment
+  changelog     String?                          // user-written description of what changed
+  status        String   @default("active")      // "active" | "superseded" | "rolled_back"
+  isLive        Boolean  @default(false)         // true = currently live on main
+  deployedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
 
-  server McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  logs          ActivityLog[]
+}
+
+// ============ ACTIVITY LOGS ============
+
+model ActivityLog {
+  id            String   @id @default(cuid())
+  
+  // What happened
+  action        String   // see Action Types below
+  entityType    String   // "server"|"branch"|"tool"|"connection"|"deployment"|"api-key"|"schema"
+  entityId      String
+  entityName    String   // human-readable name at time of action
+
+  // Context
+  serverId      String?
+  branchId      String?
+  deploymentId  String?
+
+  // Relations (optional — don't error if entity is deleted)
+  server        McpServer?  @relation(fields: [serverId], references: [id], onDelete: SetNull)
+  branch        Branch?     @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  deployment    Deployment? @relation(fields: [deploymentId], references: [id], onDelete: SetNull)
+
+  // Payload
+  before        String?  // JSON snapshot of state before action (for diffs)
+  after         String?  // JSON snapshot of state after action
+  meta          String?  // JSON: extra context (e.g. { mergedFrom: "feature/xyz", toolCount: 12 })
+
+  // Actor (no auth system yet — use session/IP)
+  actorIp       String?
+  actorSession  String?
+
+  createdAt     DateTime @default(now())
+
+  @@index([serverId, createdAt])
+  @@index([entityType, entityId])
+  @@index([action, createdAt])
 }
 
 // ============ AI SUGGESTIONS ============

@@ -101,6 +101,7 @@ export async function GET() {
       take: 5,
       include: {
         server: { select: { name: true } },
+        branch: { select: { name: true } },
       },
     })
 
@@ -175,8 +176,8 @@ export async function GET() {
           serverName: d.server.name,
           version: d.version,
           status: d.status,
-          branchName: d.branchName,
-          toolCount: d.toolCount,
+          branchName: d.branch?.name,
+          toolCount: 0,
           deployedAt: d.deployedAt,
           createdAt: d.createdAt,
         })),

@@ -52,14 +52,21 @@ interface RecentActivity {
   status: 'success' | 'warning' | 'error'
 }
 
-const mockActivities: RecentActivity[] = [
-  { id: '1', type: 'connection', message: 'Connected to Production FileMaker', timestamp: new Date(Date.now() - 5 * 60000).toISOString(), status: 'success' },
-  { id: '2', type: 'tool', message: 'Tool "Create Contact" updated in staging', timestamp: new Date(Date.now() - 30 * 60000).toISOString(), status: 'success' },
-  { id: '3', type: 'deployment', message: 'Server "CRM Bridge" deployed v2.1.0', timestamp: new Date(Date.now() - 2 * 3600000).toISOString(), status: 'success' },
-  { id: '4', type: 'connection', message: 'Connection test failed for Dev Server', timestamp: new Date(Date.now() - 4 * 3600000).toISOString(), status: 'error' },
-  { id: '5', type: 'server', message: 'New branch "feature/invoice-tools" created', timestamp: new Date(Date.now() - 6 * 3600000).toISOString(), status: 'success' },
-  { id: '6', type: 'tool', message: 'AI suggested 3 new tools from schema', timestamp: new Date(Date.now() - 8 * 3600000).toISOString(), status: 'warning' },
-]
+// Maps an ActivityLog action string to a RecentActivity status
+function logStatus(action: string): 'success' | 'warning' | 'error' {
+  if (action.includes('fail') || action.includes('error') || action.includes('delete')) return 'error'
+  if (action.includes('warn') || action.includes('suggest')) return 'warning'
+  return 'success'
+}
+
+// Maps an ActivityLog entityType to a RecentActivity type
+function logType(entityType: string): RecentActivity['type'] {
+  if (entityType === 'connection' || entityType === 'schema') return 'connection'
+  if (entityType === 'server') return 'server'
+  if (entityType === 'tool') return 'tool'
+  if (entityType === 'deployment') return 'deployment'
+  return 'server'
+}
 
 const activityIcons = {
   connection: Database,
@@ -91,6 +98,24 @@ export function DashboardPage() {
   const { data: connections } = useQuery<ConnectionSummary[]>({
     queryKey: ['connections-summary'],
     queryFn: () => fetch('/api/connections').then((r) => r.json()).then(res => res.data),
+  })
+
+  // Fetch real activity logs from Turso (replaces static mockActivities)
+  const { data: recentActivities = [] } = useQuery<RecentActivity[]>({
+    queryKey: ['recent-activity'],
+    queryFn: () =>
+      fetch('/api/logs?limit=6')
+        .then((r) => r.json())
+        .then((res) =>
+          (res.data ?? []).map((log: { id: string; action: string; entityType: string; entityName: string; createdAt: string }) => ({
+            id: log.id,
+            type: logType(log.entityType),
+            message: `${log.entityName} — ${log.action.replace(/_/g, ' ')}`,
+            timestamp: log.createdAt,
+            status: logStatus(log.action),
+          }))
+        ),
+    staleTime: 30_000,
   })
 
   const statCards = [
@@ -226,7 +251,10 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3 max-h-64 overflow-y-auto">
-              {mockActivities.map((activity) => {
+              {recentActivities.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No activity yet</p>
+              ) : null}
+              {recentActivities.map((activity) => {
                 const Icon = activityIcons[activity.type]
                 return (
                   <div

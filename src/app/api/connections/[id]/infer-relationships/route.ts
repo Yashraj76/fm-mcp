@@ -6,9 +6,18 @@ import { INFER_RELATIONSHIPS_PROMPT } from '@/lib/ai/prompts/infer-relationships
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+
+    // Accept optional selectedLayouts from request body — allows app to pass
+    // current UI selection without requiring a save first
+    let bodyLayouts: string[] | null = null;
+    try {
+      const body = await req.json();
+      if (Array.isArray(body?.selectedLayouts)) bodyLayouts = body.selectedLayouts;
+    } catch { /* no body is fine */ }
+
     // Load the browsed schema selections for this connection
     const bs = await prisma.browsedSchema.findUnique({
       where: { connectionId: id },
@@ -21,7 +30,8 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       );
     }
 
-    const selectedLayouts = JSON.parse(bs.selectedLayouts ?? '[]');
+    // Prefer request-body layouts → fallback to DB-saved selection
+    const selectedLayouts = bodyLayouts ?? JSON.parse(bs.selectedLayouts ?? '[]');
     const layoutMeta = JSON.parse(bs.rawLayoutMeta ?? '{}');
 
     if (selectedLayouts.length === 0) {
@@ -34,11 +44,15 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
     // Build input payload — only selected layouts with their fields + portals
     const inputPayload = {
       selectedLayouts: selectedLayouts.map((name: string) => {
-        const meta = layoutMeta[name] ?? { name, fields: [], portals: [] };
+        const meta = layoutMeta[name];
+        if (!meta || !meta.fields?.length) {
+          console.warn(`[infer-relationships] Layout "${name}" has no field metadata in rawLayoutMeta — ` +
+            'expand it in the Schema Browser first so field data is persisted.');
+        }
         return {
           name,
-          fields: meta.fields ?? [],
-          portals: meta.portals ?? [],
+          fields: meta?.fields ?? [],
+          portals: meta?.portals ?? [],
         };
       }),
     };

@@ -6,7 +6,6 @@ const updateToolSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().min(1).optional(),
   category: z.string().nullable().optional(),
-  branchId: z.string().optional(),
   inputSchema: z.string().optional(),
   outputSchema: z.string().nullable().optional(),
   handlerConfig: z.string().optional(),
@@ -28,15 +27,9 @@ export async function GET(
     const tool = await db.tool.findFirst({
       where: { id: toolId, serverId: id },
       include: {
-        branch: {
-          select: { id: true, name: true, isDefault: true },
-        },
         executions: {
           orderBy: { createdAt: 'desc' },
           take: 10,
-        },
-        versions: {
-          orderBy: { version: 'desc' },
         },
       },
     })
@@ -72,16 +65,6 @@ export async function PUT(
         { error: 'Validation failed', details: parsed.error.flatten() },
         { status: 400 }
       )
-    }
-
-    // If moving to a different branch, verify the branch exists
-    if (parsed.data.branchId) {
-      const branch = await db.branch.findFirst({
-        where: { id: parsed.data.branchId, serverId: id },
-      })
-      if (!branch) {
-        return NextResponse.json({ error: 'Target branch not found' }, { status: 404 })
-      }
     }
 
     const updateData: Record<string, unknown> = { ...parsed.data }

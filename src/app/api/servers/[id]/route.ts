@@ -34,7 +34,7 @@ export async function GET(
           orderBy: { isDefault: 'desc' },
           include: {
             tools: {
-              orderBy: { sortOrder: 'asc' },
+              include: { tool: true }
             },
           },
         },
@@ -43,9 +43,9 @@ export async function GET(
           take: 10,
         },
         tools: {
-          where: { branch: { isDefault: true, status: 'active' } },
           orderBy: { sortOrder: 'asc' },
         },
+        apiKey: true,
         _count: {
           select: {
             tools: true,
@@ -55,6 +55,7 @@ export async function GET(
           },
         },
       },
+
     })
 
     if (!server) {

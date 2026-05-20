@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withFMSession } from '@/lib/filemaker/session'
+import { log, LOG_ACTIONS } from '@/lib/logging/logger'
 
 export async function POST(
   request: NextRequest,
@@ -287,6 +288,13 @@ export async function POST(
       }
     }).catch(e => console.error('[Execution History] Failed to save', e))
 
+    log({
+      action: LOG_ACTIONS.TOOL_EXECUTED,
+      entityType: 'tool', entityId: tool.id, entityName: tool.name,
+      serverId: tool.serverId,
+      meta: { durationMs: duration, paramKeys: Object.keys(body) },
+    });
+
     return NextResponse.json({
       success: true,
       status: 200,
@@ -313,6 +321,16 @@ export async function POST(
     } catch(e) {
       console.error('[Execution History] Failed to save error', e)
     }
+
+    try {
+      const { toolId } = await params
+      log({
+        action: LOG_ACTIONS.TOOL_EXECUTION_FAILED,
+        entityType: 'tool', entityId: toolId, entityName: toolId, // Might not have tool obj if failed early
+        serverId: undefined,
+        meta: { durationMs: duration, error: error.message },
+      });
+    } catch(e) {}
 
     return NextResponse.json({ 
       success: false,
