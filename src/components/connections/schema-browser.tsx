@@ -294,7 +294,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               size="sm"
               variant="ghost"
               onClick={fetchAISuggestions}
-              disabled={isWorking || !result}
+              disabled={isWorking || !result || selectedLayouts.size === 0}
               className="text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 h-8"
             >
               {phase === 'suggesting'
