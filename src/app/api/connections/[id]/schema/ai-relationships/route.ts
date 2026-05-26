@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withAuth } from "@/lib/auth/api-guard";
+import { getAppSettings } from '@/lib/settings'
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -152,15 +155,25 @@ function detectRelationships(
   return suggestions
 }
 
-export async function POST(req: NextRequest, { params }: Params) {
-  try {
-    const { id } = await params
+export const POST = withAuth(async (req, { params, userId }) => {
+    try {
+    const { id } = params
+
+    // Verify connection ownership
+    const conn = await db.fMConnection.findFirst({
+      where: { id, userId }
+    });
+    if (!conn) {
+      return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
 
     // Read request body for optional selectedLayouts override
     let body: any = {}
     try { body = await req.json() } catch { /* no body is fine */ }
 
-    const browsedSchema = await db.browsedSchema.findUnique({ where: { connectionId: id } })
+    const browsedSchema = await db.browsedSchema.findUnique({
+      where: { connectionId: id }
+    })
     if (!browsedSchema) {
       return NextResponse.json({
         success: false,
@@ -169,35 +182,70 @@ export async function POST(req: NextRequest, { params }: Params) {
       }, { status: 404 })
     }
 
-    const layoutMeta: Record<string, { fields: string[]; portals: string[] }> = JSON.parse(browsedSchema.rawLayoutMeta || '{}')
+    const layoutMeta: Record<string, { fields: string[]; portals: string[] }> = safeParseJSON(browsedSchema.rawLayoutMeta, {})
 
     // Use selectedLayouts from request body, or from saved selection, or all layouts
     const savedSelected: string[] = body.selectedLayouts
-      || (browsedSchema.selectedLayouts ? JSON.parse(browsedSchema.selectedLayouts) : null)
+      || (browsedSchema.selectedLayouts ? safeParseJSON(browsedSchema.selectedLayouts, null) : null)
       || Object.keys(layoutMeta)
 
-    const suggestions = detectRelationships(savedSelected, layoutMeta)
+    // 1. Run Rule-based detection
+    const ruleSuggestions = detectRelationships(savedSelected, layoutMeta)
+    let finalSuggestions = [...ruleSuggestions]
+
+    // 2. Check if AI is enabled and run AI detection
+    const settings = await getAppSettings(userId)
+
+    // Default to true if null (assume enabled by default)
+    const isAiEnabled = settings?.aiApiKeyEncrypted && settings?.aiProvider !== 'ollama' ? true : 
+                        (settings?.aiProvider === 'ollama' ? true : false)
+
+    if (isAiEnabled) {
+      const { suggestRelationships } = await import('@/lib/ai/client')
+      
+      const payloadLayouts = savedSelected.map(name => ({
+        name,
+        fields: layoutMeta[name]?.fields || []
+      }))
+      
+      try {
+        const aiSuggestions = await suggestRelationships({ layouts: payloadLayouts, tables: [] })
+        
+        // Merge AI suggestions with rule-based ones (rule-based takes precedence for same keys, but AI finds new ones)
+        const existingKeys = new Set(ruleSuggestions.map(s => s.key))
+        
+        for (const aiSug of aiSuggestions) {
+          if (!existingKeys.has(aiSug.key)) {
+            finalSuggestions.push(aiSug)
+            existingKeys.add(aiSug.key)
+          }
+        }
+      } catch (aiErr: any) {
+        console.error('[AI] Relationship suggestion failed:', aiErr.message)
+        // We continue with just rule-based suggestions instead of failing completely
+      }
+    }
 
     // Persist the suggestions
     await db.browsedSchema.update({
       where: { connectionId: id },
-      data: { suggestedRelationships: JSON.stringify(suggestions) },
+      data: { suggestedRelationships: JSON.stringify(finalSuggestions) },
     })
 
     return NextResponse.json({
       success: true,
       data: {
-        suggestions,
+        suggestions: finalSuggestions,
         analyzedLayouts: savedSelected.length,
-        totalSuggestions: suggestions.length,
+        totalSuggestions: finalSuggestions.length,
       },
     })
-  } catch (e: any) {
+    } catch (e: any) {
     console.error('[ai-relationships POST]', e)
     return NextResponse.json({
       success: false,
       error: e.message || 'Relationship detection failed',
       code: 'SERVER_ERROR',
     }, { status: 500 })
-  }
-}
+    }
+    });

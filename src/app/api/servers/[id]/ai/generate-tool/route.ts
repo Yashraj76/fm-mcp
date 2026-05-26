@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
 
 const generateToolSchema = z.object({
   description: z.string().min(10, 'Please provide a more detailed description (at least 10 characters)'),
@@ -12,13 +13,12 @@ const generateToolSchema = z.object({
 })
 
 // POST /api/servers/[id]/ai/generate-tool - AI-generate a complete tool definition
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
+    const { id } = params
+    const server = await db.mcpServer.findFirst({
+      where: { id, userId }
+    })
     if (!server) {
       return NextResponse.json({ error: 'Server not found' }, { status: 404 })
     }
@@ -229,8 +229,8 @@ export async function POST(
         'Save the tool to your branch',
       ],
     })
-  } catch (error) {
+    } catch (error) {
     console.error('Error generating tool:', error)
     return NextResponse.json({ error: 'Failed to generate tool' }, { status: 500 })
-  }
-}
+    }
+    });

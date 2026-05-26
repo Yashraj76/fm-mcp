@@ -38,11 +38,12 @@ interface SchemaBuilderProps {
   onChange: (schema: JsonSchema) => void
   title?: string
   description?: string
+  availableFields?: string[]
 }
 
 const TYPE_OPTIONS: SchemaProperty['type'][] = ['string', 'number', 'integer', 'boolean', 'array', 'object']
 
-export function SchemaBuilder({ value, onChange, title = 'Schema', description }: SchemaBuilderProps) {
+export function SchemaBuilder({ value, onChange, title = 'Schema', description, availableFields }: SchemaBuilderProps) {
   const [view, setView] = useState<'form' | 'json'>('form')
   const [jsonText, setJsonText] = useState('')
   const [jsonError, setJsonError] = useState('')
@@ -172,12 +173,13 @@ export function SchemaBuilder({ value, onChange, title = 'Schema', description }
             <div className="space-y-2 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
               {properties.map((prop, index) => (
                 <PropertyRow
-                  key={prop.name + '-' + index}
+                  key={`prop-${index}`}
                   property={prop}
                   index={index}
                   onChange={handlePropertyChange}
                   onRemove={handleRemoveProperty}
                   canRemove={properties.length > 1}
+                  availableFields={availableFields}
                 />
               ))}
             </div>
@@ -233,21 +235,38 @@ interface PropertyRowProps {
   onChange: (index: number, changes: Partial<SchemaProperty>) => void
   onRemove: (index: number) => void
   canRemove: boolean
+  availableFields?: string[]
 }
 
-function PropertyRow({ property, index, onChange, onRemove, canRemove }: PropertyRowProps) {
+function PropertyRow({ property, index, onChange, onRemove, canRemove, availableFields }: PropertyRowProps) {
   return (
     <div className="group rounded-lg border bg-muted/20 p-3 space-y-2">
       <div className="flex items-start gap-2">
         <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Name</Label>
-            <Input
-              value={property.name}
-              onChange={(e) => onChange(index, { name: e.target.value })}
-              className="h-8 text-xs font-mono"
-              placeholder="property_name"
-            />
+            <div className="flex">
+              <Input
+                value={property.name}
+                onChange={(e) => onChange(index, { name: e.target.value })}
+                className={cn("h-8 text-xs font-mono", availableFields && availableFields.length > 0 ? "rounded-r-none border-r-0 focus-visible:z-10" : "")}
+                placeholder="property_name"
+              />
+              {availableFields && availableFields.length > 0 && (
+                <Select onValueChange={(v) => onChange(index, { name: v })}>
+                  <SelectTrigger 
+                    className="w-8 h-8 px-0 rounded-l-none bg-muted/20 border-l border-input flex items-center justify-center flex-none focus:ring-0 focus:ring-offset-0 focus:z-10"
+                    aria-label="Select layout field"
+                  >
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableFields.map(f => (
+                      <SelectItem key={f} value={f}>{f}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Type</Label>

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { getEffectiveTools } from '@/lib/branching'
+import { withAuth } from "@/lib/auth/api-guard";
+import { toSafeTool } from '@/lib/utils/dto'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
 
 const createToolSchema = z.object({
   name: z.string().min(1, 'Tool name is required'),
@@ -27,74 +32,81 @@ const createToolSchema = z.object({
 })
 
 // GET /api/servers/[id]/tools - List tools for a server (optionally filtered by branch)
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
+// POST /api/servers/[id]/tools - Create a new tool
+export const GET = withAuth(async (request, { params, userId }) => {
+    try {
+    const { id } = params
     const { searchParams } = new URL(request.url)
     const branchId = searchParams.get('branchId')
     const category = searchParams.get('category')
 
-    const server = await db.mcpServer.findUnique({ where: { id } })
-    if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
-    }
-
-    const whereClause: Record<string, unknown> = { serverId: id }
-    if (category) {
-      whereClause.category = category
-    }
-
-    const tools = await db.tool.findMany({
-      where: whereClause,
-      orderBy: { sortOrder: 'asc' },
-      include: {
-        _count: {
-          select: { executions: true },
-        },
-      },
+    const server = await db.mcpServer.findFirst({
+      where: { id, userId }
     })
-
-    return NextResponse.json({ success: true, data: tools })
-  } catch (error) {
-    console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Failed to fetch tools', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
-
-// POST /api/servers/[id]/tools - Create a new tool
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({ where: { id } })
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Server not found')
+    }
+
+    let tools;
+    if (branchId) {
+      const branchExists = await db.branch.findFirst({
+        where: { id: branchId, serverId: id }
+      });
+      if (!branchExists) {
+        return apiNotFound('Branch not found for this server');
+      }
+      tools = await getEffectiveTools(branchId);
+      if (category) {
+        tools = tools.filter((t: any) => t.category === category);
+      }
+      // Assuming getEffectiveTools already includes executions count? Actually no, getEffectiveTools only returns tools.
+      // But we can just return the tools array as is. The UI might not strictly need executions count here, or we fetch it if needed.
+    } else {
+      const whereClause: Record<string, unknown> = { serverId: id }
+      if (category) {
+        whereClause.category = category
+      }
+
+      tools = await db.tool.findMany({
+        where: whereClause,
+        orderBy: { sortOrder: 'asc' },
+        include: {
+          _count: {
+            select: { executions: true },
+          },
+        },
+      })
+    }
+
+    return apiSuccess(tools.map(toSafeTool))
+    } catch (error) {
+    console.error('[API Error]', error)
+    return apiServerError('Failed to fetch tools')
+    }
+  });
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
+    const { id } = params
+    const server = await db.mcpServer.findFirst({
+      where: { id, userId }
+    })
+    if (!server) {
+      return apiNotFound('Server not found')
     }
 
     const body = await request.json()
     const parsed = createToolSchema.safeParse(body)
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
+      return apiValidationFailed(parsed.error.flatten())
     }
 
     if (parsed.data.branchId) {
       const branch = await db.branch.findFirst({
-        where: { id: parsed.data.branchId, serverId: id },
+        where: { id: parsed.data.branchId, serverId: id }
       })
       if (!branch) {
-        return NextResponse.json(
-          { error: 'Branch not found for this server' },
-          { status: 404 }
-        )
+        return apiNotFound('Branch not found for this server')
       }
     }
 
@@ -106,10 +118,20 @@ export async function POST(
       },
     })
     if (existingTool) {
-      return NextResponse.json(
-        { success: false, error: 'A tool with this name already exists in this branch', code: 'DUPLICATE' },
-        { status: 409 }
-      )
+      return apiError('A tool with this name already exists in this branch', 'DUPLICATE', 409)
+    }
+
+    let handlerConfigObj: any = safeParseJSON(parsed.data.handlerConfig, {})
+    if (handlerConfigObj.connectionId) {
+      const isLinked = await db.fMConnectionServer.findFirst({
+        where: {
+          connectionId: handlerConfigObj.connectionId,
+          serverId: id,
+        }
+      })
+      if (!isLinked) {
+        return apiError('The connection specified in handlerConfig is not linked to this server', 'VALIDATION_ERROR', 400)
+      }
     }
 
     const { branchId, enabled, isEnabled, ...restData } = parsed.data;
@@ -122,9 +144,9 @@ export async function POST(
       },
     })
 
-    return NextResponse.json({ success: true, data: tool }, { status: 201 })
-  } catch (error) {
+    return apiSuccess(toSafeTool(tool), 201)
+    } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Failed to create tool', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    return apiServerError('Failed to create tool')
+    }
+  });

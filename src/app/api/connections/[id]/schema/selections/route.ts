@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -17,11 +19,21 @@ const selectionsSchema = z.object({
     reason: z.string()
   })).optional().default([]),
 })
+export const PUT = withAuth(async (req, { params, userId }) => {
+    try {
+    const { id } = params
 
-export async function PUT(req: NextRequest, { params }: Params) {
-  try {
-    const { id } = await params
-    const browsedSchema = await db.browsedSchema.findUnique({ where: { connectionId: id } })
+    // Verify connection ownership
+    const conn = await db.fMConnection.findFirst({
+      where: { id, userId }
+    });
+    if (!conn) {
+      return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
+
+    const browsedSchema = await db.browsedSchema.findUnique({
+      where: { connectionId: id }
+    })
     if (!browsedSchema) {
       return NextResponse.json({ success: false, error: 'Schema not browsed yet', code: 'NOT_FOUND' }, { status: 404 })
     }
@@ -29,9 +41,9 @@ export async function PUT(req: NextRequest, { params }: Params) {
     const body = await req.json()
     const parsed = selectionsSchema.parse(body)
 
-    const layoutMeta = JSON.parse(browsedSchema.rawLayoutMeta)
-    const odataMeta = JSON.parse(browsedSchema.rawODataMeta)
-    const suggestedRels = JSON.parse(browsedSchema.suggestedRelationships)
+    const layoutMeta = safeParseJSON(browsedSchema.rawLayoutMeta, {})
+    const odataMeta = safeParseJSON(browsedSchema.rawODataMeta, {})
+    const suggestedRels = safeParseJSON(browsedSchema.suggestedRelationships, [])
 
     // Build compiledSchema from selections
     const compiledLayouts = parsed.selectedLayouts.map((name) => ({
@@ -70,11 +82,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
     })
 
     return NextResponse.json({ success: true, data: { compiledSchema, updatedAt: updated.updatedAt } })
-  } catch (e: any) {
+    } catch (e: any) {
     if (e instanceof ZodError) {
       return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
     }
     console.error('[schema/selections PUT]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    }
+    });

@@ -1,6 +1,7 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -46,6 +47,7 @@ export interface ToolStep {
 interface MultiTableBuilderProps {
   steps: ToolStep[]
   connectionId?: string
+  serverData?: any
   onChange: (steps: ToolStep[]) => void
 }
 
@@ -96,9 +98,11 @@ function inferStrategy(steps: ToolStep[]) {
 
 function FieldMappingEditor({
   mappings,
+  layoutFields,
   onChange,
 }: {
   mappings: Record<string, string>
+  layoutFields?: string[]
   onChange: (m: Record<string, string>) => void
 }) {
   const pairs = Object.entries(mappings)
@@ -126,6 +130,7 @@ function FieldMappingEditor({
             placeholder="inputParam"
             value={k}
             onChange={e => update(i, e.target.value, v)}
+            aria-label="Input parameter name"
           />
           <span className="text-muted-foreground text-xs">→</span>
           <Input
@@ -133,8 +138,9 @@ function FieldMappingEditor({
             placeholder="FMFieldName"
             value={v}
             onChange={e => update(i, k, e.target.value)}
+            aria-label="FileMaker field name"
           />
-          <Button variant="ghost" size="icon" className="size-6 shrink-0" onClick={() => remove(i)}>
+          <Button variant="ghost" size="icon" className="size-6 shrink-0" onClick={() => remove(i)} aria-label="Remove mapping">
             <Trash2 className="size-3 text-muted-foreground" />
           </Button>
         </div>
@@ -150,20 +156,56 @@ function StepEditor({
   step,
   index,
   totalSteps,
+  serverData,
+  connectionId,
+  prevStep,
   onChange,
   onDelete,
+  onAutoMap,
 }: {
   step: ToolStep
   index: number
   totalSteps: number
+  serverData?: any
+  connectionId?: string
+  prevStep?: ToolStep
   onChange: (s: ToolStep) => void
   onDelete: () => void
+  onAutoMap?: (prevExtract: string, prevUseAs: string, currMappings: Record<string, string>) => void
 }) {
   const [expanded, setExpanded] = useState(true)
   const isOdata = step.api === 'odata'
 
   const update = <K extends keyof ToolStep>(key: K, value: ToolStep[K]) =>
     onChange({ ...step, [key]: value })
+
+  const [layoutFields, setLayoutFields] = useState<string[]>([])
+  const [availableLayouts, setAvailableLayouts] = useState<string[]>([])
+
+  useEffect(() => {
+    if (serverData?.connections) {
+      const layouts = new Set<string>()
+      let fields: string[] = []
+      serverData.connections.forEach((conn: any) => {
+        if (!connectionId || conn.connection.id === connectionId) {
+          if (conn.connection?.browsedSchema?.compiledSchema) {
+            try {
+              const schema = JSON.parse(conn.connection.browsedSchema.compiledSchema)
+              schema.layouts?.forEach((l: any) => layouts.add(l.name))
+              if (step.layout) {
+                const layout = schema.layouts?.find((l: any) => l.name === step.layout)
+                if (layout && layout.fieldMetaData) {
+                  fields.push(...layout.fieldMetaData.map((f: any) => f.name))
+                }
+              }
+            } catch {}
+          }
+        }
+      })
+      setAvailableLayouts(Array.from(layouts).sort())
+      setLayoutFields([...new Set(fields)].sort())
+    }
+  }, [serverData, step.layout, connectionId])
 
   return (
     <div className="border rounded-lg overflow-hidden">
@@ -202,6 +244,7 @@ function StepEditor({
             size="icon"
             className="size-6 shrink-0"
             onClick={(e) => { e.stopPropagation(); onDelete() }}
+            aria-label={`Delete step ${index}`}
           >
             <Trash2 className="size-3 text-destructive" />
           </Button>
@@ -258,12 +301,74 @@ function StepEditor({
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label className="text-xs">FM Layout</Label>
-                <Input
-                  className="h-8 text-xs font-mono"
-                  placeholder="e.g. Customers"
-                  value={step.layout || ''}
-                  onChange={e => update('layout', e.target.value)}
-                />
+                <div className="relative">
+                  <Input
+                    className="h-8 text-xs font-mono"
+                    placeholder="e.g. Customers"
+                    list={`mt-layout-list-${index}`}
+                    value={step.layout || ''}
+                    onChange={e => {
+                      const newLayout = e.target.value
+                      update('layout', newLayout)
+                      
+                      // Auto-map if there's a previous step
+                      if (index > 0 && prevStep && prevStep.layout && onAutoMap && serverData) {
+                        let prevTable = ''
+                        let currTable = ''
+                        let relationships: any[] = []
+                        serverData.connections.forEach((conn: any) => {
+                          if (!connectionId || conn.connection.id === connectionId) {
+                            if (conn.connection?.browsedSchema?.compiledSchema) {
+                              try {
+                                const schema = JSON.parse(conn.connection.browsedSchema.compiledSchema)
+                                if (!prevTable) prevTable = schema.layouts?.find((l:any) => l.name === prevStep.layout)?.table
+                                if (!currTable) currTable = schema.layouts?.find((l:any) => l.name === newLayout)?.table
+                                
+                                if (conn.connection.relationshipGraph?.relationships) {
+                                  try {
+                                    const parsedRels = typeof conn.connection.relationshipGraph.relationships === 'string'
+                                      ? JSON.parse(conn.connection.relationshipGraph.relationships)
+                                      : conn.connection.relationshipGraph.relationships
+                                    if (Array.isArray(parsedRels)) relationships.push(...parsedRels)
+                                  } catch {}
+                                } else if (schema.relationships) {
+                                  relationships.push(...schema.relationships)
+                                }
+                              } catch {}
+                            }
+                          }
+                        })
+                        
+                        if (prevTable && currTable) {
+                          const rel = relationships.find(r => 
+                            (r.sourceTable === prevTable && r.targetTable === currTable) ||
+                            (r.sourceTable === currTable && r.targetTable === prevTable)
+                          )
+                          if (rel) {
+                            const isForward = rel.sourceTable === prevTable
+                            const prevField = isForward ? rel.sourceField : rel.targetField
+                            const currField = isForward ? rel.targetField : rel.sourceField
+                            
+                            // Auto update this step's mappings if empty
+                            if (!step.fieldMappings || Object.keys(step.fieldMappings).length === 0) {
+                              const camelKey = prevField.charAt(0).toLowerCase() + prevField.slice(1)
+                              if (!prevStep.extractField || !prevStep.useExtractedAs) {
+                                onAutoMap(prevField, camelKey, { [camelKey]: currField })
+                              } else {
+                                onAutoMap(prevStep.extractField, prevStep.useExtractedAs, { [prevStep.useExtractedAs]: currField })
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }}
+                  />
+                  <datalist id={`mt-layout-list-${index}`}>
+                    {availableLayouts.map((l) => (
+                      <option key={l} value={l} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
               {step.operation === 'script' && (
                 <div className="space-y-1">
@@ -284,6 +389,7 @@ function StepEditor({
               <Label className="text-xs">Field Mappings <span className="text-muted-foreground">(inputParam → FMField)</span></Label>
               <FieldMappingEditor
                 mappings={step.fieldMappings || {}}
+                layoutFields={layoutFields}
                 onChange={m => update('fieldMappings', m)}
               />
             </div>
@@ -321,12 +427,20 @@ function StepEditor({
             <div className="grid grid-cols-2 gap-3 pt-1 border-t border-dashed">
               <div className="space-y-1">
                 <Label className="text-xs text-amber-400">Extract Field (from result)</Label>
-                <Input
-                  className="h-8 text-xs font-mono"
-                  placeholder="e.g. CustomerID"
-                  value={step.extractField || ''}
-                  onChange={e => update('extractField', e.target.value)}
-                />
+                <div className="relative">
+                  <Input
+                    className="h-8 text-xs font-mono"
+                    placeholder="e.g. CustomerID"
+                    list={`mt-extract-list-${index}`}
+                    value={step.extractField || ''}
+                    onChange={e => update('extractField', e.target.value)}
+                  />
+                  <datalist id={`mt-extract-list-${index}`}>
+                    {layoutFields.map((f) => (
+                      <option key={f} value={f} />
+                    ))}
+                  </datalist>
+                </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-amber-400">Inject As (into next step)</Label>
@@ -345,7 +459,7 @@ function StepEditor({
   )
 }
 
-export function MultiTableBuilder({ steps, connectionId, onChange }: MultiTableBuilderProps) {
+export function MultiTableBuilder({ steps, connectionId, serverData, onChange }: MultiTableBuilderProps) {
   const strategy = inferStrategy(steps)
 
   const addStep = (api: StepApi) => {
@@ -397,8 +511,17 @@ export function MultiTableBuilder({ steps, connectionId, onChange }: MultiTableB
               step={step}
               index={i}
               totalSteps={steps.length}
+              serverData={serverData}
+              connectionId={connectionId}
+              prevStep={i > 0 ? steps[i-1] : undefined}
               onChange={updated => updateStep(i, updated)}
               onDelete={() => deleteStep(i)}
+              onAutoMap={(prevExtract, prevUseAs, currMappings) => {
+                const newSteps = [...steps]
+                newSteps[i-1] = { ...newSteps[i-1], extractField: prevExtract, useExtractedAs: prevUseAs }
+                newSteps[i] = { ...newSteps[i], fieldMappings: currMappings }
+                onChange(newSteps)
+              }}
             />
             {i < steps.length - 1 && (
               <div className="flex justify-center py-1">

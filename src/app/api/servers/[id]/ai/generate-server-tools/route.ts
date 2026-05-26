@@ -3,6 +3,8 @@ import { generateObject } from 'ai'
 import { z } from 'zod'
 import { getAISettings, buildModel } from '@/lib/ai/client'
 import { db } from '@/lib/db'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 // ─── Simplified CRUD-only schema ─────────────────────────────────────────────
 // Auto-generate only produces simple, single-layout tools.
@@ -29,10 +31,9 @@ const crudToolSchema = z.object({
 const responseSchema = z.object({
   tools: z.array(crudToolSchema)
 })
-
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
+    const { id } = params
     const body = await request.json()
     const { branchId, layouts, connectionId: passedConnectionId } = body
 
@@ -40,15 +41,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ success: false, error: 'Missing branchId', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
 
-    const server = await db.mcpServer.findUnique({ 
-      where: { id },
+    const server = await db.mcpServer.findFirst({ 
+      where: { id, userId },
       include: { connections: true }
     })
     if (!server) {
       return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
-    const branch = await db.branch.findFirst({ where: { id: branchId, serverId: id } })
+    const branch = await db.branch.findFirst({
+      where: { id: branchId, serverId: id }
+    })
     if (!branch) {
       return NextResponse.json({ success: false, error: 'Branch not found', code: 'NOT_FOUND' }, { status: 404 })
     }
@@ -66,6 +69,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       
       connectionId = activeConnection.connectionId
       
+      // Verify connection ownership
+      const conn = await db.fMConnection.findFirst({
+        where: { id: connectionId, userId }
+      })
+      if (!conn) {
+        return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
+      }
+
       // Fetch the compiled schema for this connection
       const browsedSchema = await db.browsedSchema.findUnique({
         where: { connectionId }
@@ -76,7 +87,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
       
       try {
-        const compiled = JSON.parse(browsedSchema.compiledSchema)
+        const compiled = safeParseJSON(browsedSchema.compiledSchema, {})
         if (compiled.layouts) {
           layoutsToProcess = Object.keys(compiled.layouts).map(layoutName => ({
             name: layoutName,
@@ -87,7 +98,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         console.error('[generate-server-tools] Failed to parse compiled schema:', e)
       }
     }
-    
+
     if (layoutsToProcess.length === 0) {
        return NextResponse.json({ success: false, error: 'No layouts found in the compiled schema. Please ensure you have selected layouts in the schema browser.', code: 'VALIDATION_ERROR' }, { status: 400 })
     }
@@ -163,7 +174,9 @@ STRICT RULES:
       const tool = generatedTools[i]
       
       // Skip if a tool with this name already exists on the server (idempotency)
-      const existing = await db.tool.findFirst({ where: { serverId: id, name: tool.name } })
+      const existing = await db.tool.findFirst({
+        where: { serverId: id, name: tool.name }
+      })
       if (existing) { createdTools.push(existing); continue; }
 
       const baseTool = await db.tool.create({
@@ -184,7 +197,11 @@ STRICT RULES:
 
       if (branchId) {
         await db.branchTool.create({
-          data: { branchId, toolId: baseTool.id, action: 'added' }
+          data: {
+            branchId,
+            toolId: baseTool.id,
+            action: 'added'
+          }
         })
       }
       createdTools.push(baseTool)
@@ -196,12 +213,12 @@ STRICT RULES:
       count: createdTools.length
     }, { status: 201 })
 
-  } catch (error: any) {
+    } catch (error: any) {
     console.error('[generate-server-tools] Error:', error)
     return NextResponse.json({
       success: false,
       error: error.message || 'Internal server error',
       code: 'SERVER_ERROR'
     }, { status: 500 })
-  }
-}
+    }
+    });

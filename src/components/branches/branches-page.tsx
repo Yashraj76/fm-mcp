@@ -2,7 +2,9 @@
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
+import Link from 'next/link'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -253,26 +255,30 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
 
 export function BranchesPage() {
   const queryClient = useQueryClient()
-  const { currentServerId, setCurrentServer, setCurrentView, setShowBranchDialog, triggerRefreshBranches, refreshBranches } = useAppStore()
+  const currentServerId = useAppStore((s) => s.currentServerId)
+  const setCurrentServer = useAppStore((s) => s.setCurrentServer)
+  const setShowBranchDialog = useAppStore((s) => s.setShowBranchDialog)
+  const triggerRefreshBranches = useAppStore((s) => s.triggerRefreshBranches)
+  const refreshBranches = useAppStore((s) => s.refreshBranches)
 
   const { data: servers = [] } = useQuery<ServerItem[]>({
     queryKey: ['servers'],
-    queryFn: () => fetch('/api/servers').then(r => r.json()).then(res => res.data ?? []),
+    queryFn: () => api.get<ServerItem[]>('/api/servers'),
   })
 
   const { data: branches = [], isLoading, isError, error } = useQuery<BranchItem[]>({
     queryKey: ['branches', currentServerId, refreshBranches],
     queryFn: async () => {
-      const res = await fetch(`/api/servers/${currentServerId}/branches`)
-      if (!res.ok) {
-        if (res.status === 404) {
+      try {
+        return await api.get<BranchItem[]>(`/api/servers/${currentServerId}/branches`)
+      } catch (err: any) {
+        if (err.status === 404) {
           // Server no longer exists, reset selection
           setCurrentServer(null)
           return []
         }
-        throw new Error('Failed to load branches')
+        throw err
       }
-      return res.json().then(r => r.data ?? [])
     },
     enabled: !!currentServerId,
     retry: 1,
@@ -284,14 +290,14 @@ export function BranchesPage() {
   // Fetch activity logs for this server
   const { data: serverLogs = [], isLoading: isLoadingLogs } = useQuery({
     queryKey: ['server-logs', currentServerId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/logs?limit=100`).then(r => r.json()).then(res => res.data ?? []),
+    queryFn: () => api.get<any[]>(`/api/servers/${currentServerId}/logs?limit=100`),
     enabled: !!currentServerId && branchTab === 'activity',
   })
 
   // Fetch specific log detail for diff display
   const { data: logDetail, isLoading: isLoadingDetail } = useQuery({
     queryKey: ['log-detail', expandedLogId],
-    queryFn: () => fetch(`/api/logs/${expandedLogId}`).then(r => r.json()).then(res => res.data),
+    queryFn: () => api.get<any>(`/api/logs/${expandedLogId}`),
     enabled: !!expandedLogId,
   })
 
@@ -299,13 +305,8 @@ export function BranchesPage() {
 
   const mergeMutation = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/branches/${branchId}/merge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ changelog: `Merged branch ${branchId}` }),
-      }).then(r => {
-        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Merge failed') })
-        return r.json()
+      api.post<{ message: string }>(`/api/branches/${branchId}/merge`, {
+        changelog: `Merged branch ${branchId}`,
       }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
@@ -313,49 +314,40 @@ export function BranchesPage() {
       triggerRefreshBranches()
       toast.success(data.message || 'Branch merged successfully')
     },
-    onError: (err: Error) => toast.error(err.message || 'Failed to merge branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to merge branch'),
   })
 
   const revertMutation = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/branches/${branchId}/revert`, { method: 'POST' }).then(r => r.json()),
+      api.post<any>(`/api/branches/${branchId}/revert`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
       triggerRefreshBranches()
       toast.success('Branch reverted successfully')
     },
-    onError: () => toast.error('Failed to revert branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to revert branch'),
   })
 
   const archiveMutation = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/branches/${branchId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'archived' }),
-      }).then(r => r.json()),
+      api.put<any>(`/api/branches/${branchId}`, { status: 'archived' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
       triggerRefreshBranches()
       toast.success('Branch archived')
     },
-    onError: () => toast.error('Failed to archive branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to archive branch'),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/branches/${branchId}`, {
-        method: 'DELETE',
-      }).then(r => {
-        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Delete failed') })
-        return r.json()
-      }),
+      api.delete<any>(`/api/branches/${branchId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
       triggerRefreshBranches()
       toast.success('Branch deleted')
     },
-    onError: (err: Error) => toast.error(err.message || 'Failed to delete branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to delete branch'),
   })
 
   const defaultBranch = branches.find(b => b.isDefault)
@@ -378,9 +370,11 @@ export function BranchesPage() {
             <p className="text-muted-foreground text-sm mb-4 text-center max-w-md">
               Create an MCP server first before managing branches.
             </p>
-            <Button variant="outline" onClick={() => setCurrentView('servers')}>
-              <ArrowLeft className="size-4" />
-              Go to Servers
+            <Button variant="outline" asChild>
+              <Link href="/servers" className="flex items-center gap-2">
+                <ArrowLeft className="size-4" />
+                Go to Servers
+              </Link>
             </Button>
           </Card>
         ) : (
@@ -427,7 +421,7 @@ export function BranchesPage() {
     return (
       <div className="p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null) }}>
+          <Button variant="ghost" size="icon" aria-label="Back to Server List" onClick={() => { setCurrentServer(null) }}>
             <ArrowLeft className="size-4" />
           </Button>
           <h1 className="text-2xl font-bold tracking-tight">Branch Management</h1>
@@ -450,7 +444,7 @@ export function BranchesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null) }}>
+          <Button variant="ghost" size="icon" aria-label="Back to Server List" onClick={() => { setCurrentServer(null) }}>
             <ArrowLeft className="size-4" />
           </Button>
           <div>
@@ -631,6 +625,7 @@ export function BranchesPage() {
                               onClick={() => revertMutation.mutate(branch.id)}
                               disabled={revertMutation.isPending}
                               title="Revert to snapshot"
+                              aria-label="Revert branch to snapshot"
                             >
                               <RotateCcw className="size-3.5" />
                             </Button>
@@ -639,12 +634,13 @@ export function BranchesPage() {
                               size="sm"
                               onClick={() => archiveMutation.mutate(branch.id)}
                               title="Archive branch"
+                              aria-label="Archive branch"
                             >
                               <Archive className="size-3.5" />
                             </Button>
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
-                                <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" title="Delete branch">
+                                <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" title="Delete branch" aria-label="Delete branch">
                                   <Trash2 className="size-3.5" />
                                 </Button>
                               </AlertDialogTrigger>
@@ -676,15 +672,15 @@ export function BranchesPage() {
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              fetch(`/api/branches/${branch.id}`, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ status: 'active' }),
-                              }).then(() => {
-                                queryClient.invalidateQueries({ queryKey: ['branches'] })
-                                triggerRefreshBranches()
-                                toast.success('Branch restored')
-                              })
+                              api.put(`/api/branches/${branch.id}`, { status: 'active' })
+                                .then(() => {
+                                  queryClient.invalidateQueries({ queryKey: ['branches'] })
+                                  triggerRefreshBranches()
+                                  toast.success('Branch restored')
+                                })
+                                .catch((err: any) => {
+                                  toast.error(err.message || 'Failed to restore branch')
+                                })
                             }}
                           >
                             Restore

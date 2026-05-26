@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import {
   Sheet,
   SheetContent,
@@ -104,7 +105,7 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
     isFetching,
   } = useQuery<SchemaData>({
     queryKey: ['schema', connectionId],
-    queryFn: () => fetch(`/api/connections/${connectionId}/schema`).then((r) => r.json()).then(res => res.data),
+    queryFn: () => api.get<SchemaData>(`/api/connections/${connectionId}/schema`),
     enabled: !!connectionId,
   })
 
@@ -130,6 +131,7 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
               className="size-8"
               onClick={() => refetch()}
               disabled={isFetching}
+              aria-label="Refresh Schema"
             >
               <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} />
             </Button>

@@ -1,6 +1,8 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -13,7 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Link2 } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 
 interface ConnectionItem {
   id: string
@@ -33,20 +35,22 @@ interface FormValues {
 
 export function ServerDialog() {
   const queryClient = useQueryClient()
-  const { showServerDialog, editingServerId, setShowServerDialog, triggerRefreshServers } = useAppStore()
+  const showServerDialog = useAppStore((s) => s.showServerDialog)
+  const editingServerId = useAppStore((s) => s.editingServerId)
+  const setShowServerDialog = useAppStore((s) => s.setShowServerDialog)
+  const triggerRefreshServers = useAppStore((s) => s.triggerRefreshServers)
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<string[]>([])
-  const [fileNamesPerConnection, setFileNamesPerConnection] = useState<Record<string, string>>({})
 
   const isEditing = !!editingServerId
 
   const { data: connections = [], isLoading: loadingConnections } = useQuery<ConnectionItem[]>({
     queryKey: ['connections'],
-    queryFn: () => fetch('/api/connections').then(r => r.json()).then(res => res.data ?? []),
+    queryFn: () => api.get<ConnectionItem[]>('/api/connections'),
   })
 
-  const { data: existingServer } = useQuery({
+  const { data: existingServer, isLoading: loadingServer } = useQuery({
     queryKey: ['server', editingServerId],
-    queryFn: () => fetch(`/api/servers/${editingServerId}`).then(r => r.json()).then(res => res.data),
+    queryFn: () => api.get<any>(`/api/servers/${editingServerId}`),
     enabled: isEditing,
   })
 
@@ -59,58 +63,48 @@ export function ServerDialog() {
     defaultValues: { name: '', description: '', version: '1.0.0' },
   })
 
-  const handleOpenChange = useCallback((open: boolean) => {
-    if (open && existingServer && isEditing) {
+  useEffect(() => {
+    if (isEditing && existingServer) {
       reset({
         name: existingServer.name,
         description: existingServer.description || '',
         version: existingServer.version,
       })
       setSelectedConnectionIds(existingServer.connections?.map((c: { connection: { id: string } }) => c.connection.id) || [])
-      const fnMap: Record<string, string> = {}
-      existingServer.connections?.forEach((c: { connection: { id: string }; fileNames: string }) => {
-        try { fnMap[c.connection.id] = JSON.parse(c.fileNames).join(', ') } catch { fnMap[c.connection.id] = '' }
-      })
-      setFileNamesPerConnection(fnMap)
-    } else if (open) {
-      reset({ name: '', description: '', version: '1.0.0' })
-      setSelectedConnectionIds([])
-      setFileNamesPerConnection({})
+    }
+  }, [isEditing, existingServer, reset])
+
+  const handleOpenChange = useCallback((open: boolean) => {
+    if (open) {
+      if (!isEditing) {
+        reset({ name: '', description: '', version: '1.0.0' })
+        setSelectedConnectionIds([])
+      }
     }
     setShowServerDialog(open)
-  }, [setShowServerDialog, reset, existingServer, isEditing])
+  }, [setShowServerDialog, reset, isEditing])
 
   const createMutation = useMutation({
     mutationFn: (data: FormValues) =>
-      fetch('/api/servers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...data,
-          connectionIds: selectedConnectionIds,
-          fileNamesPerConnection: selectedConnectionIds.map(id => fileNamesPerConnection[id] || ''),
-        }),
-      }).then(r => r.json()),
+      api.post<any>('/api/servers', {
+        ...data,
+        connectionIds: selectedConnectionIds,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
       triggerRefreshServers()
       toast.success('Server created successfully')
       setShowServerDialog(false)
     },
-    onError: () => toast.error('Failed to create server'),
+    onError: (err: any) => toast.error(err.message || 'Failed to create server'),
   })
 
   const updateMutation = useMutation({
     mutationFn: (data: FormValues) =>
-      fetch(`/api/servers/${editingServerId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...data,
-          connectionIds: selectedConnectionIds,
-          fileNamesPerConnection: selectedConnectionIds.map(id => fileNamesPerConnection[id] || ''),
-        }),
-      }).then(r => r.json()),
+      api.put<any>(`/api/servers/${editingServerId}`, {
+        ...data,
+        connectionIds: selectedConnectionIds,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
       queryClient.invalidateQueries({ queryKey: ['server', editingServerId] })
@@ -118,7 +112,7 @@ export function ServerDialog() {
       toast.success('Server updated successfully')
       setShowServerDialog(false)
     },
-    onError: () => toast.error('Failed to update server'),
+    onError: (err: any) => toast.error(err.message || 'Failed to update server'),
   })
 
   const onSubmit = (data: FormValues) => {
@@ -147,6 +141,13 @@ export function ServerDialog() {
           </DialogDescription>
         </DialogHeader>
 
+        {isEditing && loadingServer ? (
+          <div className="space-y-4 py-4">
+            <div className="space-y-2"><Skeleton className="h-4 w-16" /><Skeleton className="h-10 w-full" /></div>
+            <div className="space-y-2"><Skeleton className="h-4 w-24" /><Skeleton className="h-24 w-full" /></div>
+            <div className="space-y-2"><Skeleton className="h-4 w-32" /><Skeleton className="h-16 w-full" /></div>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="name">Name *</Label>
@@ -213,19 +214,6 @@ export function ServerDialog() {
                           </Badge>
                         </label>
                       </div>
-                      {isSelected && (
-                        <Input
-                          placeholder="File names (comma-separated)"
-                          className="ml-6 h-7 text-xs"
-                          value={fileNamesPerConnection[conn.id] || ''}
-                          onChange={(e) =>
-                            setFileNamesPerConnection(prev => ({
-                              ...prev,
-                              [conn.id]: e.target.value,
-                            }))
-                          }
-                        />
-                      )}
                     </div>
                   )
                 })}
@@ -250,6 +238,7 @@ export function ServerDialog() {
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
   )

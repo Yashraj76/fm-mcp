@@ -3,6 +3,8 @@ import { db } from '@/lib/db'
 import { z } from 'zod'
 import { callAI } from '@/lib/ai/client'
 import { SUGGEST_TOOLS_PROMPT } from '@/lib/ai/prompts/suggest-tools'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 const suggestSchema = z.object({
   branchId: z.string().optional(),
@@ -14,14 +16,11 @@ const suggestSchema = z.object({
 })
 
 // POST /api/servers/[id]/ai/suggest - Get AI-generated tool suggestions based on schema
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params;
-    const server = await db.mcpServer.findUnique({ 
-      where: { id },
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
+    const { id } = params;
+    const server = await db.mcpServer.findFirst({ 
+      where: { id, userId },
       include: { 
         connections: { 
           where: { isActive: true },
@@ -36,7 +35,7 @@ export async function POST(
         } 
       }
     });
-    
+
     if (!server) {
       return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 });
     }
@@ -61,11 +60,14 @@ export async function POST(
       );
     }
 
-    const compiledSchema = JSON.parse(bs.compiledSchema);
-    
+    const compiledSchema = safeParseJSON(bs.compiledSchema, {});
+
     // Call AI for suggestions
     const inputPayload = {
-      layouts: compiledSchema.layouts || [],
+      layouts: (compiledSchema.layouts || []).map((l: any) => ({
+        name: l.name,
+        fields: l.fields?.map((f: any) => f.name) || [], // Simplify to names only
+      })),
       relationships: compiledSchema.relationships || [],
       context: parsed.data.context,
       type: parsed.data.suggestionType
@@ -74,22 +76,25 @@ export async function POST(
     const aiText = await callAI({
       systemPrompt: SUGGEST_TOOLS_PROMPT,
       userMessage: JSON.stringify(inputPayload, null, 2),
+      maxOutputTokens: 2500,
     });
 
-    // Parse AI output
-    let clean = aiText;
-    const match = aiText.match(/\{[\s\S]*\}/);
-    if (match) clean = match[0];
-    
-    let aiParsed: { suggestions: any[] };
-    try {
-      aiParsed = JSON.parse(clean);
-    } catch (e) {
-      console.error('[AI Parse Error]', aiText);
-      return NextResponse.json({ success: false, error: 'Failed to parse AI suggestions' }, { status: 500 });
+    // Parse AI output defensively
+    const clean = aiText
+      .replace(/```json\n?/g, '')
+      .replace(/```\n?/g, '')
+      .trim();
+
+    let aiParsed = safeParseJSON<{ suggestions: any[] }>(clean, { suggestions: [] });
+    if (!aiParsed || !Array.isArray(aiParsed.suggestions)) {
+      // Try mapping via matching brace just in case of conversational prefixes
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (match) {
+        aiParsed = safeParseJSON<{ suggestions: any[] }>(match[0], { suggestions: [] });
+      }
     }
 
-    const suggestions = aiParsed.suggestions || [];
+    const suggestions = aiParsed?.suggestions || [];
 
     // Save suggestions to database
     const savedSuggestions = await Promise.all(
@@ -116,14 +121,14 @@ export async function POST(
         title: s.title,
         description: s.description,
         suggestionType: s.suggestionType,
-        proposedConfig: JSON.parse(s.proposedConfig),
+        proposedConfig: safeParseJSON(s.proposedConfig),
         status: s.status,
         createdAt: s.createdAt,
       })),
       generatedAt: new Date().toISOString(),
     });
-  } catch (error: any) {
+    } catch (error: any) {
     console.error('Error generating suggestions:', error)
     return NextResponse.json({ success: false, error: 'Failed to generate suggestions: ' + error.message }, { status: 500 })
-  }
-}
+    }
+    });

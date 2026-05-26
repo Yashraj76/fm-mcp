@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { api } from '@/lib/utils/api-client'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -79,16 +80,13 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
     setError(null)
     setSaved(false)
     try {
-      const res = await fetch(`/api/connections/${connectionId}/browse-schema`, { method: 'POST' })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
-      setResult(data.data)
+      const browseData = await api.post<BrowseResult>(`/api/connections/${connectionId}/browse-schema`)
+      setResult(browseData)
       
       try {
-        const compRes = await fetch(`/api/connections/${connectionId}/schema/compiled`)
-        const compData = await compRes.json()
-        if (compData.success && compData.data) {
-          const { selectedLayouts, selectedTables, selectedScripts, compiledSchema } = compData.data
+        const compData = await api.get<any>(`/api/connections/${connectionId}/schema/compiled`)
+        if (compData) {
+          const { selectedLayouts, selectedTables, selectedScripts, compiledSchema } = compData
           setSelectedLayouts(new Set(selectedLayouts || []))
           setSelectedTables(new Set(selectedTables || []))
           setSelectedScripts(new Set(selectedScripts || []))
@@ -131,16 +129,12 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
     setError(null)
     try {
       // Call the AI inference endpoint
-      const res = await fetch(`/api/connections/${connectionId}/infer-relationships`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedLayouts: Array.from(selectedLayouts) }),
+      const data = await api.post<any>(`/api/connections/${connectionId}/infer-relationships`, {
+        selectedLayouts: Array.from(selectedLayouts)
       })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
       setRelationships(prev => {
         const next = [...prev]
-        const rels = data.data.relationships || [];
+        const rels = data.relationships || [];
         rels.forEach((s: any) => {
           // AI now outputs from/to/key/confidence/reason directly — no remapping needed
           if (!next.some(r => r.from === s.from && r.to === s.to && r.key === s.key)) {
@@ -166,21 +160,15 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
     setSaving(true)
     setError(null)
     try {
-      const res = await fetch(`/api/connections/${connectionId}/schema/selections`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          selectedLayouts: Array.from(selectedLayouts),
-          selectedTables: Array.from(selectedTables),
-          selectedScripts: Array.from(selectedScripts),
-          selectedFields: Object.fromEntries(
-            Object.entries(selectedFields).map(([k, v]) => [k, Array.from(v)])
-          ),
-          relationships,
-        }),
+      await api.put(`/api/connections/${connectionId}/schema/selections`, {
+        selectedLayouts: Array.from(selectedLayouts),
+        selectedTables: Array.from(selectedTables),
+        selectedScripts: Array.from(selectedScripts),
+        selectedFields: Object.fromEntries(
+          Object.entries(selectedFields).map(([k, v]) => [k, Array.from(v)])
+        ),
+        relationships,
       })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
       setSaved(true)
     } catch (e: any) {
       setError(e.message)
@@ -231,28 +219,25 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
         next.add(name)
         // Fetch fields lazily if not present
         if (!result?.layoutMeta[name]) {
-          fetch(`/api/connections/${connectionId}/layout-fields`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ layout: name })
-          }).then(res => res.json()).then(data => {
-            if (data.success && data.data) {
-              setResult(prevRes => {
-                if (!prevRes) return prevRes
-                return {
-                  ...prevRes,
-                  layoutMeta: { ...prevRes.layoutMeta, [name]: data.data }
+          api.post<any>(`/api/connections/${connectionId}/layout-fields`, { layout: name })
+            .then(data => {
+              if (data) {
+                setResult(prevRes => {
+                  if (!prevRes) return prevRes
+                  return {
+                    ...prevRes,
+                    layoutMeta: { ...prevRes.layoutMeta, [name]: data }
+                  }
+                })
+                // Auto-select all fields on first load if layout is selected
+                if (selectedLayouts.has(name)) {
+                   setSelectedFields(prevF => ({
+                     ...prevF,
+                     [name]: new Set(data.fields)
+                   }))
                 }
-              })
-              // Auto-select all fields on first load if layout is selected
-              if (selectedLayouts.has(name)) {
-                 setSelectedFields(prevF => ({
-                   ...prevF,
-                   [name]: new Set(data.data.fields)
-                 }))
               }
-            }
-          }).catch(console.error)
+            }).catch(console.error)
         }
       }
       return next
@@ -265,8 +250,8 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
   const filteredScripts = result?.scripts.filter((s) => s.toLowerCase().includes(scriptSearch.toLowerCase())) || []
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center pt-8 pb-4 px-4">
-      <div className="w-full max-w-5xl bg-[#0d0f18] border border-white/10 rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center pt-6 pb-6 px-4">
+      <div className="w-full max-w-[95vw] h-[95vh] bg-[#0d0f18] border border-white/10 rounded-2xl shadow-2xl flex flex-col">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
@@ -348,14 +333,14 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
             <div className="w-2/5 border-r border-white/10 flex flex-col">
               <div className="px-4 py-3 border-b border-white/10 shrink-0">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
-                    <Layout className="w-3.5 h-3.5" /> Layouts
-                    <Badge className="ml-1 bg-white/10 text-white/50 border-none text-[10px]">{selectedLayouts.size}/{result.layouts.length}</Badge>
+                  <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                    <Layout className="w-4 h-4" /> Layouts
+                    <Badge className="ml-1 bg-white/10 text-white/50 border-none text-xs">{selectedLayouts.size}/{result.layouts.length}</Badge>
                   </span>
                   <div className="flex gap-1.5">
-                    <button onClick={() => setSelectedLayouts(new Set(result.layouts))} className="text-[10px] text-blue-400 hover:text-blue-300">All</button>
+                    <button onClick={() => setSelectedLayouts(new Set(result.layouts))} className="text-xs text-blue-400 hover:text-blue-300">All</button>
                     <span className="text-white/20">·</span>
-                    <button onClick={() => setSelectedLayouts(new Set())} className="text-[10px] text-white/40 hover:text-white/60">None</button>
+                    <button onClick={() => setSelectedLayouts(new Set())} className="text-xs text-white/40 hover:text-white/60">None</button>
                   </div>
                 </div>
                 <div className="relative">
@@ -379,10 +364,10 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                         <Checkbox
                           checked={isSelected}
                           onCheckedChange={() => toggleLayout(layout)}
-                          className="h-3.5 w-3.5 border-white/30 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
+                          className="h-4 w-4 border-white/30 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
                         />
                         <span
-                          className="flex-1 text-xs text-white/80 truncate cursor-pointer"
+                          className="flex-1 text-sm text-white/80 truncate cursor-pointer"
                           onClick={() => toggleLayout(layout)}
                         >{layout}</span>
                                                   <button
@@ -401,10 +386,10 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                           ) : (
                             <>
                               <div className="flex items-center justify-between px-2 py-0.5 mb-1">
-                                <p className="text-[10px] text-white/40">{meta.fields.length} fields</p>
+                                <p className="text-xs text-white/40">{meta.fields.length} fields</p>
                                 <div className="flex gap-1.5">
-                                  <button onClick={(e) => { e.stopPropagation(); setSelectedFields(prev => ({...prev, [layout]: new Set(meta.fields)})) }} className="text-[9px] text-blue-400 hover:text-blue-300">All</button>
-                                  <button onClick={(e) => { e.stopPropagation(); setSelectedFields(prev => ({...prev, [layout]: new Set()})) }} className="text-[9px] text-white/40 hover:text-white/60">None</button>
+                                  <button onClick={(e) => { e.stopPropagation(); setSelectedFields(prev => ({...prev, [layout]: new Set(meta.fields)})) }} className="text-xs text-blue-400 hover:text-blue-300">All</button>
+                                  <button onClick={(e) => { e.stopPropagation(); setSelectedFields(prev => ({...prev, [layout]: new Set()})) }} className="text-xs text-white/40 hover:text-white/60">None</button>
                                 </div>
                               </div>
                               {meta.fields.map((f: string) => (
@@ -419,10 +404,10 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                               ))}
                               {meta.portals.length > 0 && (
                                 <div className="mt-2 pt-1 border-t border-white/5">
-                                  <p className="text-[10px] text-white/30 px-2 py-0.5">{meta.portals.length} portals</p>
+                                  <p className="text-xs text-white/30 px-2 py-0.5">{meta.portals.length} portals</p>
                                   {meta.portals.map((p: string) => (
-                                    <div key={p} className="flex items-center gap-1.5 px-2 py-0.5 text-[10px] text-purple-400/70">
-                                      <GitBranch className="w-2.5 h-2.5 shrink-0" />
+                                    <div key={p} className="flex items-center gap-1.5 px-2 py-0.5 text-xs text-purple-400/70">
+                                      <GitBranch className="w-3 h-3 shrink-0" />
                                       {p}
                                     </div>
                                   ))}
@@ -442,9 +427,9 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
             <div className="w-1/5 border-r border-white/10 flex flex-col">
               <div className="px-4 py-3 border-b border-white/10 shrink-0">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
-                    <Table2 className="w-3.5 h-3.5" /> OData Tables
-                    <Badge className="ml-1 bg-white/10 text-white/50 border-none text-[10px]">{selectedTables.size}/{result.odataTables.length}</Badge>
+                  <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                    <Table2 className="w-4 h-4" /> OData Tables
+                    <Badge className="ml-1 bg-white/10 text-white/50 border-none text-xs">{selectedTables.size}/{result.odataTables.length}</Badge>
                   </span>
                 </div>
                 <div className="relative">
@@ -470,9 +455,9 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                     <Checkbox
                       checked={selectedTables.has(table)}
                       onCheckedChange={() => toggleTable(table)}
-                      className="h-3.5 w-3.5 border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
+                      className="h-4 w-4 border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                     />
-                    <span className="flex-1 text-xs text-white/80 truncate">{table}</span>
+                    <span className="flex-1 text-sm text-white/80 truncate">{table}</span>
                   </div>
                 ))}
               </div>
@@ -484,14 +469,14 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               <div className="border-b border-white/10 flex flex-col" style={{ maxHeight: '45%' }}>
                 <div className="px-4 py-3 border-b border-white/10 shrink-0">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
-                      <FileCode className="w-3.5 h-3.5" /> Scripts
-                      <Badge className="ml-1 bg-white/10 text-white/50 border-none text-[10px]">{selectedScripts.size}/{result.scripts.length}</Badge>
+                    <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                      <FileCode className="w-4 h-4" /> Scripts
+                      <Badge className="ml-1 bg-white/10 text-white/50 border-none text-xs">{selectedScripts.size}/{result.scripts.length}</Badge>
                     </span>
                     <div className="flex gap-1.5">
-                      <button onClick={() => setSelectedScripts(new Set(result.scripts))} className="text-[10px] text-blue-400 hover:text-blue-300">All</button>
+                      <button onClick={() => setSelectedScripts(new Set(result.scripts))} className="text-xs text-blue-400 hover:text-blue-300">All</button>
                       <span className="text-white/20">·</span>
-                      <button onClick={() => setSelectedScripts(new Set())} className="text-[10px] text-white/40 hover:text-white/60">None</button>
+                      <button onClick={() => setSelectedScripts(new Set())} className="text-xs text-white/40 hover:text-white/60">None</button>
                     </div>
                   </div>
                   <div className="relative">
@@ -517,9 +502,9 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                       <Checkbox
                         checked={selectedScripts.has(script)}
                         onCheckedChange={() => toggleScript(script)}
-                        className="h-3.5 w-3.5 border-white/30 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
+                        className="h-4 w-4 border-white/30 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
                       />
-                      <span className="flex-1 text-xs text-white/80 truncate">{script}</span>
+                      <span className="flex-1 text-sm text-white/80 truncate">{script}</span>
                     </div>
                   ))}
                 </div>
@@ -529,9 +514,9 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               <div className="flex-1 flex flex-col overflow-hidden">
                 <div className="px-4 py-3 border-b border-white/10 shrink-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
-                      <GitBranch className="w-3.5 h-3.5 text-purple-400" /> Relationships
-                      <Badge className="ml-1 bg-purple-500/20 text-purple-400 border-none text-[10px]">{relationships.length}</Badge>
+                    <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                      <GitBranch className="w-4 h-4 text-purple-400" /> Relationships
+                      <Badge className="ml-1 bg-purple-500/20 text-purple-400 border-none text-xs">{relationships.length}</Badge>
                     </span>
                     <button
                       onClick={fetchAISuggestions}

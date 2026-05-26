@@ -1,17 +1,23 @@
-import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { withAuth } from "@/lib/auth/api-guard";
+import { apiSuccess, apiNotFound } from '@/lib/utils/api-response';
 
-export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  const entry = await prisma.activityLog.findUnique({ where: { id: (await params).id } });
-  if (!entry) return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
+export const GET = withAuth(async (_, { params, userId }) => {
+    const entry = await prisma.activityLog.findUnique({
+      where: { id: (await params).id },
+      include: { server: true }
+    });
+    if (!entry || (entry.serverId && entry.server?.userId !== userId)) {
+      return apiNotFound();
+    }
 
-  const before = safeParseJSON(entry.before, null);
-  const after = safeParseJSON(entry.after, null);
+    const before = safeParseJSON(entry.before, null);
+    const after = safeParseJSON(entry.after, null);
 
-  // Build a field-level diff when both before and after exist
-  let diff: Record<string, { before: any; after: any }> | null = null;
-  if (before && after && typeof before === 'object' && typeof after === 'object') {
+    // Build a field-level diff when both before and after exist
+    let diff: Record<string, { before: any; after: any }> | null = null;
+    if (before && after && typeof before === 'object' && typeof after === 'object') {
     diff = {};
     const allKeys = new Set([...Object.keys(before), ...Object.keys(after)]);
     for (const key of allKeys) {
@@ -20,11 +26,9 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       }
     }
     if (Object.keys(diff).length === 0) diff = null;
-  }
+    }
 
-  return NextResponse.json({
-    success: true,
-    data: {
+    return apiSuccess({
       id: entry.id,
       action: entry.action,
       entityType: entry.entityType,
@@ -38,6 +42,5 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       diff,
       meta: safeParseJSON(entry.meta, null),
       createdAt: entry.createdAt,
-    },
-  });
-}
+    });
+    });

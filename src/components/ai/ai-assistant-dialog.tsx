@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
+import { api } from '@/lib/utils/api-client'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
 import {
   Dialog,
   DialogContent,
@@ -79,13 +81,11 @@ const PRE_BUILT_SUGGESTIONS = [
 ]
 
 export function AiAssistantDialog() {
-  const {
-    showAiDialog,
-    currentServerId,
-    setShowAiDialog,
-    setShowToolDialog,
-    triggerRefreshTools,
-  } = useAppStore()
+  const showAiDialog = useAppStore((s) => s.showAiDialog)
+  const currentServerId = useAppStore((s) => s.currentServerId)
+  const setShowAiDialog = useAppStore((s) => s.setShowAiDialog)
+  const setShowToolDialog = useAppStore((s) => s.setShowToolDialog)
+  const triggerRefreshTools = useAppStore((s) => s.triggerRefreshTools)
   const queryClient = useQueryClient()
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -96,16 +96,13 @@ export function AiAssistantDialog() {
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Fetch server schemas (tools only now, backend handles schema context)
-  const { data: schemaData, isLoading: isLoadingSchemas } = useQuery({
+  const { data: schemaData, isLoading: isLoadingSchemas } = useQuery<{ schemas: any[]; tools: string[] }>({
     queryKey: ['ai-schemas', currentServerId],
     queryFn: async () => {
       if (!currentServerId) return { schemas: [], tools: [] }
 
       // Fetch tools
-      const toolsRes = await fetch(`/api/servers/${currentServerId}/tools`)
-      if (!toolsRes.ok) throw new Error('Failed to fetch tools')
-      const toolsJson = await toolsRes.json()
-      const tools = toolsJson.data ?? []
+      const tools = await api.get<any[]>(`/api/servers/${currentServerId}/tools`)
 
       return {
         schemas: [], // Deprecated, backend handles schema context now
@@ -147,20 +144,24 @@ export function AiAssistantDialog() {
           branchId: useAppStore.getState().currentBranchId,
         }
 
-        const res = await fetch(`/api/servers/${currentServerId}/tools`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-        if (!res.ok) throw new Error(`Failed to create tool: ${toolDef.name}`)
-        results.push(await res.json())
+        const currentBranchId = useAppStore.getState().currentBranchId;
+        const endpoint = currentBranchId 
+          ? `/api/branches/${currentBranchId}/tools`
+          : `/api/servers/${currentServerId}/tools`;
+
+        const res = await api.post<any>(endpoint, payload)
+        results.push(res)
       }
       return results
     },
     onSuccess: (_data, suggestion) => {
       const toolCount = (suggestion.proposedConfig.tools as unknown[])?.length || 1
       toast.success(`Created ${toolCount} tool(s) from AI suggestion`)
+      
+      const currentBranchId = useAppStore.getState().currentBranchId
       queryClient.invalidateQueries({ queryKey: ['tools', currentServerId] })
+      queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
+      queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
       triggerRefreshTools()
     },
     onError: (err: Error) => {
@@ -170,18 +171,11 @@ export function AiAssistantDialog() {
 
   // Send message mutation
   const sendMessageMutation = useMutation({
-    mutationFn: async (message: string) => {
-      const res = await fetch(`/api/servers/${currentServerId}/ai/suggest`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          suggestionType: 'tool_suggestion',
-          context: message,
-        }),
-      })
-      if (!res.ok) throw new Error('Failed to get AI response')
-      return res.json()
-    },
+    mutationFn: (message: string) =>
+      api.post<any>(`/api/servers/${currentServerId}/ai/suggest`, {
+        suggestionType: 'tool_suggestion',
+        context: message,
+      }),
   })
 
   const handleSendMessage = useCallback(
@@ -477,12 +471,14 @@ export function AiAssistantDialog() {
                   placeholder="Ask about your FileMaker schema..."
                   disabled={isLoading}
                   className="text-sm"
+                  aria-label="Ask about your FileMaker schema"
                 />
                 <Button
                   onClick={() => handleSendMessage(inputValue)}
                   disabled={isLoading || !inputValue.trim()}
                   size="icon"
                   className="flex-shrink-0"
+                  aria-label="Send message"
                 >
                   {isLoading ? (
                     <Loader2 className="size-4 animate-spin" />

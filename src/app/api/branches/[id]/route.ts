@@ -2,37 +2,14 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { z } from 'zod';
+import { withAuth } from "@/lib/auth/api-guard";
+import { toSafeBranch } from '@/lib/utils/dto'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiForbidden, apiServerError } from '@/lib/utils/api-response'
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 // GET /api/branches/[id] - Get details of a single branch
-export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const branch = await prisma.branch.findUnique({
-      where: { id: (await params).id },
-      include: {
-        _count: { select: { tools: true, deployments: true } },
-      },
-    });
-
-    if (!branch) {
-      return NextResponse.json(
-        { success: false, error: 'Branch not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
-    }
-
-    return NextResponse.json({ success: true, data: branch });
-  } catch (error) {
-    console.error('[API GET Branch Error]', error);
-    return NextResponse.json(
-      { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
-      { status: 500 }
-    );
-  }
-}
-
 const UpdateBranchSchema = z.object({
   name: z.string().min(1).regex(/^[a-z0-9\-\/]+$/, 'Lowercase letters, numbers, hyphens, slashes only').optional(),
   description: z.string().optional(),
@@ -40,24 +17,47 @@ const UpdateBranchSchema = z.object({
 });
 
 // PUT /api/branches/[id] - Update branch details (archive/restore/rename)
-export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const branchId = (await params).id;
-    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+// DELETE /api/branches/[id] - Hard delete an active or archived branch
+export const GET = withAuth(async (_, { params, userId }) => {
+    try {
+    const branch = await prisma.branch.findFirst({
+      where: {
+        id: params.id,
+        server: { userId }
+      },
+      include: {
+        _count: { select: { tools: true, deployments: true } },
+      },
+    });
 
     if (!branch) {
-      return NextResponse.json(
-        { success: false, error: 'Branch not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
+      return apiNotFound('Branch not found');
+    }
+
+    return apiSuccess(toSafeBranch(branch));
+    } catch (error) {
+    console.error('[API GET Branch Error]', error);
+    return apiServerError('Internal server error');
+    }
+    });
+
+export const PUT = withAuth(async (req, { params, userId }) => {
+    try {
+    const branchId = params.id;
+    const branch = await prisma.branch.findFirst({
+      where: {
+        id: branchId,
+        server: { userId }
+      }
+    });
+
+    if (!branch) {
+      return apiNotFound('Branch not found');
     }
 
     // Always guard against main/protected branch modifications
     if (branch.isDefault || branch.isProtected) {
-      return NextResponse.json(
-        { success: false, error: 'Cannot modify the main branch', code: 'FORBIDDEN' },
-        { status: 403 }
-      );
+      return apiForbidden('Cannot modify the main branch');
     }
 
     const body = UpdateBranchSchema.parse(await req.json());
@@ -91,41 +91,33 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       }),
     });
 
-    return NextResponse.json({ success: true, data: updated });
-  } catch (error) {
+    return apiSuccess(toSafeBranch(updated));
+    } catch (error) {
     if (error instanceof z.ZodError) {
-      return NextResponse.json(
-        { success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: error.issues },
-        { status: 400 }
-      );
+      return apiValidationFailed(error.issues);
     }
     console.error('[API PUT Branch Error]', error);
-    return NextResponse.json(
-      { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
-      { status: 500 }
-    );
-  }
-}
+    return apiServerError('Internal server error');
+    }
+    });
 
-// DELETE /api/branches/[id] - Hard delete an active or archived branch
-export async function DELETE(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const branchId = (await params).id;
-    const branch = await prisma.branch.findUnique({ where: { id: branchId } });
+export const DELETE = withAuth(async (_, { params, userId }) => {
+    try {
+    const branchId = params.id;
+    const branch = await prisma.branch.findFirst({
+      where: {
+        id: branchId,
+        server: { userId }
+      }
+    });
 
     if (!branch) {
-      return NextResponse.json(
-        { success: false, error: 'Branch not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
+      return apiNotFound('Branch not found');
     }
 
     // Always guard against main/protected branch deletion
     if (branch.isDefault || branch.isProtected) {
-      return NextResponse.json(
-        { success: false, error: 'Cannot delete the main branch', code: 'FORBIDDEN' },
-        { status: 403 }
-      );
+      return apiForbidden('Cannot delete the main branch');
     }
 
     const before = JSON.stringify(branch);
@@ -145,12 +137,9 @@ export async function DELETE(_: Request, { params }: { params: Promise<{ id: str
       before,
     });
 
-    return NextResponse.json({ success: true, data: { deleted: true } });
-  } catch (error) {
+    return apiSuccess({ deleted: true });
+    } catch (error) {
     console.error('[API DELETE Branch Error]', error);
-    return NextResponse.json(
-      { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
-      { status: 500 }
-    );
-  }
-}
+    return apiServerError('Internal server error');
+    }
+    });

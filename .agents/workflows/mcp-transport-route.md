@@ -391,4 +391,183 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
               'mcp-remote',
               `${mcpBase}/mcp`,
               '--header',
-         
+              'Authorization: Bearer YOUR_API_KEY'
+            ]
+          }
+        }
+      }
+    }
+  };
+
+  return NextResponse.json({ success: true, data: config });
+}
+```
+
+---
+
+## Step 5: Connection Status Endpoint
+
+This endpoint checks and returns the connection status of all database files associated with this MCP server.
+
+**File**: `src/app/api/servers/[id]/connection-status/route.ts`
+
+```typescript
+import { NextResponse } from 'next/server'
+import { withAuth } from "@/lib/auth/api-guard"
+import { db } from '@/lib/db'
+
+export const GET = withAuth(async (request, { params, userId }) => {
+  try {
+    const { id } = await params
+    const server = await db.mcpServer.findFirst({
+      where: { id, userId },
+      include: {
+        connections: {
+          include: {
+            connection: true
+          }
+        },
+        apiKey: true
+      }
+    })
+
+    if (!server) {
+      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
+    }
+
+    const connectionStatuses = server.connections.map(c => ({
+      connectionId: c.connection.id,
+      name: c.connection.name,
+      database: c.connection.database,
+      status: c.connection.status,
+      lastTested: c.connection.lastTested,
+      lastError: c.connection.lastError,
+      isActive: c.isActive
+    }))
+
+    const serverReady = connectionStatuses.length > 0 && connectionStatuses.some(c => c.isActive && c.status === 'connected')
+
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const mcpBase = `${baseUrl}/api/mcp/${server.id}`
+
+    const redisConfigured = !!process.env.REDIS_URL
+    const sseAvailable = redisConfigured
+    const streamableHttpAvailable = true
+
+    const sseMessage = redisConfigured
+      ? "Redis is configured. SSE transport is available for Claude Desktop."
+      : "Redis is not configured. SSE transport is disabled; use Streamable HTTP or mcp-remote proxy."
+
+    const responseData = {
+      serverReady,
+      hasApiKey: !!server.apiKey,
+      apiKeyPrefix: server.apiKey?.keyPrefix || null,
+      apiKeyLastUsedAt: server.apiKey?.lastUsedAt || null,
+      endpoints: {
+        streamableHttp: `${mcpBase}/mcp`,
+        sse: `${mcpBase}/sse`
+      },
+      transports: {
+        streamableHttpAvailable,
+        sseAvailable,
+        redisConfigured,
+        sseMessage
+      },
+      connections: connectionStatuses
+    }
+
+    return NextResponse.json({ success: true, data: responseData })
+  } catch (error: any) {
+    console.error('[Connection Status API Error]', error)
+    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+  }
+})
+```
+
+---
+
+## Step 6: MCP Endpoint Self-Test Endpoint
+
+This endpoint triggers a self-test of the MCP server's dynamic tools route using a local HTTP request, bypassing the API key check via an internal secret.
+
+**File**: `src/app/api/servers/[id]/test-mcp-endpoint/route.ts`
+
+```typescript
+import { NextRequest, NextResponse } from 'next/server'
+import { withAuth } from "@/lib/auth/api-guard"
+import { getMcpServer } from '@/lib/db/user-scoped'
+
+export const POST = withAuth(async (request, { params, userId }) => {
+  try {
+    const { id } = await params
+    const server = await getMcpServer(id, userId)
+
+    if (!server) {
+      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
+    }
+
+    // Determine the base url to call the local endpoint dynamically
+    const host = request.headers.get('host') || 'localhost:3000'
+    const protocol = host.startsWith('localhost') || host.startsWith('127.0.0.1') ? 'http' : 'https'
+    const baseUrl = `${protocol}://${host}`
+
+    const testUrl = `${baseUrl}/api/mcp/${id}/mcp`
+    const secret = process.env.INTERNAL_TEST_SECRET || 'mcp-self-test-secret'
+
+    const testStartTime = Date.now()
+
+    // Call the endpoint using standard fetch with the internal secret header
+    const response = await fetch(testUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-internal-test-secret': secret
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/list',
+        params: {},
+        id: 1
+      })
+    })
+
+    const duration = Date.now() - testStartTime
+    const status = response.status
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      return NextResponse.json({
+        success: false,
+        error: `MCP endpoint returned status ${status}: ${errorText}`,
+        code: 'MCP_TEST_FAILED',
+        data: { status, duration }
+      }, { status: 400 })
+    }
+
+    const responseBody = await response.json()
+    
+    // Verify it is a valid JSON-RPC response
+    if (responseBody?.jsonrpc !== '2.0' || (!responseBody.result && !responseBody.error)) {
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid JSON-RPC response from MCP endpoint',
+        code: 'INVALID_JSON_RPC',
+        data: { status, duration, responseBody }
+      }, { status: 400 })
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        status,
+        duration,
+        toolsCount: responseBody.result?.tools?.length || 0,
+        response: responseBody
+      }
+    })
+  } catch (error: any) {
+    console.error('[MCP Self-Test API Error]', error)
+    return NextResponse.json({ success: false, error: error.message || 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+  }
+})
+```

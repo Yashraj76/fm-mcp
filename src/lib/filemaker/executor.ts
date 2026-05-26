@@ -2,6 +2,7 @@ import { FMConnection } from '@prisma/client';
 import { prisma } from '../prisma';
 import { withFMSession } from './session';
 import { FileMakerClient } from './client';
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 export interface ToolHandlerConfig {
   method?: string;
@@ -16,10 +17,11 @@ export interface ToolHandlerConfig {
 
 export async function executeTool(
   toolId: string,
-  params: Record<string, any>
+  params: Record<string, any>,
+  userId?: string
 ): Promise<any> {
-  const tool = await prisma.tool.findUnique({
-    where: { id: toolId },
+  const tool = await prisma.tool.findFirst({
+    where: userId ? { id: toolId, server: { userId } } : { id: toolId },
     include: { server: { include: { connections: { include: { connection: true } } } } }
   });
 
@@ -36,7 +38,7 @@ export async function executeTool(
   }
 
   const connection = connServer.connection;
-  const config: ToolHandlerConfig = JSON.parse(tool.handlerConfig);
+  const config: ToolHandlerConfig = safeParseJSON(tool.handlerConfig, {});
   const method = tool.fmMethod || config.method || 'find';
 
   return withFMSession(connection, async (client) => {

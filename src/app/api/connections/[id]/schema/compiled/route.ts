@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 type Params = { params: Promise<{ id: string }> }
+export const GET = withAuth(async (_req, { params, userId }) => {
+    try {
+    const { id } = params
 
-export async function GET(_req: NextRequest, { params }: Params) {
-  try {
-    const { id } = await params
-    const browsedSchema = await db.browsedSchema.findUnique({ where: { connectionId: id } })
+    // Verify connection ownership
+    const conn = await db.fMConnection.findFirst({
+      where: { id, userId }
+    });
+    if (!conn) {
+      return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
+
+    const browsedSchema = await db.browsedSchema.findUnique({
+      where: { connectionId: id }
+    })
     if (!browsedSchema) {
       return NextResponse.json({
         success: false,
@@ -15,7 +27,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       }, { status: 404 })
     }
 
-    const compiledSchema = JSON.parse(browsedSchema.compiledSchema || '{}')
+    const compiledSchema = safeParseJSON(browsedSchema.compiledSchema, {})
     if (!compiledSchema?.layouts?.length && !compiledSchema?.tables?.length) {
       return NextResponse.json({
         success: false,
@@ -28,15 +40,15 @@ export async function GET(_req: NextRequest, { params }: Params) {
       success: true,
       data: {
         compiledSchema,
-        selectedLayouts: JSON.parse(browsedSchema.selectedLayouts),
-        selectedTables: JSON.parse(browsedSchema.selectedTables),
-        selectedScripts: JSON.parse(browsedSchema.selectedScripts),
+        selectedLayouts: safeParseJSON(browsedSchema.selectedLayouts, []),
+        selectedTables: safeParseJSON(browsedSchema.selectedTables, []),
+        selectedScripts: safeParseJSON(browsedSchema.selectedScripts, []),
         fetchedAt: browsedSchema.fetchedAt,
         updatedAt: browsedSchema.updatedAt,
       },
     })
-  } catch (e: any) {
+    } catch (e: any) {
     console.error('[schema/compiled GET]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    }
+    });

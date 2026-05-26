@@ -11,6 +11,8 @@ import {
   Settings,
 } from 'lucide-react'
 import { useAppStore, type AppView } from '@/lib/store'
+import { usePathname } from 'next/navigation'
+import Link from 'next/link'
 import {
   Sidebar,
   SidebarContent,
@@ -30,26 +32,27 @@ interface NavItem {
   title: string
   icon: React.ElementType
   view: AppView
+  href: string
 }
 
 const mainNav: NavItem[] = [
-  { title: 'Dashboard', icon: LayoutDashboard, view: 'dashboard' },
-  { title: 'Connections', icon: Database, view: 'connections' },
-  { title: 'Servers', icon: Server, view: 'servers' },
+  { title: 'Dashboard', icon: LayoutDashboard, view: 'dashboard', href: '/' },
+  { title: 'Connections', icon: Database, view: 'connections', href: '/connections' },
+  { title: 'Servers', icon: Server, view: 'servers', href: '/servers' },
 ]
 
 const developmentNav: NavItem[] = [
-  { title: 'Branches', icon: GitBranch, view: 'branches' },
-  { title: 'Tools', icon: Wrench, view: 'tools' },
-  { title: 'Playground', icon: Play, view: 'playground' },
+  { title: 'Branches', icon: GitBranch, view: 'branches', href: '/branches' },
+  { title: 'Tools', icon: Wrench, view: 'tools', href: '/tools' },
+  { title: 'Playground', icon: Play, view: 'playground', href: '/playground' },
 ]
 
 const operationsNav: NavItem[] = [
-  { title: 'Deployments', icon: Rocket, view: 'deployments' },
+  { title: 'Deployments', icon: Rocket, view: 'deployments', href: '/deployments' },
 ]
 
 const settingsNav: NavItem[] = [
-  { title: 'Settings', icon: Settings, view: 'settings' },
+  { title: 'Settings', icon: Settings, view: 'settings', href: '/settings' },
 ]
 
 const modeColors = {
@@ -64,26 +67,33 @@ const modeLabels = {
   deployed: 'Deployed',
 }
 
-export function AppSidebar() {
-  const { currentView, setCurrentView, serverMode, setServerMode } = useAppStore()
+export function AppSidebar({ userNav }: { userNav?: React.ReactNode }) {
+  const serverMode = useAppStore((s) => s.serverMode)
+  const setServerMode = useAppStore((s) => s.setServerMode)
+  const pathname = usePathname()
 
   const renderNavGroup = (label: string, items: NavItem[]) => (
     <SidebarGroup>
       <SidebarGroupLabel>{label}</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu>
-          {items.map((item) => (
-            <SidebarMenuItem key={item.view}>
-              <SidebarMenuButton
-                isActive={currentView === item.view}
-                onClick={() => setCurrentView(item.view)}
-                tooltip={item.title}
-              >
-                <item.icon className="size-4" />
-                <span>{item.title}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
+          {items.map((item) => {
+            const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+            return (
+              <SidebarMenuItem key={item.view}>
+                <SidebarMenuButton
+                  asChild
+                  isActive={isActive}
+                  tooltip={item.title}
+                >
+                  <Link href={item.href}>
+                    <item.icon className="size-4" />
+                    <span>{item.title}</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            )
+          })}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
@@ -145,6 +155,11 @@ export function AppSidebar() {
               </div>
             </div>
           </SidebarMenuItem>
+          {userNav && (
+            <SidebarMenuItem>
+              {userNav}
+            </SidebarMenuItem>
+          )}
         </SidebarMenu>
       </SidebarFooter>
 

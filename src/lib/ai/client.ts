@@ -42,14 +42,26 @@ export interface AICallOptions {
   systemPrompt: string
   userMessage: string
   maxOutputTokens?: number
+  configOverride?: {
+    provider?: string
+    apiKey?: string
+    baseUrl?: string
+    model?: string
+  }
 }
 
 export async function callAI(options: AICallOptions): Promise<string> {
   const settings = await getAISettings()
-  if (!settings.apiKey && !['ollama', 'custom'].includes(settings.provider)) {
+  
+  const provider = options.configOverride?.provider || settings.provider
+  const apiKey = options.configOverride?.apiKey || settings.apiKey
+  const baseUrl = options.configOverride?.baseUrl || settings.baseUrl
+  const modelName = options.configOverride?.model || settings.model
+
+  if (!apiKey && !['ollama', 'custom'].includes(provider)) {
     throw new Error('AI API key not configured. Go to Settings → AI to configure.')
   }
-  const model = buildModel(settings.provider, settings.model, settings.apiKey, settings.baseUrl)
+  const model = buildModel(provider, modelName, apiKey, baseUrl)
   const result = await generateText({
     model,
     system: options.systemPrompt,
@@ -59,23 +71,17 @@ export async function callAI(options: AICallOptions): Promise<string> {
   return result.text
 }
 
+import { SUGGEST_RELATIONSHIPS_PROMPT } from './prompts/suggest-relationships'
+
 // Suggest relationships between layouts/tables based on field name analysis
 export async function suggestRelationships(payload: {
   layouts: { name: string; fields: string[] }[]
   tables: { name: string; fields: string[] }[]
 }): Promise<{ from: string; to: string; key: string; confidence: 'high' | 'medium' | 'low'; reason: string }[]> {
   const schemaStr = JSON.stringify(payload, null, 2)
-  const systemPrompt = `You are a FileMaker database analyst. Analyze the provided schema and suggest relationships between layouts and tables.
-Rules:
-- Look for fields ending in ID, _id, _ID, Key, _key that likely reference another table
-- Match table name similarity (e.g. ContactID in Orders → Contacts table)
-- Portals indicate definite relationships (confidence: high)
-- Field name pattern matching = medium
-- Name similarity only = low
-Return ONLY a valid JSON array, no prose. Each item: { "from": string, "to": string, "key": string, "confidence": "high"|"medium"|"low", "reason": string }`
 
   const text = await callAI({
-    systemPrompt,
+    systemPrompt: SUGGEST_RELATIONSHIPS_PROMPT,
     userMessage: `Analyze this FileMaker schema and return relationship suggestions:\n\n${schemaStr}`,
     maxOutputTokens: 2048,
   })

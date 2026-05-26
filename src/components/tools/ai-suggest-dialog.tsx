@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { api } from '@/lib/utils/api-client'
 import { useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -19,43 +20,35 @@ import { Loader2, Sparkles, Brain } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 
 export function AiSuggestDialog({ onSuggestionSuccess }: { onSuggestionSuccess: (data: any) => void }) {
-  const { showAiDialog, setShowAiDialog } = useAppStore()
+  const showAiDialog = useAppStore((s) => s.showAiDialog)
+  const setShowAiDialog = useAppStore((s) => s.setShowAiDialog)
   const [prompt, setPrompt] = useState('')
 
   const suggestMutation = useMutation({
-    mutationFn: async (userPrompt: string) => {
-      const res = await fetch('/api/tools/suggest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: userPrompt }),
-      })
-      const data = await res.json()
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to get suggestion')
-      }
-      return data.data.suggestion
-    },
+    mutationFn: (userPrompt: string) =>
+      api.post<any>('/api/tools/suggest', { prompt: userPrompt }),
     onSuccess: (data) => {
       toast.success('Tool suggestion generated!')
       
+      const suggestion = data.suggestion
       // Parse schemas since they are returned as string from the API
       let parsedInputSchema = { type: 'object', properties: {} }
       try {
-        if (typeof data.inputSchema === 'string') {
-          parsedInputSchema = JSON.parse(data.inputSchema)
-        } else if (data.inputSchema) {
-          parsedInputSchema = data.inputSchema
+        if (typeof suggestion.inputSchema === 'string') {
+          parsedInputSchema = JSON.parse(suggestion.inputSchema)
+        } else if (suggestion.inputSchema) {
+          parsedInputSchema = suggestion.inputSchema
         }
       } catch (e) {
         console.error('Failed to parse inputSchema from suggestion', e)
       }
 
       onSuggestionSuccess({
-        name: data.name || '',
-        description: data.description || '',
-        fmMethod: data.fmMethod || 'custom',
-        fmLayout: data.fmLayout || '',
-        category: data.category || 'Custom',
+        name: suggestion.name || '',
+        description: suggestion.description || '',
+        fmMethod: suggestion.fmMethod || 'custom',
+        fmLayout: suggestion.fmLayout || '',
+        category: suggestion.category || 'Custom',
         inputSchema: parsedInputSchema,
       })
       setShowAiDialog(false)

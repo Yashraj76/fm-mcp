@@ -3,21 +3,21 @@ import { db } from '@/lib/db'
 import { executeTool } from '@/lib/filemaker/executor'
 import { executeODataTool } from '@/lib/filemaker/odata-executor'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { getTool } from '@/lib/db/user-scoped'
 
 const executeSchema = z.object({
   params: z.record(z.string(), z.any()).optional().default({}),
 })
 
 // POST /api/tools/[id]/execute — Execute a tool against its linked FM connection
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const POST = withAuth(async (request, { params, userId }) => {
   const startTime = Date.now()
   try {
     const { id } = await params
 
-    const tool = await db.tool.findUnique({ where: { id } })
+    const tool = await getTool(id, userId, { include: { server: true } })
     if (!tool) {
       return NextResponse.json(
         { success: false, error: 'Tool not found', code: 'NOT_FOUND' },
@@ -37,12 +37,10 @@ export async function POST(
 
     const result = await (() => {
       // Detect OData tools by fmMethod or handlerConfig type
-      const handlerType = (() => {
-        try { return JSON.parse(tool.handlerConfig ?? '{}').type ?? ''; } catch { return ''; }
-      })()
+      const handlerType = safeParseJSON(tool.handlerConfig, {}).type ?? '';
       const method = tool.fmMethod || ''
       const isOData = method.startsWith('odata-') || handlerType.startsWith('odata-')
-      return isOData ? executeODataTool(id, inputParams) : executeTool(id, inputParams)
+      return isOData ? executeODataTool(id, inputParams, userId) : executeTool(id, inputParams, userId)
     })()
 
     const duration = Date.now() - startTime
@@ -75,7 +73,7 @@ export async function POST(
           status: 'error',
           duration,
         },
-      }).catch(() => {})
+      }).catch(() => { })
     }
 
     if (error instanceof ZodError) {
@@ -90,4 +88,4 @@ export async function POST(
       { status: 500 }
     )
   }
-}
+});

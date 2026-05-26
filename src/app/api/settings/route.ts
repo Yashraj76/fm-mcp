@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { encrypt, decrypt } from '@/lib/crypto'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
 
 const settingsSchema = z.object({
   aiProvider: z.enum(['anthropic', 'openai', 'google', 'ollama', 'custom']).optional(),
@@ -17,17 +18,11 @@ function maskKey(key: string): string {
   return key.slice(0, 4) + '••••' + key.slice(-4)
 }
 
-async function getOrCreateSettings() {
-  return db.appSettings.upsert({
-    where: { id: 'singleton' },
-    create: { id: 'singleton' },
-    update: {},
-  })
-}
+import { getAppSettings } from '@/lib/settings'
 
-export async function GET() {
-  try {
-    const settings = await getOrCreateSettings()
+export const GET = withAuth(async (req, { params, userId }) => {
+    try {
+    const settings = await getAppSettings(userId)
     const decryptedKey = settings.aiApiKeyEncrypted ? decrypt(settings.aiApiKeyEncrypted) : ''
     return NextResponse.json({
       success: true,
@@ -42,14 +37,13 @@ export async function GET() {
         updatedAt: settings.updatedAt,
       },
     })
-  } catch (e) {
+    } catch (e) {
     console.error('[settings GET]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
-
-export async function PUT(req: NextRequest) {
-  try {
+    }
+    });
+export const PUT = withAuth(async (req, { params, userId }) => {
+    try {
     const body = await req.json()
     const parsed = settingsSchema.parse(body)
 
@@ -63,11 +57,21 @@ export async function PUT(req: NextRequest) {
     if (parsed.aiMaxTokens !== undefined) updateData.aiMaxTokens = parsed.aiMaxTokens
     if (parsed.aiTemperature !== undefined) updateData.aiTemperature = parsed.aiTemperature
 
-    const settings = await db.appSettings.upsert({
-      where: { id: 'singleton' },
-      create: { id: 'singleton', ...updateData },
-      update: updateData,
-    })
+    let settings = await db.appSettings.findFirst({ where: { userId } })
+    if (settings) {
+      settings = await db.appSettings.update({
+        where: { id: settings.id },
+        data: updateData,
+      })
+    } else {
+      settings = await db.appSettings.create({
+        data: {
+          id: `user_${userId}`,
+          userId,
+          ...updateData,
+        },
+      })
+    }
 
     const decryptedKey = settings.aiApiKeyEncrypted ? decrypt(settings.aiApiKeyEncrypted) : ''
     return NextResponse.json({
@@ -83,11 +87,11 @@ export async function PUT(req: NextRequest) {
         updatedAt: settings.updatedAt,
       },
     })
-  } catch (e) {
+    } catch (e) {
     if (e instanceof ZodError) {
       return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
     }
     console.error('[settings PUT]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    }
+    });

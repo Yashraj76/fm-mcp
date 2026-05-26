@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { withFMSession } from '@/lib/filemaker/session'
 import { Agent } from 'undici'
 import { decrypt } from '@/lib/crypto'
+import { withAuth } from "@/lib/auth/api-guard";
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -44,15 +45,12 @@ async function fetchODataEntityNames(connection: any): Promise<string[]> {
   }
 }
 
-/**
- * POST /api/connections/[id]/browse-schema
- * Initial load: returns layout names, script names, OData entity names only.
- * Does NOT fetch per-layout field metadata (deferred to layout-fields endpoint).
- */
-export async function POST(_req: NextRequest, { params }: Params) {
-  try {
+export const POST = withAuth(async (_req, { params, userId }) => {
+    try {
     const { id } = await params
-    const connection = await db.fMConnection.findUnique({ where: { id } })
+    const connection = await db.fMConnection.findUnique({ where: {
+        userId: userId,
+        id } })
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
     }
@@ -112,11 +110,11 @@ export async function POST(_req: NextRequest, { params }: Params) {
         odataMeta: {},
       },
     })
-  } catch (e: any) {
+    } catch (e: any) {
     console.error('[browse-schema POST]', e)
     return NextResponse.json(
       { success: false, error: e.message || 'Schema fetch failed', code: 'SCHEMA_FETCH_ERROR' },
       { status: 500 }
     )
-  }
-}
+    }
+    });

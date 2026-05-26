@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { encrypt } from '@/lib/crypto'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -11,11 +12,11 @@ const createSchema = z.object({
   adminPassword: z.string().min(1),
   sslVerify: z.boolean().default(true),
 })
-
-export async function GET() {
-  try {
+export const GET = withAuth(async (req, { params, userId }) => {
+    try {
     const servers = await db.fMServerConnection.findMany({
-      orderBy: { createdAt: 'desc' },
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
       select: {
         id: true, name: true, host: true, port: true,
         adminUsername: true, sslVerify: true, status: true,
@@ -24,18 +25,18 @@ export async function GET() {
       },
     })
     return NextResponse.json({ success: true, data: servers })
-  } catch (e) {
+    } catch (e) {
     console.error('[server-connections GET]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
+    }
+    });
+export const POST = withAuth(async (req, { params, userId }) => {
+    try {
     const body = await req.json()
     const parsed = createSchema.parse(body)
     const server = await db.fMServerConnection.create({
       data: {
+          userId: userId,
         name: parsed.name,
         host: parsed.host,
         port: parsed.port,
@@ -50,11 +51,11 @@ export async function POST(req: NextRequest) {
       },
     })
     return NextResponse.json({ success: true, data: server }, { status: 201 })
-  } catch (e) {
+    } catch (e) {
     if (e instanceof ZodError) {
       return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
     }
     console.error('[server-connections POST]', e)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    }
+    });

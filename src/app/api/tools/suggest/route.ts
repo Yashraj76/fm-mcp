@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { generateObject } from 'ai'
 import { z } from 'zod'
 import { getAISettings, buildModel } from '@/lib/ai/client'
+import { withAuth } from "@/lib/auth/api-guard";
 
 const toolSuggestionSchema = z.object({
   name: z.string().describe('Snake case name of the tool, e.g. search_contacts'),
@@ -20,8 +21,8 @@ const toolSuggestionSchema = z.object({
 })
 
 // POST /api/tools/suggest
-export async function POST(request: NextRequest) {
-  try {
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
     const body = await request.json()
     const { prompt } = body
 
@@ -66,12 +67,12 @@ export async function POST(request: NextRequest) {
         }
       }
     })
-  } catch (error: any) {
+    } catch (error: any) {
     console.error('[API Error]', error)
     return NextResponse.json({ 
       success: false, 
       error: error.message || 'Internal server error', 
       code: 'SERVER_ERROR' 
     }, { status: 500 })
-  }
-}
+    }
+    });

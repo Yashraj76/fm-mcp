@@ -1,21 +1,25 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withAuth } from "@/lib/auth/api-guard";
+import { apiSuccess, apiNotFound } from '@/lib/utils/api-response';
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
-export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const session = await prisma.playgroundSession.findUnique({ where: { id } });
-  if (!session) return NextResponse.json({ success: false, error: 'Session not found' }, { status: 404 });
+export const GET = withAuth(async (_, { params, userId }) => {
+    const { id } = await params;
+    const session = await prisma.playgroundSession.findFirst({ where: {
+      userId: userId,
+      id } });
+    if (!session) return apiNotFound('Session not found');
 
-  return NextResponse.json({
-    success: true,
-    data: {
+    const agentPlan = safeParseJSON(session.agentPlan);
+
+    return apiSuccess({
       sessionId: session.id,
       status: session.status,
       userMessage: session.userMessage,
-      intent: session.agentPlan ? JSON.parse(session.agentPlan).intent : null,
-      stepLog: JSON.parse(session.stepLog),
-      finalResult: session.finalResult ? JSON.parse(session.finalResult) : null,
+      intent: agentPlan ? agentPlan.intent : null,
+      stepLog: safeParseJSON(session.stepLog, []),
+      finalResult: safeParseJSON(session.finalResult),
       createdAt: session.createdAt,
-    },
-  });
-}
+    });
+});

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { toSafeServer } from '@/lib/utils/dto'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError } from '@/lib/utils/api-response'
+import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { getMcpServer } from '@/lib/db/user-scoped';
 
 const updateServerSchema = z.object({
   name: z.string().min(1).optional(),
@@ -16,84 +21,88 @@ const updateServerSchema = z.object({
 })
 
 // GET /api/servers/[id] - Get a single MCP server with full details
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const GET = withAuth(async (_request, { params, userId }) => {
   try {
     const { id } = await params
-    const server = await db.mcpServer.findUnique({
-      where: { id },
-      include: {
-        connections: {
-          include: {
-            connection: true,
-          },
-        },
-        branches: {
-          orderBy: { isDefault: 'desc' },
-          include: {
-            tools: {
-              include: { tool: true }
+    const server = await getMcpServer(id, userId, {
+      connections: {
+        include: {
+          connection: {
+            include: {
+              browsedSchema: {
+                select: {
+                  compiledSchema: true,
+                },
+              },
+              relationshipGraph: true,
             },
           },
         },
-        deployments: {
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        },
-        tools: {
-          orderBy: { sortOrder: 'asc' },
-        },
-        apiKey: true,
-        _count: {
-          select: {
-            tools: true,
-            deployments: true,
-            branches: true,
-            connections: true,
+      },
+      branches: {
+        orderBy: { isDefault: 'desc' },
+        include: {
+          tools: {
+            include: { tool: true }
           },
         },
       },
-
+      deployments: {
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      },
+      tools: {
+        orderBy: { sortOrder: 'asc' },
+      },
+      apiKey: true,
+      _count: {
+        select: {
+          tools: true,
+          deployments: true,
+          branches: true,
+          connections: true,
+        },
+      },
     })
 
     if (!server) {
-      return NextResponse.json(
-        { success: false, error: 'Server not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      )
+      return apiNotFound('Server not found')
     }
 
-    return NextResponse.json({ success: true, data: server })
+    return apiSuccess(toSafeServer(server))
   } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch server', code: 'SERVER_ERROR' },
-      { status: 500 }
-    )
+    return apiServerError('Failed to fetch server')
   }
-}
+});
 
 // PUT /api/servers/[id] - Update a server
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const PUT = withAuth(async (request, { params, userId }) => {
   try {
     const { id } = await params
-    const existing = await db.mcpServer.findUnique({ where: { id } })
+    const existing = await getMcpServer(id, userId)
     if (!existing) {
-      return NextResponse.json(
-        { success: false, error: 'Server not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      )
+      return apiNotFound('Server not found')
     }
 
     const body = await request.json()
     const parsed = updateServerSchema.parse(body)
 
     const { connectionIds, fileNamesPerConnection, ...updateData } = parsed
+
+    // Verify all connectionIds belong to the user
+    if (connectionIds !== undefined && connectionIds.length > 0) {
+      const ownedConnections = await db.fMConnection.findMany({
+        where: {
+          id: { in: connectionIds },
+          userId,
+        },
+        select: { id: true }
+      });
+      if (ownedConnections.length !== connectionIds.length) {
+        return apiNotFound('One or more connections not found');
+      }
+    }
 
     // If connection IDs are provided, update junction records
     if (connectionIds !== undefined) {
@@ -119,7 +128,7 @@ export async function PUT(
       }
 
       // Update config
-      const currentConfig = JSON.parse(existing.config || '{}')
+      const currentConfig = safeParseJSON(existing.config, {})
       currentConfig.connections = connectionIds
       currentConfig.fileNames = fileNamesPerConnection || []
       currentConfig.updatedAt = new Date().toISOString()
@@ -131,47 +140,30 @@ export async function PUT(
       data: updateData,
     })
 
-    return NextResponse.json({ success: true, data: server })
+    return apiSuccess(toSafeServer(server))
   } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json({
-        success: false,
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: error.issues,
-      }, { status: 400 })
+      return apiValidationFailed(error.issues)
     }
     console.error('[API Error]', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to update server', code: 'SERVER_ERROR' },
-      { status: 500 }
-    )
+    return apiServerError('Failed to update server')
   }
-}
+});
 
 // DELETE /api/servers/[id] - Delete a server and all associated data
-export async function DELETE(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const DELETE = withAuth(async (_request, { params, userId }) => {
   try {
     const { id } = await params
-    const existing = await db.mcpServer.findUnique({ where: { id } })
+    const existing = await getMcpServer(id, userId)
     if (!existing) {
-      return NextResponse.json(
-        { success: false, error: 'Server not found', code: 'NOT_FOUND' },
-        { status: 404 }
-      )
+      return apiNotFound('Server not found')
     }
 
     await db.mcpServer.delete({ where: { id } })
 
-    return NextResponse.json({ success: true, data: null })
+    return apiSuccess(null)
   } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to delete server', code: 'SERVER_ERROR' },
-      { status: 500 }
-    )
+    return apiServerError('Failed to delete server')
   }
-}
+});

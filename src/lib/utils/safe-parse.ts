@@ -1,8 +1,8 @@
-export function safeParseJSON(val: string | null | undefined, fallback: any = null): any {
-  if (!val) return fallback;
+export function safeParseJSON<T = any>(val: string | null | undefined, fallback: any = null): T {
+  if (!val) return fallback as T;
   try {
-    return JSON.parse(val);
+    return JSON.parse(val) as T;
   } catch {
-    return fallback;
+    return fallback as T;
   }
 }

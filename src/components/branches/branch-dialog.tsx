@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -22,7 +23,10 @@ interface BranchOption {
 
 export function BranchDialog() {
   const queryClient = useQueryClient()
-  const { showBranchDialog, setShowBranchDialog, currentServerId, triggerRefreshBranches } = useAppStore()
+  const showBranchDialog = useAppStore((s) => s.showBranchDialog)
+  const setShowBranchDialog = useAppStore((s) => s.setShowBranchDialog)
+  const currentServerId = useAppStore((s) => s.currentServerId)
+  const triggerRefreshBranches = useAppStore((s) => s.triggerRefreshBranches)
 
   const [name, setName] = useState('')
   const [commitMessage, setCommitMessage] = useState('')
@@ -33,7 +37,7 @@ export function BranchDialog() {
 
   const { data: branches = [] } = useQuery<BranchOption[]>({
     queryKey: ['branches-options', currentServerId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/branches`).then(r => r.json()).then(res => res.data ?? []),
+    queryFn: () => api.get<BranchOption[]>(`/api/servers/${currentServerId}/branches`),
     enabled: showBranchDialog && !!currentServerId,
   })
 
@@ -56,17 +60,13 @@ export function BranchDialog() {
 
   const createMutation = useMutation({
     mutationFn: () =>
-      fetch(`/api/servers/${currentServerId}/branches`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          commitMessage: commitMessage || `Create branch ${name}`,
-          parentBranchId,
-          createFromCurrent,
-          duplicateToolsFromParent: duplicateTools,
-        }),
-      }).then(r => r.json()),
+      api.post<any>(`/api/servers/${currentServerId}/branches`, {
+        name,
+        commitMessage: commitMessage || `Create branch ${name}`,
+        parentBranchId,
+        createFromCurrent,
+        duplicateToolsFromParent: duplicateTools,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
       triggerRefreshBranches()
@@ -74,8 +74,8 @@ export function BranchDialog() {
       setShowBranchDialog(false)
       setIsSubmitting(false)
     },
-    onError: () => {
-      toast.error('Failed to create branch')
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to create branch')
       setIsSubmitting(false)
     },
   })

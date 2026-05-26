@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withAuth } from "@/lib/auth/api-guard";
 
 // GET /api/dashboard - Get platform dashboard statistics
-export async function GET() {
-  try {
+export const GET = withAuth(async (req, { params, userId }) => {
+    try {
+    const userServers = await db.mcpServer.findMany({
+      where: { userId },
+      select: { id: true }
+    });
+    const serverIds = userServers.map(s => s.id);
+
     const [
       totalConnections,
       activeConnections,
@@ -21,67 +28,69 @@ export async function GET() {
       pendingSuggestions,
     ] = await Promise.all([
       // Total connections
-      db.fMConnection.count(),
+      db.fMConnection.count({ where: { userId } }),
 
       // Active (connected) connections
-      db.fMConnection.count({ where: { status: 'connected' } }),
+      db.fMConnection.count({ where: { userId, status: 'connected' } }),
 
       // Total servers
-      db.mcpServer.count(),
+      db.mcpServer.count({ where: { userId } }),
 
       // Deployed servers
-      db.mcpServer.count({ where: { status: 'deployed' } }),
+      db.mcpServer.count({ where: { userId, status: 'deployed' } }),
 
       // Total branches
-      db.branch.count({ where: { status: 'active' } }),
+      db.branch.count({ where: { server: { userId }, status: 'active' } }),
 
       // Total tools
-      db.tool.count(),
+      db.tool.count({ where: { server: { userId } } }),
 
       // Enabled tools
-      db.tool.count({ where: { isEnabled: true } }),
+      db.tool.count({ where: { server: { userId }, isEnabled: true } }),
 
       // Total deployments
-      db.deployment.count(),
+      db.deployment.count({ where: { server: { userId } } }),
 
       // Recent deployments (last 7 days)
       db.deployment.count({
-        where: { createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
+        where: { server: { userId }, createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } },
       }),
 
       // Total executions
-      db.toolExecution.count(),
+      db.toolExecution.count({ where: { tool: { server: { userId } } } }),
 
       // Successful executions
-      db.toolExecution.count({ where: { status: 'success' } }),
+      db.toolExecution.count({ where: { tool: { server: { userId } }, status: 'success' } }),
 
       // Recent executions (last 24 hours)
       db.toolExecution.count({
-        where: { createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+        where: { tool: { server: { userId } }, createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
       }),
 
       // Total AI suggestions
-      db.aiSuggestion.count(),
+      db.aiSuggestion.count({ where: { serverId: { in: serverIds } } }),
 
       // Pending suggestions
-      db.aiSuggestion.count({ where: { status: 'pending' } }),
+      db.aiSuggestion.count({ where: { serverId: { in: serverIds }, status: 'pending' } }),
     ])
 
     // Get server distribution by status
     const serversByStatus = await db.mcpServer.groupBy({
       by: ['status'],
       _count: true,
+      where: { userId },
     })
 
     // Get tools by category
     const toolsByCategory = await db.tool.groupBy({
       by: ['category'],
       _count: true,
-      where: { category: { not: null } },
+      where: { server: { userId }, category: { not: null } },
     })
 
     // Get execution success rate (last 100 executions)
     const recentExecutionStats = await db.toolExecution.findMany({
+      where: { tool: { server: { userId } } },
       orderBy: { createdAt: 'desc' },
       take: 100,
       select: { status: true, duration: true },
@@ -97,6 +106,7 @@ export async function GET() {
 
     // Get recent deployments with details
     const latestDeployments = await db.deployment.findMany({
+      where: { server: { userId } },
       orderBy: { createdAt: 'desc' },
       take: 5,
       include: {
@@ -107,6 +117,7 @@ export async function GET() {
 
     // Get recent connections
     const recentConnections = await db.fMConnection.findMany({
+      where: { userId },
       orderBy: { lastTested: 'desc' },
       take: 5,
       select: {
@@ -120,6 +131,7 @@ export async function GET() {
 
     // Get top tools by execution count
     const topTools = await db.tool.findMany({
+      where: { server: { userId } },
       orderBy: { executions: { _count: 'desc' } },
       take: 5,
       include: {
@@ -199,11 +211,11 @@ export async function GET() {
         isEnabled: t.isEnabled,
       })),
     })
-  } catch (error) {
+    } catch (error) {
     console.error('Error fetching dashboard stats:', error)
     return NextResponse.json(
       { error: 'Failed to fetch dashboard statistics' },
       { status: 500 }
     )
-  }
-}
+    }
+    });

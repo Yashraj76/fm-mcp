@@ -1,0 +1,2 @@
+INSERT INTO "FMConnectionServer" ("id","connectionId","serverId","fileNames","isActive","createdAt") VALUES ('cmpcyiqhk0001v0qiu3iei6ea','cmpcmcl66000dkw04972n3846','cmpcltxn3000qv0dt18dhw219','[]',true,'2026-05-19T18:19:03.703Z') ON CONFLICT ("id") DO NOTHING;
+INSERT INTO "FMConnectionServer" ("id","connectionId","serverId","fileNames","isActive","createdAt") VALUES ('cmpe78bqo0001l7049lmvkv77','cmpe6zbg10001lg04lz1pvsvg','cmpe78bpf0000l704aera9ers','[]',true,'2026-05-20T15:10:40.753Z') ON CONFLICT ("id") DO NOTHING;

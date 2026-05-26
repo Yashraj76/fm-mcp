@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -51,7 +52,7 @@ function CopyButton({ text, label, size = 'sm' }: { text: string; label?: string
   }
   if (size === 'icon') {
     return (
-      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={handleCopy}>
+      <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={handleCopy} aria-label="Copy to clipboard">
         {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
       </Button>
     )
@@ -82,7 +83,7 @@ function RevealableToken({ value }: { value: string }) {
   return (
     <div className="flex items-center gap-2 bg-black/40 rounded-lg px-3 py-2 border border-white/10 font-mono text-sm">
       <span className="flex-1 text-green-400 break-all">{shown ? value : '•'.repeat(Math.min(value.length, 48))}</span>
-      <button onClick={() => setShown(s => !s)} className="text-neutral-500 hover:text-white transition-colors shrink-0">
+      <button onClick={() => setShown(s => !s)} className="text-neutral-500 hover:text-white transition-colors shrink-0" aria-label={shown ? "Hide token" : "Show token"}>
         {shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
       </button>
       <CopyButton text={value} size="icon" />
@@ -91,52 +92,47 @@ function RevealableToken({ value }: { value: string }) {
 }
 
 export function ConfigDialog() {
-  const { showConfigDialog, setShowConfigDialog, currentServerId, currentBranchId } = useAppStore()
+  const showConfigDialog = useAppStore((s) => s.showConfigDialog)
+  const setShowConfigDialog = useAppStore((s) => s.setShowConfigDialog)
+  const currentServerId = useAppStore((s) => s.currentServerId)
+  const currentBranchId = useAppStore((s) => s.currentBranchId)
   const queryClient = useQueryClient()
   const [newApiKey, setNewApiKey] = useState<string | null>(null)
 
   const { data: config, isLoading, isError } = useQuery<ConfigData>({
     queryKey: ['config', currentServerId, currentBranchId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/config?branchId=${currentBranchId || ''}`).then(r => r.json()).then(res => res.data),
+    queryFn: () => api.get<ConfigData>(`/api/servers/${currentServerId}/config?branchId=${currentBranchId || ''}`),
     enabled: showConfigDialog && !!currentServerId,
   })
 
   const { data: apiKeyMeta, refetch: refetchKey } = useQuery<ApiKeyMeta | null>({
     queryKey: ['api-key-meta', currentServerId],
-    queryFn: () => fetch(`/api/servers/${currentServerId}/api-key`).then(r => r.json()).then(res => res.data),
+    queryFn: () => api.get<ApiKeyMeta | null>(`/api/servers/${currentServerId}/api-key`),
     enabled: showConfigDialog && !!currentServerId,
   })
 
   const generateKeyMutation = useMutation({
     mutationFn: () =>
-      fetch(`/api/servers/${currentServerId}/api-key`, { method: 'POST' }).then(r => r.json()),
-    onSuccess: (res) => {
-      if (res.success) {
-        setNewApiKey(res.data.apiKey)
-        toast.success('API key generated — copy it now, it won\'t be shown again!')
-        refetchKey()
-        queryClient.invalidateQueries({ queryKey: ['config', currentServerId] })
-      } else {
-        toast.error(res.error || 'Failed to generate key')
-      }
+      api.post<{ apiKey: string }>(`/api/servers/${currentServerId}/api-key`),
+    onSuccess: (data) => {
+      setNewApiKey(data.apiKey)
+      toast.success('API key generated — copy it now, it won\'t be shown again!')
+      refetchKey()
+      queryClient.invalidateQueries({ queryKey: ['config', currentServerId] })
     },
-    onError: () => toast.error('Failed to generate API key'),
+    onError: (err: any) => toast.error(err.message || 'Failed to generate API key'),
   })
 
   const revokeKeyMutation = useMutation({
     mutationFn: () =>
-      fetch(`/api/servers/${currentServerId}/api-key`, { method: 'DELETE' }).then(r => r.json()),
-    onSuccess: (res) => {
-      if (res.success) {
-        setNewApiKey(null)
-        toast.success('API key revoked')
-        refetchKey()
-        queryClient.invalidateQueries({ queryKey: ['config', currentServerId] })
-      } else {
-        toast.error(res.error || 'Failed to revoke key')
-      }
+      api.delete<void>(`/api/servers/${currentServerId}/api-key`),
+    onSuccess: () => {
+      setNewApiKey(null)
+      toast.success('API key revoked')
+      refetchKey()
+      queryClient.invalidateQueries({ queryKey: ['config', currentServerId] })
     },
-    onError: () => toast.error('Failed to revoke key'),
+    onError: (err: any) => toast.error(err.message || 'Failed to revoke key'),
   })
 
   const streamableJson = config?.streamableHttp ? JSON.stringify(config.streamableHttp, null, 2) : ''
@@ -161,6 +157,7 @@ export function ConfigDialog() {
             <button
               onClick={() => { setShowConfigDialog(false); setNewApiKey(null) }}
               className="size-8 rounded-md flex items-center justify-center hover:bg-white/10 transition-colors"
+              aria-label="Close dialog"
             >
               <X className="size-4 text-white/60" />
             </button>

@@ -2,27 +2,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { withFMSession } from '@/lib/filemaker/session'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 type Params = { params: Promise<{ id: string }> }
 
 const BodySchema = z.object({
   layout: z.string().min(1),
 })
-
-/**
- * POST /api/connections/[id]/layout-fields
- * On-demand: fetch field + portal metadata for a single layout.
- * Called by Schema Browser when user clicks/expands a layout.
- * Also persists the fetched metadata into rawLayoutMeta so that
- * infer-relationships has field data to work with.
- */
-export async function POST(req: NextRequest, { params }: Params) {
-  try {
-    const { id } = await params
+export const POST = withAuth(async (req, { params, userId }) => {
+    try {
+    const { id } = params
     const body = BodySchema.parse(await req.json())
     const { layout } = body
 
-    const connection = await db.fMConnection.findUnique({ where: { id } })
+    const connection = await db.fMConnection.findFirst({
+      where: { id, userId }
+    })
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
     }
@@ -43,9 +39,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     })
 
     // Persist into rawLayoutMeta (merge with existing entries) — fire-and-forget
-    db.browsedSchema.findUnique({ where: { connectionId: id } }).then((bs) => {
+    db.browsedSchema.findUnique({
+      where: { connectionId: id }
+    }).then((bs) => {
       if (!bs) return
-      const existing = JSON.parse(bs.rawLayoutMeta || '{}')
+      const existing = safeParseJSON(bs.rawLayoutMeta, {})
       existing[layout] = { fields: meta.fields, portals: meta.portals, portalDetails: meta.portalDetails }
       return db.browsedSchema.update({
         where: { connectionId: id },
@@ -54,12 +52,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     }).catch((err: Error) => console.error('[layout-fields] Failed to persist rawLayoutMeta:', err.message))
 
     return NextResponse.json({ success: true, data: meta })
-  } catch (e: any) {
+    } catch (e: any) {
     console.error('[layout-fields POST]', e)
     return NextResponse.json(
       { success: false, error: e.message || 'Failed to fetch layout fields', code: 'SCHEMA_FETCH_ERROR' },
       { status: 500 }
     )
-  }
-}
-
+    }
+    });

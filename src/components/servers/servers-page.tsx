@@ -2,12 +2,15 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
+import { api } from '@/lib/utils/api-client'
+import { useRouter } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Plus, Server, ExternalLink, Pencil, Rocket, FileJson, Trash2, Link2, Wrench } from 'lucide-react'
+import { Plus, Server, ExternalLink, Pencil, Rocket, FileJson, Trash2, Link2, Wrench, MoreHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
+import { useState } from 'react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,8 +20,14 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 interface ServerFromAPI {
   id: string
@@ -76,47 +85,42 @@ function ServerCardSkeleton() {
 
 export function ServersPage() {
   const queryClient = useQueryClient()
-  const { setCurrentView, setCurrentServer, setShowServerDialog, setShowConfigDialog, refreshServers } = useAppStore()
+  const router = useRouter()
+  const setCurrentServer = useAppStore((s) => s.setCurrentServer)
+  const setShowServerDialog = useAppStore((s) => s.setShowServerDialog)
+  const setShowConfigDialog = useAppStore((s) => s.setShowConfigDialog)
+  const refreshServers = useAppStore((s) => s.refreshServers)
+  const [serverToDelete, setServerToDelete] = useState<ServerFromAPI | null>(null)
 
   const { data: servers = [], isLoading, isError, error } = useQuery<ServerFromAPI[]>({
     queryKey: ['servers', refreshServers],
-    queryFn: async () => {
-      const res = await fetch('/api/servers')
-      if (!res.ok) throw new Error('Failed to fetch servers')
-      return res.json().then(r => r.data)
-    },
+    queryFn: () => api.get<ServerFromAPI[]>('/api/servers'),
     retry: 1,
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => fetch(`/api/servers/${id}`, { method: 'DELETE' }).then(r => {
-      if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Delete failed') })
-      return r.json()
-    }),
+    mutationFn: (id: string) => api.delete<void>(`/api/servers/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Server deleted successfully')
     },
-    onError: (err: Error) => toast.error(err.message || 'Failed to delete server'),
+    onError: (err: any) => toast.error(err.message || 'Failed to delete server'),
   })
 
   const deployMutation = useMutation({
     mutationFn: (id: string) =>
-      fetch(`/api/servers/${id}/deployments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ changelog: 'Quick deploy from server card' }),
-      }).then(r => r.json()),
+      api.post<any>(`/api/servers/${id}/deployments`, {
+        changelog: 'Quick deploy from server card',
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Server deployed successfully')
     },
-    onError: () => toast.error('Failed to deploy server'),
+    onError: (err: any) => toast.error(err.message || 'Failed to deploy server'),
   })
 
   const handleOpen = (id: string) => {
-    setCurrentServer(id)
-    setCurrentView('server-detail')
+    router.push(`/servers/${id}`)
   }
 
   const handleEdit = (id: string) => {
@@ -225,59 +229,68 @@ export function ServersPage() {
                     <ExternalLink className="size-3.5" />
                     Open
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleEdit(server.id)}
-                  >
-                    <Pencil className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => deployMutation.mutate(server.id)}
-                    disabled={server.status === 'deployed'}
-                  >
-                    <Rocket className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleGenerateConfig(server.id)}
-                  >
-                    <FileJson className="size-3.5" />
-                  </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
-                        <Trash2 className="size-3.5" />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="px-2">
+                        <MoreHorizontal className="size-4" />
                       </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Delete Server</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Are you sure you want to delete &quot;{server.name}&quot;? This will permanently
-                          remove the server, all its branches, tools, and deployment history.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
-                        <AlertDialogAction
-                          onClick={() => deleteMutation.mutate(server.id)}
-                          className="bg-destructive text-white hover:bg-destructive/90"
-                        >
-                          Delete
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => handleEdit(server.id)}>
+                        <Pencil className="mr-2 size-4" />
+                        Edit Server
+                      </DropdownMenuItem>
+                      <DropdownMenuItem 
+                        onClick={() => deployMutation.mutate(server.id)} 
+                        disabled={server.status === 'deployed'}
+                      >
+                        <Rocket className="mr-2 size-4" />
+                        Deploy
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleGenerateConfig(server.id)}>
+                        <FileJson className="mr-2 size-4" />
+                        Generate Config
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem 
+                        onClick={() => setServerToDelete(server)} 
+                        className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                      >
+                        <Trash2 className="mr-2 size-4" />
+                        Delete Server
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </CardFooter>
               </Card>
             )
           })}
         </div>
       )}
+
+      <AlertDialog open={!!serverToDelete} onOpenChange={(open) => !open && setServerToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Server</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete &quot;{serverToDelete?.name}&quot;? This will permanently
+              remove the server, all its branches, tools, and deployment history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (serverToDelete) deleteMutation.mutate(serverToDelete.id)
+                setServerToDelete(null)
+              }}
+              className="bg-destructive text-white hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
