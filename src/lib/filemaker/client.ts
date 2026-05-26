@@ -61,6 +61,15 @@ export class FileMakerClient {
     if (data.messages && data.messages[0] && data.messages[0].code !== '0') {
       const code = data.messages[0].code
       const msg = data.messages[0].message
+      
+      // Handle "No records match" (401) gracefully instead of throwing
+      if (code === '401' && msg.includes('No records match')) {
+        return {
+          response: { data: [], dataInfo: { foundCount: 0, returnedCount: 0 } },
+          messages: data.messages
+        }
+      }
+      
       throw new Error(`FM Error ${code}: ${msg}`)
     }
 

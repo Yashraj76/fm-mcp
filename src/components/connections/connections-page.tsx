@@ -15,6 +15,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
+import { api } from '@/lib/utils/api-client'
 import {
   Plus, Database, MoreVertical, Pencil, Zap, Trash2,
   Server, CircleDot, Layout, ServerIcon, ChevronRight,
@@ -66,7 +67,7 @@ const serverStatusConfig: Record<string, { dot: string; badge: string }> = {
 }
 
 export function ConnectionsPage() {
-  const { setShowConnectionDialog } = useAppStore()
+  const setShowConnectionDialog = useAppStore((s) => s.setShowConnectionDialog)
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -81,57 +82,81 @@ export function ConnectionsPage() {
   // ── Queries ──
   const { data: connections, isLoading: loadingConns } = useQuery<Connection[]>({
     queryKey: ['connections'],
-    queryFn: () => fetch('/api/connections').then((r) => r.json()).then((d) => d.data ?? []),
+    queryFn: () => api.get<Connection[]>('/api/connections'),
   })
   const { data: servers, isLoading: loadingServers } = useQuery<FMServer[]>({
     queryKey: ['server-connections'],
-    queryFn: () => fetch('/api/server-connections').then((r) => r.json()).then((d) => d.data ?? []),
+    queryFn: () => api.get<FMServer[]>('/api/server-connections'),
   })
 
   // ── Mutations ──
   const testMutation = useMutation({
-    mutationFn: (id: string) => fetch(`/api/connections/${id}/test`, { method: 'POST' }).then((r) => r.json()),
-    onSuccess: (data) => {
+    mutationFn: (id: string) => api.post<any>(`/api/connections/${id}/test`),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['connections'] })
       toast({
-        title: data.success ? 'Connection Successful' : 'Connection Failed',
-        description: data.success ? 'Connected to FileMaker Server.' : (data.error || 'Could not connect.'),
-        variant: data.success ? 'default' : 'destructive',
+        title: 'Connection Successful',
+        description: 'Connected to FileMaker Server.',
+        variant: 'default',
+      })
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Connection Failed',
+        description: err.message || 'Could not connect.',
+        variant: 'destructive',
       })
     },
   })
 
   const testServerMutation = useMutation({
-    mutationFn: (id: string) => fetch(`/api/server-connections/${id}/test`, { method: 'POST' }).then((r) => r.json()),
+    mutationFn: (id: string) => api.post<any>(`/api/server-connections/${id}/test`),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['server-connections'] })
       toast({
-        title: data.success ? 'Server Online' : 'Server Unreachable',
-        description: data.success ? `Connected in ${data.data?.duration}ms` : (data.error || 'Failed to connect'),
-        variant: data.success ? 'default' : 'destructive',
+        title: 'Server Online',
+        description: `Connected in ${data?.duration}ms`,
+        variant: 'default',
+      })
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Server Unreachable',
+        description: err.message || 'Failed to connect',
+        variant: 'destructive',
       })
     },
   })
 
   const deleteConnectionMutation = useMutation({
-    mutationFn: (id: string) => fetch(`/api/connections/${id}`, { method: 'DELETE' }).then((r) => r.json()),
+    mutationFn: (id: string) => api.delete<void>(`/api/connections/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['connections'] })
       setDeleteConnectionId(null)
       toast({ title: 'Connection Deleted' })
     },
+    onError: (err: any) => {
+      toast({
+        title: 'Delete Failed',
+        description: err.message || 'Could not delete connection',
+        variant: 'destructive',
+      })
+    },
   })
 
   const deleteServerMutation = useMutation({
-    mutationFn: (id: string) => fetch(`/api/server-connections/${id}`, { method: 'DELETE' }).then((r) => r.json()),
-    onSuccess: (data) => {
-      if (!data.success) {
-        toast({ title: 'Cannot Delete', description: data.error, variant: 'destructive' })
-        return
-      }
+    mutationFn: (id: string) => api.delete<void>(`/api/server-connections/${id}`),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['server-connections'] })
       setDeleteServerId(null)
       toast({ title: 'Server Removed' })
+    },
+    onError: (err: any) => {
+      toast({
+        title: 'Cannot Delete',
+        description: err.message || 'Could not delete server',
+        variant: 'destructive',
+      })
     },
   })
 
@@ -214,7 +239,7 @@ export function ConnectionsPage() {
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="size-7 text-white/30 hover:text-white shrink-0">
+                          <Button variant="ghost" size="icon" className="size-7 text-white/30 hover:text-white shrink-0" aria-label="Server options">
                             <MoreVertical className="size-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -308,7 +333,7 @@ export function ConnectionsPage() {
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="size-8 shrink-0">
+                          <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Connection options">
                             <MoreVertical className="size-4" />
                           </Button>
                         </DropdownMenuTrigger>

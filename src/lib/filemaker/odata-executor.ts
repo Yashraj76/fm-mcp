@@ -1,6 +1,7 @@
 import { Agent } from 'undici';
 import { decrypt } from '../crypto';
 import { prisma } from '../prisma';
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -230,9 +231,7 @@ export async function executeODataBatch(
   const responseText = await res.text();
   // Extract JSON payloads from multipart response
   const jsonBlocks = responseText.match(/\{[\s\S]*?\}/g) ?? [];
-  const results = jsonBlocks.map((block: string) => {
-    try { return JSON.parse(block); } catch { return block; }
-  });
+  const results = jsonBlocks.map((block: string) => safeParseJSON(block, block));
 
   return {
     status: 'success',
@@ -245,10 +244,11 @@ export async function executeODataBatch(
 
 export async function executeODataTool(
   toolId: string,
-  params: Record<string, any>
+  params: Record<string, any>,
+  userId?: string
 ): Promise<any> {
-  const tool = await prisma.tool.findUnique({
-    where: { id: toolId },
+  const tool = await prisma.tool.findFirst({
+    where: userId ? { id: toolId, server: { userId } } : { id: toolId },
     include: { server: { include: { connections: { include: { connection: true } } } } },
   });
 
@@ -260,7 +260,7 @@ export async function executeODataTool(
   }
 
   const connection = connServer.connection;
-  const config: ODataHandlerConfig = JSON.parse(tool.handlerConfig);
+  const config: ODataHandlerConfig = safeParseJSON(tool.handlerConfig, {});
 
   switch (config.type) {
     case 'odata-filter':

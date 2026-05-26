@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { toSafeServer } from '@/lib/utils/dto'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError } from '@/lib/utils/api-response'
 
 const createServerSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -11,10 +14,12 @@ const createServerSchema = z.object({
 })
 
 // GET /api/servers - List all MCP servers
-export async function GET() {
-  try {
+// POST /api/servers - Create a new MCP server
+export const GET = withAuth(async (req, { params, userId }) => {
+    try {
     const servers = await db.mcpServer.findMany({
-      orderBy: { createdAt: 'desc' },
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
       include: {
         connections: {
           include: {
@@ -45,23 +50,32 @@ export async function GET() {
       },
     })
 
-    return NextResponse.json({ success: true, data: servers })
-  } catch (error) {
+    return apiSuccess(servers.map(toSafeServer))
+    } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to fetch servers', code: 'SERVER_ERROR' },
-      { status: 500 }
-    )
-  }
-}
-
-// POST /api/servers - Create a new MCP server
-export async function POST(request: NextRequest) {
-  try {
+    return apiServerError('Failed to fetch servers')
+    }
+    });
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
     const body = await request.json()
     const parsed = createServerSchema.parse(body)
 
     const { name, description, version, connectionIds, fileNamesPerConnection } = parsed
+
+    // Verify all connectionIds belong to the user
+    if (connectionIds && connectionIds.length > 0) {
+      const ownedConnections = await db.fMConnection.findMany({
+        where: {
+          id: { in: connectionIds },
+          userId,
+        },
+        select: { id: true }
+      });
+      if (ownedConnections.length !== connectionIds.length) {
+        return apiNotFound('One or more connections not found');
+      }
+    }
 
     // Auto-generate config from connections
     const config = JSON.stringify({
@@ -75,6 +89,7 @@ export async function POST(request: NextRequest) {
 
     const server = await db.mcpServer.create({
       data: {
+          userId: userId,
         name,
         description,
         version: version || '1.0.0',
@@ -92,65 +107,58 @@ export async function POST(request: NextRequest) {
           serverId: server.id,
           fileNames: JSON.stringify((fileNamesPerConnection?.[index] || '').split(',').map(f => f.trim()).filter(Boolean)),
         })),
-      })
-    }
-
-    // Always create main branch on server creation
-    const mainBranch = await db.branch.create({
-      data: {
-        name: 'main',
-        serverId: server.id,
-        isDefault: true,
-        isProtected: true,
-        description: 'Production branch — always live',
-        status: 'active',
-      },
-    })
-
-    const { log, LOG_ACTIONS } = await import('@/lib/logging/logger');
-    log({
-      action: LOG_ACTIONS.BRANCH_CREATED,
-      entityType: 'branch', entityId: mainBranch.id, entityName: 'main',
-      serverId: server.id,
-      meta: { isDefault: true, isProtected: true },
-    });
-
-    // Start background job to generate tools if there are connections
-    if (connectionIds && connectionIds.length > 0) {
-      // Create the job record first so we can track progress
-      const job = await db.toolGenerationJob.create({
-        data: {
-          serverId: server.id,
-          status: 'pending',
-          progress: 0,
-          log: JSON.stringify([{ time: new Date().toISOString(), message: 'Job created via server setup', level: 'info' }])
-        }
-      });
-
-      setImmediate(async () => {
-        try {
-          const { runToolGenerationJob } = await import('@/lib/tools/job-runner');
-          await runToolGenerationJob(job.id, server.id);
-        } catch (e) {
-          console.error('[ServerCreation] Tool generation error:', e);
-        }
-      });
-    }
-
-    return NextResponse.json({ success: true, data: server }, { status: 201 })
-  } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json({
-        success: false,
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: error.issues,
-      }, { status: 400 })
-    }
-    console.error('[API Error]', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to create server', code: 'SERVER_ERROR' },
-      { status: 500 }
-    )
-  }
+  })
 }
+
+// Always create main branch on server creation
+const mainBranch = await db.branch.create({
+  data: {
+    name: 'main',
+    serverId: server.id,
+    isDefault: true,
+    isProtected: true,
+    description: 'Production branch — always live',
+    status: 'active',
+  },
+})
+
+const { log, LOG_ACTIONS } = await import('@/lib/logging/logger');
+log({
+  action: LOG_ACTIONS.BRANCH_CREATED,
+  entityType: 'branch', entityId: mainBranch.id, entityName: 'main',
+  serverId: server.id,
+  meta: { isDefault: true, isProtected: true },
+});
+
+// Start background job to generate tools if there are connections
+if (connectionIds && connectionIds.length > 0) {
+  // Create the job record first so we can track progress
+  const job = await db.toolGenerationJob.create({
+    data: {
+      userId: userId,
+      serverId: server.id,
+      status: 'pending',
+      progress: 0,
+      log: JSON.stringify([{ time: new Date().toISOString(), message: 'Job created via server setup', level: 'info' }])
+    }
+  });
+
+  setImmediate(async () => {
+    try {
+      const { runToolGenerationJob } = await import('@/lib/tools/job-runner');
+      await runToolGenerationJob(job.id, server.id, userId);
+    } catch (e) {
+      console.error('[ServerCreation] Tool generation error:', e);
+    }
+  });
+}
+
+return apiSuccess(toSafeServer(server), 201)
+} catch (error) {
+if (error instanceof ZodError) {
+  return apiValidationFailed(error.issues)
+}
+console.error('[API Error]', error)
+return apiServerError('Failed to create server')
+}
+});

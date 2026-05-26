@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { toSafeTool } from '@/lib/utils/dto'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
 
 const createToolSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Must be snake_case'),
@@ -16,43 +20,69 @@ const createToolSchema = z.object({
   isEnabled: z.boolean().default(true),
 })
 
-export async function GET(request: NextRequest) {
-  try {
+export const GET = withAuth(async (request, { params, userId }) => {
+    try {
     const { searchParams } = new URL(request.url)
     const serverId = searchParams.get('serverId')
-    
+
     const tools = await db.tool.findMany({
-      where: serverId ? { serverId } : undefined,
+      where: serverId 
+        ? { serverId, server: { userId } }
+        : { server: { userId } },
       orderBy: { createdAt: 'desc' }
     })
-    
-    return NextResponse.json({ success: true, data: tools })
-  } catch (error) {
-    console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
 
-export async function POST(request: NextRequest) {
-  try {
+    return apiSuccess(tools.map(toSafeTool))
+    } catch (error) {
+    console.error('[API Error]', error)
+    return apiServerError('Internal server error')
+    }
+    });
+
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
     const body = await request.json()
     const parsed = createToolSchema.parse(body)
-    
+
+    // Verify server ownership
+    const server = await db.mcpServer.findFirst({
+      where: { id: parsed.serverId, userId }
+    })
+    if (!server) {
+      return apiNotFound('Server not found')
+    }
+
+    // Verify branch belongs to this server
+    const branch = await db.branch.findFirst({
+      where: { id: parsed.branchId, serverId: parsed.serverId }
+    })
+    if (!branch) {
+      return apiNotFound('Branch not found for this server')
+    }
+
+    let handlerConfigObj: any = safeParseJSON(parsed.handlerConfig, {})
+    if (handlerConfigObj.connectionId) {
+      const isLinked = await db.fMConnectionServer.findFirst({
+        where: {
+          connectionId: handlerConfigObj.connectionId,
+          serverId: parsed.serverId,
+        }
+      })
+      if (!isLinked) {
+        return apiError('The connection specified in handlerConfig is not linked to this server', 'VALIDATION_ERROR', 400)
+      }
+    }
+
     const tool = await db.tool.create({
       data: parsed
     })
-    
-    return NextResponse.json({ success: true, data: tool }, { status: 201 })
-  } catch (error) {
+
+    return apiSuccess(toSafeTool(tool), 201)
+    } catch (error) {
     if (error instanceof ZodError) {
-      return NextResponse.json({
-        success: false,
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: error.issues,
-      }, { status: 400 })
+      return apiValidationFailed(error.issues)
     }
     console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    return apiServerError('Internal server error')
+    }
+    });

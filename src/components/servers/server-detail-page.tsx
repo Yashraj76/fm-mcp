@@ -3,6 +3,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
+import Link from 'next/link'
+import { api } from '@/lib/utils/api-client'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -33,6 +35,8 @@ import {
 import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { useState } from 'react'
+import { AutoGeneratePreviewDialog } from './auto-generate-preview-dialog'
+import { AiPromptToolDialog } from '@/components/ai/ai-prompt-tool-dialog'
 
 interface ToolItem {
   id: string
@@ -59,7 +63,7 @@ interface ServerDetail {
   description: string | null
   version: string
   status: string
-  connections: { connection: { id: string; name: string; status: string; host: string; database: string }; fileNames: string; isActive: boolean }[]
+  connections: { connection: { id: string; name: string; status: string; host: string; database: string; browsedSchema?: { compiledSchema: string } }; fileNames: string; isActive: boolean }[]
   branches: BranchItem[]
   tools: ToolItem[]
   deployments: { id: string; version: string; status: string; toolCount: number; changelog: string | null; deployedAt: string | null; createdAt: string; snapshot?: string; configSnapshot?: string }[]
@@ -113,6 +117,7 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
                 className="size-8 rounded-lg border border-white/5 hover:border-blue-500/30 hover:bg-blue-500/10 text-neutral-400 hover:text-blue-400 transition-all" 
                 onClick={onEdit}
                 title="Edit Tool"
+                aria-label="Edit tool"
               >
                 <Pencil className="size-3.5" />
               </Button>
@@ -124,6 +129,7 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
                 className="size-8 rounded-lg border border-white/5 hover:border-red-500/30 hover:bg-red-500/10 text-neutral-400 hover:text-red-400 transition-all" 
                 onClick={onDelete}
                 title="Delete Tool"
+                aria-label="Delete tool"
               >
                 <Trash2 className="size-3.5" />
               </Button>
@@ -139,6 +145,7 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
                 }`}
                 onClick={onToggle}
                 title={tool.isEnabled ? 'Disable Tool' : 'Enable Tool'}
+                aria-label={tool.isEnabled ? 'Disable tool' : 'Enable tool'}
               >
                 <Power className="size-3.5" />
               </Button>
@@ -160,12 +167,15 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
   )
 }
 
-export function ServerDetailPage() {
+interface ServerDetailPageProps {
+  serverId?: string
+}
+
+export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
   const currentServerId = useAppStore((s) => s.currentServerId)
   const serverMode = useAppStore((s) => s.serverMode)
   const refreshServers = useAppStore((s) => s.refreshServers)
   const setServerMode = useAppStore((s) => s.setServerMode)
-  const setCurrentView = useAppStore((s) => s.setCurrentView)
   const setCurrentServer = useAppStore((s) => s.setCurrentServer)
   const setCurrentBranch = useAppStore((s) => s.setCurrentBranch)
   const currentBranchId = useAppStore((s) => s.currentBranchId)
@@ -173,63 +183,23 @@ export function ServerDetailPage() {
   const setShowBranchDialog = useAppStore((s) => s.setShowBranchDialog)
   const setShowConfigDialog = useAppStore((s) => s.setShowConfigDialog)
   const setShowServerDialog = useAppStore((s) => s.setShowServerDialog)
-  const setShowAiDialog = useAppStore((s) => s.setShowAiDialog)
   const triggerRefreshTools = useAppStore((s) => s.triggerRefreshTools)
+
+  useEffect(() => {
+    if (serverId) {
+      setCurrentServer(serverId)
+    }
+  }, [serverId, setCurrentServer])
 
   const queryClient = useQueryClient()
   const [localRefreshKey, setLocalRefreshKey] = useState(0)
   const [isGeneratingAll, setIsGeneratingAll] = useState(false)
 
-  // Generate All Tools Mutation (Async Job Polling)
-  const generateAllMutation = useMutation({
-    mutationFn: async () => {
-      setIsGeneratingAll(true)
-      
-      // 1. Start the job
-      const res = await fetch(`/api/servers/${currentServerId}/generate-tools`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ branchId: currentBranchId })
-      })
-      const data = await res.json()
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to start tool generation job')
-      }
-      
-      const jobId = data.data.jobId
-      
-      // 2. Poll for completion
-      while (true) {
-        await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2 seconds
-        
-        const statusRes = await fetch(`/api/servers/${currentServerId}/generate-tools/status`)
-        const statusData = await statusRes.json()
-        
-        if (!statusRes.ok || !statusData.success) {
-          throw new Error(statusData.error || 'Failed to poll job status')
-        }
-        
-        const job = statusData.data
-        if (job.status === 'done') {
-          return job
-        }
-        if (job.status === 'failed') {
-          throw new Error(job.error || 'Tool generation failed during execution')
-        }
-      }
-    },
-    onSuccess: (jobData) => {
-      setIsGeneratingAll(false)
-      toast.success(`Generated ${jobData.toolsCreated || 'all'} tools successfully!`)
-      queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
-      queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
-      triggerRefreshTools()
-    },
-    onError: (err: any) => {
-      setIsGeneratingAll(false)
-      toast.error(err.message || 'Failed to generate tools')
-    }
-  })
+  // Auto-Generate preview dialog state
+  const [showAutoGenerateDialog, setShowAutoGenerateDialog] = useState(false)
+
+  // AI Prompt Tool dialog state
+  const [showAiPromptDialog, setShowAiPromptDialog] = useState(false)
 
   // Toggle tool enabled mutation (Branch-aware)
   const toggleMutation = useMutation({
@@ -240,20 +210,24 @@ export function ServerDetailPage() {
       const body = currentBranchId
         ? { enabled: !isEnabled }
         : { isEnabled: !isEnabled }
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
-      if (!res.ok) throw new Error('Failed to toggle tool')
-      return res.json()
+      return api.put<any>(url, body)
     },
-    onSuccess: () => {
+    onMutate: async ({ id, isEnabled }) => {
+      await queryClient.cancelQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
+      const previousTools = queryClient.getQueryData(['branch-tools', currentBranchId, currentServerId])
+      queryClient.setQueryData(['branch-tools', currentBranchId, currentServerId], (old: ToolItem[] | undefined) => {
+        if (!old) return old
+        return old.map(t => t.id === id ? { ...t, isEnabled: !isEnabled } : t)
+      })
+      return { previousTools }
+    },
+    onError: (err, variables, context) => {
+      queryClient.setQueryData(['branch-tools', currentBranchId, currentServerId], context?.previousTools)
+      toast.error('Failed to toggle tool')
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
-    },
-    onError: () => {
-      toast.error('Failed to toggle tool')
     },
   })
 
@@ -263,10 +237,7 @@ export function ServerDetailPage() {
       const url = currentBranchId
         ? `/api/branches/${currentBranchId}/tools/${id}`
         : `/api/servers/${currentServerId}/tools/${id}`
-      const res = await fetch(url, {
-        method: 'DELETE',
-      })
-      if (!res.ok) throw new Error('Failed to delete tool')
+      return api.delete<void>(url)
     },
     onSuccess: () => {
       toast.success('Tool deleted')
@@ -282,44 +253,28 @@ export function ServerDetailPage() {
   // Branch operations mutations
   const mergeMutation = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/branches/${branchId}/merge`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ changelog: `Merged branch ${branchId}` }),
-      }).then(r => {
-        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Merge failed') })
-        return r.json()
-      }),
+      api.post<{ message: string }>(`/api/branches/${branchId}/merge`, { changelog: `Merged branch ${branchId}` }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
       toast.success(data.message || 'Branch merged successfully')
     },
-    onError: (err: Error) => toast.error(err.message || 'Failed to merge branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to merge branch'),
   })
 
   const archiveMutation = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/branches/${branchId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'archived' }),
-      }).then(r => r.json()),
+      api.put<any>(`/api/branches/${branchId}`, { status: 'archived' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       toast.success('Branch archived')
     },
-    onError: () => toast.error('Failed to archive branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to archive branch'),
   })
 
   const deleteMutationBranch = useMutation({
     mutationFn: (branchId: string) =>
-      fetch(`/api/branches/${branchId}`, {
-        method: 'DELETE',
-      }).then(r => {
-        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Delete failed') })
-        return r.json()
-      }),
+      api.delete<any>(`/api/branches/${branchId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       toast.success('Branch deleted')
@@ -329,13 +284,13 @@ export function ServerDetailPage() {
         if (def) setCurrentBranch(def.id)
       }
     },
-    onError: (err: Error) => toast.error(err.message || 'Failed to delete branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to delete branch'),
   })
 
   // Rollback mutation
   const rollbackMutation = useMutation({
     mutationFn: (deploymentId: string) =>
-      fetch(`/api/deployments/${deploymentId}/rollback`, { method: 'POST' }).then(r => r.json()),
+      api.post<any>(`/api/deployments/${deploymentId}/rollback`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
@@ -348,7 +303,7 @@ export function ServerDetailPage() {
   // Server detailed schema fetch
   const { data: server, isLoading, isError } = useQuery<ServerDetail>({
     queryKey: ['server', currentServerId, refreshServers, localRefreshKey],
-    queryFn: () => fetch(`/api/servers/${currentServerId}`).then(r => r.json()).then(res => res.data),
+    queryFn: () => api.get<ServerDetail>(`/api/servers/${currentServerId}`),
     enabled: !!currentServerId,
   })
 
@@ -360,9 +315,7 @@ export function ServerDetailPage() {
       const url = currentBranchId
         ? `/api/branches/${currentBranchId}/tools`
         : `/api/servers/${currentServerId}/tools`
-      const res = await fetch(url)
-      if (!res.ok) throw new Error('Failed to fetch tools')
-      return res.json().then((r: { data?: ToolItem[] }) => r.data ?? [])
+      return api.get<ToolItem[]>(url)
     },
     enabled: !!currentServerId,
   })
@@ -409,12 +362,12 @@ export function ServerDetailPage() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => {
-              setCurrentServer(null)
-              setCurrentView('servers')
-            }}
+            aria-label="Back to Servers"
+            asChild
           >
-            <ArrowLeft className="size-4" />
+            <Link href="/servers" onClick={() => setCurrentServer(null)}>
+              <ArrowLeft className="size-4" />
+            </Link>
           </Button>
           <div>
             <div className="flex items-center gap-3">
@@ -439,66 +392,117 @@ export function ServerDetailPage() {
         </div>
       </div>
 
-      {/* Server Info Card */}
-      <Card className="border-white/10 bg-white/[0.02]">
-        <CardHeader className="pb-0">
-          <CardTitle className="text-xs font-semibold uppercase tracking-wider text-neutral-400">Server Information</CardTitle>
-        </CardHeader>
-        <CardContent className="pt-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div>
-              <span className="text-xs text-neutral-450 block">Version</span>
-              <p className="text-sm font-semibold text-white">v{server.version}</p>
-            </div>
-            <div>
-              <span className="text-xs text-neutral-450 block">Connections</span>
-              <p className="text-sm font-semibold text-white">{server.connections.length}</p>
-            </div>
-            <div>
-              <span className="text-xs text-neutral-450 block">Active Tools</span>
-              <p className="text-sm font-semibold text-white">{activeTools.length}</p>
-            </div>
-            <div>
-              <span className="text-xs text-neutral-450 block">Created</span>
-              <p className="text-sm font-semibold text-white">{format(new Date(server.createdAt), 'MMM d, yyyy')}</p>
+      {/* Server Info & Connections Container */}
+      <Card className="border-white/10 bg-white/[0.02] overflow-hidden">
+        <div className="p-4 flex flex-wrap items-center gap-6 border-b border-white/[0.05] bg-white/[0.01]">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-neutral-450">Version:</span>
+            <span className="text-sm font-semibold text-white">v{server.version}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-neutral-450">Active Tools:</span>
+            <span className="text-sm font-semibold text-white">{activeTools.length}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-neutral-450">Created:</span>
+            <span className="text-sm font-semibold text-white">{format(new Date(server.createdAt), 'MMM d, yyyy')}</span>
+          </div>
+        </div>
+        
+        {server.connections.length > 0 && (
+          <div className="p-4 flex flex-col gap-3">
+            <span className="text-xs text-neutral-400 font-medium">Linked Connections</span>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(server.connections ?? []).filter(c => c.isActive).map((conn) => {
+                let stats = { layouts: 0, tables: 0, scripts: 0, relationships: 0 }
+                if (conn.connection.browsedSchema?.compiledSchema) {
+                  try {
+                    const schema = JSON.parse(conn.connection.browsedSchema.compiledSchema)
+                    stats.layouts = schema.layouts?.length || 0
+                    stats.tables = schema.odataTables?.length || 0
+                    stats.scripts = schema.scripts?.length || 0
+                    stats.relationships = schema.relationships?.length || 0
+                  } catch {}
+                }
+                
+                return (
+                  <div key={conn.connection.id} className="flex flex-col gap-2.5 bg-white/[0.01] border border-white/[0.05] hover:border-white/10 transition-colors rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Link2 className="size-4 text-blue-400 shrink-0" />
+                        <span className="font-semibold text-sm text-neutral-200 truncate">{conn.connection.name}</span>
+                      </div>
+                      <Badge variant="outline" className="text-[10px] py-0 border-white/5 bg-white/[0.02] font-mono">
+                        {conn.connection.database}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-3 text-xs text-neutral-450 flex-wrap">
+                      <span title="Layouts">{stats.layouts} L</span>
+                      <span title="OData Tables">{stats.tables} T</span>
+                      <span title="Scripts">{stats.scripts} S</span>
+                      <span title="Relationships">{stats.relationships} R</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
-          {server.connections.length > 0 && (
-            <>
-              <Separator className="my-4 border-white/[0.05]" />
-              <div>
-                <span className="text-xs text-neutral-400 mb-2 block font-medium">Connections</span>
-                <div className="flex flex-wrap gap-2">
-                  {(server.connections ?? []).filter(c => c.isActive).map((conn) => (
-                    <div key={conn.connection.id} className="flex items-center gap-1.5 bg-white/[0.03] border border-white/5 rounded-md px-2.5 py-1 text-xs">
-                      <Link2 className="size-3 text-neutral-400" />
-                      <span className="font-semibold text-neutral-200">{conn.connection.name}</span>
-                      <span className="text-neutral-450">({conn.connection.database})</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </CardContent>
+        )}
       </Card>
 
       {/* Mode Tabs */}
       <Tabs value={serverMode} onValueChange={(v) => setServerMode(v as typeof serverMode)}>
-        <TabsList className="bg-white/[0.02] border border-white/5 p-1 rounded-lg">
-          <TabsTrigger value="edit" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
-            <Pencil className="size-3.5 mr-1.5" />
-            Edit
-          </TabsTrigger>
-          <TabsTrigger value="staging" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
-            <Eye className="size-3.5 mr-1.5" />
-            Staging
-          </TabsTrigger>
-          <TabsTrigger value="deployed" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
-            <Rocket className="size-3.5 mr-1.5" />
-            Deployed
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <TabsList className="bg-white/[0.02] border border-white/5 p-1 rounded-lg">
+            <TabsTrigger value="edit" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
+              <Pencil className="size-3.5 mr-1.5" />
+              Edit
+            </TabsTrigger>
+            <TabsTrigger value="staging" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
+              <Eye className="size-3.5 mr-1.5" />
+              Staging
+            </TabsTrigger>
+            <TabsTrigger value="deployed" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
+              <Rocket className="size-3.5 mr-1.5" />
+              Deployed
+            </TabsTrigger>
+          </TabsList>
+
+          <div className="flex items-center gap-2">
+            {serverMode === 'staging' && (
+              <Button
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-500 text-white gap-1.5 shadow-lg shadow-blue-900/20"
+                onClick={async () => {
+                  try {
+                    await api.post<any>(`/api/servers/${currentServerId}/deployments`, {
+                      changelog: `Manual deployment - ${activeTools.length} tools`
+                    })
+                    toast.success('Server deployed to production!')
+                    setLocalRefreshKey(k => k + 1)
+                  } catch (err: any) {
+                    toast.error(err.message || 'Failed to deploy')
+                  }
+                }}
+              >
+                <Rocket className="size-3.5" />
+                Deploy to Production
+              </Button>
+            )}
+            
+            {serverMode === 'deployed' && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-white/10 hover:bg-white/5 text-neutral-300 hover:text-white gap-1.5"
+                onClick={() => setShowBranchDialog(true)}
+              >
+                <GitBranch className="size-3.5" />
+                Create Edit Branch
+              </Button>
+            )}
+          </div>
+        </div>
 
         {/* Edit Mode */}
         <TabsContent value="edit" className="mt-4">
@@ -511,19 +515,19 @@ export function ServerDetailPage() {
                       Tools ({branchTools.length} total, {activeTools.length} active)
                     </CardTitle>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Button variant="outline" size="sm" className="border-white/10 hover:bg-white/5 text-neutral-350 hover:text-white" onClick={() => setShowAiDialog(true)}>
-                        <Sparkles className="size-3.5 mr-1.5 text-blue-400" />
+                      <Button variant="outline" size="sm" className="border-white/10 hover:bg-white/5 text-neutral-350 hover:text-white" onClick={() => setShowAiPromptDialog(true)}>
+                        <Sparkles className="size-3.5 mr-1.5 text-violet-400" />
                         AI Assistant
                       </Button>
                       <Button 
                         variant="secondary" 
                         size="sm" 
                         className="bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 gap-1.5 border border-indigo-500/10" 
-                        onClick={() => generateAllMutation.mutate()} 
-                        disabled={isGeneratingAll || !currentBranchId}
+                        onClick={() => setShowAutoGenerateDialog(true)} 
+                        disabled={!currentBranchId}
                       >
-                        {isGeneratingAll ? <Loader2 className="size-3.5 animate-spin" /> : <Brain className="size-3.5" />}
-                        {isGeneratingAll ? 'Generating...' : 'Auto-Generate Suite'}
+                        <Brain className="size-3.5" />
+                        Auto-Generate Suite
                       </Button>
                       <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white" onClick={() => setShowToolDialog(true)}>
                         <Plus className="size-3.5 mr-1.5" />
@@ -631,6 +635,7 @@ export function ServerDetailPage() {
                                     }
                                   }}
                                   title="Merge into default branch"
+                                  aria-label={`Merge branch ${branch.name} into default branch`}
                                 >
                                   <GitBranch className="size-3" />
                                 </Button>
@@ -643,6 +648,7 @@ export function ServerDetailPage() {
                                     archiveMutation.mutate(branch.id)
                                   }}
                                   title="Archive branch"
+                                  aria-label={`Archive branch ${branch.name}`}
                                 >
                                   <Clock className="size-3" />
                                 </Button>
@@ -657,6 +663,7 @@ export function ServerDetailPage() {
                                     }
                                   }}
                                   title="Delete branch"
+                                  aria-label={`Delete branch ${branch.name}`}
                                 >
                                   <Trash2 className="size-3" />
                                 </Button>
@@ -727,31 +734,6 @@ export function ServerDetailPage() {
               </Card>
             )}
 
-            <div className="flex justify-end">
-              <Button
-                className="bg-blue-600 hover:bg-blue-500 text-white gap-2"
-                onClick={async () => {
-                  try {
-                    const res = await fetch(`/api/servers/${currentServerId}/deployments`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ changelog: `Deploy from staging - ${activeTools.length} tools` })
-                    })
-                    if (res.ok) {
-                      toast.success('Server deployed to production!')
-                      setLocalRefreshKey(k => k + 1)
-                    } else {
-                      toast.error('Failed to deploy')
-                    }
-                  } catch {
-                    toast.error('Failed to deploy')
-                  }
-                }}
-              >
-                <Rocket className="size-4" />
-                Deploy to Production
-              </Button>
-            </div>
           </div>
         </TabsContent>
 
@@ -855,6 +837,7 @@ export function ServerDetailPage() {
                                 }
                               }}
                               title="Rollback to this version"
+                              aria-label={`Rollback to version ${deployment.version}`}
                             >
                               <RotateCcw className="size-3.5" />
                             </Button>
@@ -867,19 +850,27 @@ export function ServerDetailPage() {
               </Card>
             )}
 
-            <div className="flex justify-end">
-              <Button
-                variant="outline"
-                className="border-white/10 hover:bg-white/5 text-neutral-300 hover:text-white gap-2"
-                onClick={() => setShowBranchDialog(true)}
-              >
-                <GitBranch className="size-4" />
-                Create Edit Branch
-              </Button>
-            </div>
           </div>
         </TabsContent>
       </Tabs>
+
+      {currentServerId && (
+        <AutoGeneratePreviewDialog
+          open={showAutoGenerateDialog}
+          onOpenChange={setShowAutoGenerateDialog}
+          serverId={currentServerId}
+          branchId={currentBranchId}
+        />
+      )}
+
+      {currentServerId && (
+        <AiPromptToolDialog
+          open={showAiPromptDialog}
+          onOpenChange={setShowAiPromptDialog}
+          serverId={currentServerId}
+          branchId={currentBranchId}
+        />
+      )}
     </div>
   )
 }

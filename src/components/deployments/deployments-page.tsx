@@ -1,7 +1,9 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
+import Link from 'next/link'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -83,7 +85,10 @@ function DeploymentStatusBadge({ status }: { status: string }) {
 
 export function DeploymentsPage() {
   const queryClient = useQueryClient()
-  const { currentServerId, setCurrentServer, setCurrentView, triggerRefreshDeployments, refreshDeployments } = useAppStore()
+  const currentServerId = useAppStore((s) => s.currentServerId)
+  const setCurrentServer = useAppStore((s) => s.setCurrentServer)
+  const triggerRefreshDeployments = useAppStore((s) => s.triggerRefreshDeployments)
+  const refreshDeployments = useAppStore((s) => s.refreshDeployments)
   const [showDeployDialog, setShowDeployDialog] = useState(false)
   const [changelog, setChangelog] = useState('')
   const [showSnapshotDialog, setShowSnapshotDialog] = useState(false)
@@ -91,22 +96,22 @@ export function DeploymentsPage() {
 
   const { data: servers = [] } = useQuery<ServerItem[]>({
     queryKey: ['servers'],
-    queryFn: () => fetch('/api/servers').then(r => r.json()).then(res => res.data ?? []),
+    queryFn: () => api.get<ServerItem[]>('/api/servers'),
   })
 
   const { data: deployments = [], isLoading, isError, error } = useQuery<DeploymentItem[]>({
     queryKey: ['deployments', currentServerId, refreshDeployments],
     queryFn: async () => {
-      const res = await fetch(`/api/servers/${currentServerId}/deployments`)
-      if (!res.ok) {
-        if (res.status === 404) {
+      try {
+        return await api.get<DeploymentItem[]>(`/api/servers/${currentServerId}/deployments`)
+      } catch (err: any) {
+        if (err.status === 404) {
           // Server no longer exists, reset selection
           setCurrentServer(null)
           return []
         }
-        throw new Error('Failed to load deployments')
+        throw err
       }
-      return res.json().then(r => r.data ?? [])
     },
     enabled: !!currentServerId,
     retry: 1,
@@ -116,13 +121,8 @@ export function DeploymentsPage() {
 
   const deployMutation = useMutation({
     mutationFn: () =>
-      fetch(`/api/servers/${currentServerId}/deployments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ changelog: changelog || 'New deployment' }),
-      }).then(r => {
-        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Deploy failed') })
-        return r.json()
+      api.post<any>(`/api/servers/${currentServerId}/deployments`, {
+        changelog: changelog || 'New deployment',
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments'] })
@@ -132,18 +132,18 @@ export function DeploymentsPage() {
       setShowDeployDialog(false)
       setChangelog('')
     },
-    onError: (err: Error) => toast.error(err.message || 'Failed to create deployment'),
+    onError: (err: any) => toast.error(err.message || 'Failed to create deployment'),
   })
 
   const rollbackMutation = useMutation({
     mutationFn: (deploymentId: string) =>
-      fetch(`/api/deployments/${deploymentId}/rollback`, { method: 'POST' }).then(r => r.json()),
+      api.post<any>(`/api/deployments/${deploymentId}/rollback`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments'] })
       triggerRefreshDeployments()
       toast.success('Rollback completed successfully')
     },
-    onError: () => toast.error('Failed to rollback deployment'),
+    onError: (err: any) => toast.error(err.message || 'Failed to rollback deployment'),
   })
 
   const handleViewSnapshot = (deployment: DeploymentItem) => {
@@ -171,9 +171,11 @@ export function DeploymentsPage() {
             <p className="text-muted-foreground text-sm mb-4 text-center max-w-md">
               Create an MCP server first before managing deployments.
             </p>
-            <Button variant="outline" onClick={() => setCurrentView('servers')}>
-              <ArrowLeft className="size-4" />
-              Go to Servers
+            <Button variant="outline" asChild>
+              <Link href="/servers" className="flex items-center gap-2">
+                <ArrowLeft className="size-4" />
+                Go to Servers
+              </Link>
             </Button>
           </Card>
         ) : (
@@ -221,8 +223,10 @@ export function DeploymentsPage() {
     return (
       <div className="p-6 space-y-4">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null); setCurrentView('servers') }}>
-            <ArrowLeft className="size-4" />
+          <Button variant="ghost" size="icon" aria-label="Back to Servers" asChild>
+            <Link href="/servers" onClick={() => setCurrentServer(null)}>
+              <ArrowLeft className="size-4" />
+            </Link>
           </Button>
           <h1 className="text-2xl font-bold tracking-tight">Deployment History</h1>
         </div>
@@ -244,8 +248,10 @@ export function DeploymentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => { setCurrentServer(null); setCurrentView('servers') }}>
-            <ArrowLeft className="size-4" />
+          <Button variant="ghost" size="icon" aria-label="Back to Servers" asChild>
+            <Link href="/servers" onClick={() => setCurrentServer(null)}>
+              <ArrowLeft className="size-4" />
+            </Link>
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Deployment History</h1>
@@ -332,13 +338,14 @@ export function DeploymentsPage() {
                       size="sm"
                       onClick={() => handleViewSnapshot(deployment)}
                       title="View config snapshot"
+                      aria-label="View config snapshot"
                     >
                       <Eye className="size-3.5" />
                     </Button>
                     {(deployment.status === 'deployed' || deployment.status === 'rolled_back') && index > 0 && (
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
-                          <Button variant="outline" size="sm" title="Rollback to this version">
+                          <Button variant="outline" size="sm" title="Rollback to this version" aria-label={`Rollback to version ${deployment.version}`}>
                             <RotateCcw className="size-3.5" />
                           </Button>
                         </AlertDialogTrigger>

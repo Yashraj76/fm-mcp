@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
 import {
   Dialog,
@@ -52,11 +53,9 @@ const emptyForm: ConnectionFormData = {
 }
 
 export function ConnectionDialog() {
-  const {
-    showConnectionDialog,
-    setShowConnectionDialog,
-    editingConnectionId,
-  } = useAppStore()
+  const showConnectionDialog = useAppStore((s) => s.showConnectionDialog)
+  const setShowConnectionDialog = useAppStore((s) => s.setShowConnectionDialog)
+  const editingConnectionId = useAppStore((s) => s.editingConnectionId)
   const { toast } = useToast()
   const queryClient = useQueryClient()
 
@@ -71,11 +70,12 @@ export function ConnectionDialog() {
   // Fetch connection data for editing
   const { data: existingConnection } = useQuery({
     queryKey: ['connection', editingConnectionId],
-    queryFn: () =>
-      fetch(`/api/connections/${editingConnectionId}`)
-        .then((r) => r.json())
-        .then((res) => res.data),
+    queryFn: () => api.get<any>(`/api/connections/${editingConnectionId}`),
     enabled: isEditing && showConnectionDialog,
+    placeholderData: () => {
+      const all = queryClient.getQueryData<any[]>(['connections'])
+      return all?.find(c => c.id === editingConnectionId)
+    }
   })
 
   // Seed form from server data ONCE when it arrives (edit mode only)
@@ -141,21 +141,12 @@ export function ConnectionDialog() {
   }
 
   const saveMutation = useMutation({
-    mutationFn: async (data: ConnectionFormData) => {
-      const url = isEditing
-        ? `/api/connections/${editingConnectionId}`
-        : '/api/connections'
-      const method = isEditing ? 'PUT' : 'POST'
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Request failed' }))
-        throw new Error(err.error || 'Request failed')
+    mutationFn: (data: ConnectionFormData) => {
+      if (isEditing) {
+        return api.put<any>(`/api/connections/${editingConnectionId}`, data)
+      } else {
+        return api.post<any>('/api/connections', data)
       }
-      return res.json()
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['connections'] })
@@ -169,7 +160,7 @@ export function ConnectionDialog() {
           : 'New FileMaker connection has been added.',
       })
     },
-    onError: (error) => {
+    onError: (error: any) => {
       toast({
         title: 'Error',
         description: error.message || 'Failed to save connection',
@@ -179,25 +170,22 @@ export function ConnectionDialog() {
   })
 
   const testMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await fetch(`/api/connections/${id}/test`, { method: 'POST' })
-      return res.json()
-    },
-    onSuccess: (data) => {
+    mutationFn: (id: string) => api.post<any>(`/api/connections/${id}/test`),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['connections'] })
       queryClient.invalidateQueries({ queryKey: ['stats'] })
       toast({
-        title: data.success ? 'Connection Successful' : 'Connection Failed',
-        description: data.success
-          ? 'Successfully connected to FileMaker Server.'
-          : (data.error || 'Could not connect to FileMaker Server.'),
-        variant: data.success ? 'default' : 'destructive',
+        title: 'Connection Successful',
+        description: 'Successfully connected to FileMaker Server.',
+        variant: 'default',
       })
     },
-    onError: () => {
+    onError: (err: any) => {
+      queryClient.invalidateQueries({ queryKey: ['connections'] })
+      queryClient.invalidateQueries({ queryKey: ['stats'] })
       toast({
-        title: 'Test Failed',
-        description: 'Unable to reach the test endpoint.',
+        title: 'Connection Failed',
+        description: err.message || 'Could not connect to FileMaker Server.',
         variant: 'destructive',
       })
     },
@@ -258,9 +246,11 @@ export function ConnectionDialog() {
               value={form.name}
               onChange={(e) => updateField('name', e.target.value)}
               className={errors.name ? 'border-destructive' : ''}
+              aria-invalid={errors.name ? "true" : "false"}
+              aria-describedby={errors.name ? "conn-name-error" : undefined}
             />
             {errors.name && (
-              <p className="text-xs text-destructive">{errors.name}</p>
+              <p id="conn-name-error" className="text-xs text-destructive">{errors.name}</p>
             )}
           </div>
 
@@ -276,9 +266,11 @@ export function ConnectionDialog() {
                 value={form.host}
                 onChange={(e) => updateField('host', e.target.value)}
                 className={errors.host ? 'border-destructive' : ''}
+                aria-invalid={errors.host ? "true" : "false"}
+                aria-describedby={errors.host ? "conn-host-error" : undefined}
               />
               {errors.host && (
-                <p className="text-xs text-destructive">{errors.host}</p>
+                <p id="conn-host-error" className="text-xs text-destructive">{errors.host}</p>
               )}
             </div>
             <div className="space-y-2">
@@ -303,9 +295,11 @@ export function ConnectionDialog() {
               value={form.database}
               onChange={(e) => updateField('database', e.target.value)}
               className={errors.database ? 'border-destructive' : ''}
+              aria-invalid={errors.database ? "true" : "false"}
+              aria-describedby={errors.database ? "conn-database-error" : undefined}
             />
             {errors.database && (
-              <p className="text-xs text-destructive">{errors.database}</p>
+              <p id="conn-database-error" className="text-xs text-destructive">{errors.database}</p>
             )}
           </div>
 
@@ -313,7 +307,7 @@ export function ConnectionDialog() {
           <div className="space-y-2">
             <Label>Authentication Type</Label>
             <Select value={form.authType} onValueChange={(v) => updateField('authType', v)}>
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" aria-label="Select Authentication Type">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -335,9 +329,11 @@ export function ConnectionDialog() {
               value={form.username}
               onChange={(e) => updateField('username', e.target.value)}
               className={errors.username ? 'border-destructive' : ''}
+              aria-invalid={errors.username ? "true" : "false"}
+              aria-describedby={errors.username ? "conn-username-error" : undefined}
             />
             {errors.username && (
-              <p className="text-xs text-destructive">{errors.username}</p>
+              <p id="conn-username-error" className="text-xs text-destructive">{errors.username}</p>
             )}
           </div>
 
@@ -357,6 +353,8 @@ export function ConnectionDialog() {
                 value={form.password}
                 onChange={(e) => updateField('password', e.target.value)}
                 className={`pr-9 ${errors.password ? 'border-destructive' : ''}`}
+                aria-invalid={errors.password ? "true" : "false"}
+                aria-describedby={errors.password ? "conn-password-error" : undefined}
               />
               <Button
                 type="button"
@@ -364,6 +362,7 @@ export function ConnectionDialog() {
                 size="icon"
                 className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
                 onClick={() => setShowPassword(!showPassword)}
+                aria-label={showPassword ? "Hide password" : "Show password"}
               >
                 {showPassword ? (
                   <EyeOff className="size-3.5 text-muted-foreground" />
@@ -373,7 +372,7 @@ export function ConnectionDialog() {
               </Button>
             </div>
             {errors.password && (
-              <p className="text-xs text-destructive">{errors.password}</p>
+              <p id="conn-password-error" className="text-xs text-destructive">{errors.password}</p>
             )}
           </div>
 
@@ -390,9 +389,11 @@ export function ConnectionDialog() {
                   value={form.clientId}
                   onChange={(e) => updateField('clientId', e.target.value)}
                   className={errors.clientId ? 'border-destructive' : ''}
+                  aria-invalid={errors.clientId ? "true" : "false"}
+                  aria-describedby={errors.clientId ? "conn-client-id-error" : undefined}
                 />
                 {errors.clientId && (
-                  <p className="text-xs text-destructive">{errors.clientId}</p>
+                  <p id="conn-client-id-error" className="text-xs text-destructive">{errors.clientId}</p>
                 )}
               </div>
               <div className="space-y-2">
@@ -406,9 +407,11 @@ export function ConnectionDialog() {
                   value={form.clientSecret}
                   onChange={(e) => updateField('clientSecret', e.target.value)}
                   className={errors.clientSecret ? 'border-destructive' : ''}
+                  aria-invalid={errors.clientSecret ? "true" : "false"}
+                  aria-describedby={errors.clientSecret ? "conn-client-secret-error" : undefined}
                 />
                 {errors.clientSecret && (
-                  <p className="text-xs text-destructive">{errors.clientSecret}</p>
+                  <p id="conn-client-secret-error" className="text-xs text-destructive">{errors.clientSecret}</p>
                 )}
               </div>
             </>

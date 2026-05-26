@@ -1,16 +1,20 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
+import { withAuth } from "@/lib/auth/api-guard";
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 // POST /api/branches/[id]/revert - Revert branch tools back to main state
-export async function POST(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const branchId = (await params).id;
-    const branch = await prisma.branch.findUnique({
-      where: { id: branchId },
+export const POST = withAuth(async (_, { params, userId }) => {
+    try {
+    const branchId = params.id;
+    const branch = await prisma.branch.findFirst({
+      where: {
+        id: branchId,
+        server: { userId }
+      },
       include: { server: true },
     });
 
@@ -37,7 +41,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
 
     // Find the source main branch
     const mainBranch = await prisma.branch.findFirst({
-      where: { serverId: branch.serverId, isDefault: true },
+      where: {
+        serverId: branch.serverId,
+        isDefault: true
+      },
     });
 
     if (!mainBranch) {
@@ -49,7 +56,10 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
 
     // Load effective tools of main branch
     const mainTools = await prisma.branchTool.findMany({
-      where: { branchId: mainBranch.id, action: { not: 'deleted' } },
+      where: {
+        branchId: mainBranch.id,
+        action: { not: 'deleted' }
+      },
     });
 
     // Run the revert inside a single database transaction
@@ -81,11 +91,11 @@ export async function POST(_: Request, { params }: { params: Promise<{ id: strin
       message: 'Branch reverted to main successfully',
       data: { toolCount: mainTools.length },
     });
-  } catch (error) {
+    } catch (error) {
     console.error('[API POST Revert Branch Error]', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
       { status: 500 }
     );
-  }
-}
+    }
+    });

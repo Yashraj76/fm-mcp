@@ -1,7 +1,9 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
+import Link from 'next/link'
 import {
   Card,
   CardContent,
@@ -33,6 +35,12 @@ interface Stats {
   totalServers: number
   totalTools: number
   totalDeployments: number
+  apiStats?: {
+    total: number
+    passed: number
+    failed: number
+    avgDuration: number
+  }
 }
 
 interface ConnectionSummary {
@@ -88,33 +96,33 @@ const statusConfig = {
 }
 
 export function DashboardPage() {
-  const { setCurrentView, setShowConnectionDialog, setShowServerDialog, setShowToolDialog } = useAppStore()
+  const setShowConnectionDialog = useAppStore((s) => s.setShowConnectionDialog)
+  const setShowServerDialog = useAppStore((s) => s.setShowServerDialog)
+  const setShowToolDialog = useAppStore((s) => s.setShowToolDialog)
 
   const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
     queryKey: ['stats'],
-    queryFn: () => fetch('/api/stats').then((r) => r.json()).then(res => res.data),
+    queryFn: () => api.get<Stats>('/api/stats'),
   })
 
   const { data: connections } = useQuery<ConnectionSummary[]>({
     queryKey: ['connections-summary'],
-    queryFn: () => fetch('/api/connections').then((r) => r.json()).then(res => res.data),
+    queryFn: () => api.get<ConnectionSummary[]>('/api/connections'),
   })
 
   // Fetch real activity logs from Turso (replaces static mockActivities)
   const { data: recentActivities = [] } = useQuery<RecentActivity[]>({
     queryKey: ['recent-activity'],
-    queryFn: () =>
-      fetch('/api/logs?limit=6')
-        .then((r) => r.json())
-        .then((res) =>
-          (res.data ?? []).map((log: { id: string; action: string; entityType: string; entityName: string; createdAt: string }) => ({
-            id: log.id,
-            type: logType(log.entityType),
-            message: `${log.entityName} — ${log.action.replace(/_/g, ' ')}`,
-            timestamp: log.createdAt,
-            status: logStatus(log.action),
-          }))
-        ),
+    queryFn: async () => {
+      const logs = await api.get<any[]>('/api/logs?limit=6')
+      return logs.map((log: { id: string; action: string; entityType: string; entityName: string; createdAt: string }) => ({
+        id: log.id,
+        type: logType(log.entityType),
+        message: `${log.entityName} — ${log.action.replace(/_/g, ' ')}`,
+        timestamp: log.createdAt,
+        status: logStatus(log.action),
+      }))
+    },
     staleTime: 30_000,
   })
 
@@ -187,56 +195,61 @@ export function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Quick Actions */}
+        {/* API Connector Status */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Quick Actions</CardTitle>
-            <CardDescription>Common tasks to get started</CardDescription>
+            <CardTitle className="text-base">API Connector Status</CardTitle>
+            <CardDescription>Performance and reliability metrics</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-col gap-2">
-              <Button
-                variant="outline"
-                className="justify-start gap-3 h-11"
-                onClick={() => {
-                  setShowConnectionDialog(true, null)
-                }}
-              >
-                <Plus className="size-4 text-emerald-500" />
-                <div className="text-left">
-                  <span className="text-sm font-medium">New Connection</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Add a FileMaker Data API connection
-                  </span>
+            {statsLoading ? (
+              <div className="space-y-4">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                    <p className="text-xs text-muted-foreground mb-1">Total Requests</p>
+                    <p className="text-xl font-bold">{stats?.apiStats?.total ?? 0}</p>
+                  </div>
+                  <div className="bg-muted/50 rounded-lg p-3 border border-border">
+                    <p className="text-xs text-muted-foreground mb-1">Avg Response Time</p>
+                    <p className="text-xl font-bold">{stats?.apiStats?.avgDuration ?? 0}ms</p>
+                  </div>
                 </div>
-              </Button>
-              <Button
-                variant="outline"
-                className="justify-start gap-3 h-11"
-                onClick={() => setShowServerDialog(true, null)}
-              >
-                <Plus className="size-4 text-sky-500" />
-                <div className="text-left">
-                  <span className="text-sm font-medium">New Server</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Create a new MCP server instance
-                  </span>
+                
+                <div className="space-y-3 mt-2">
+                  <div>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="flex items-center gap-1.5"><div className="size-2 rounded-full bg-emerald-500" /> Passed</span>
+                      <span className="font-medium">{stats?.apiStats?.passed ?? 0}</span>
+                    </div>
+                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-emerald-500 rounded-full" 
+                        style={{ width: `${stats?.apiStats?.total ? ((stats.apiStats.passed / stats.apiStats.total) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="flex items-center gap-1.5"><div className="size-2 rounded-full bg-red-500" /> Failed</span>
+                      <span className="font-medium">{stats?.apiStats?.failed ?? 0}</span>
+                    </div>
+                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-red-500 rounded-full" 
+                        style={{ width: `${stats?.apiStats?.total ? ((stats.apiStats.failed / stats.apiStats.total) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
-              </Button>
-              <Button
-                variant="outline"
-                className="justify-start gap-3 h-11"
-                onClick={() => setShowToolDialog(true, null)}
-              >
-                <Plus className="size-4 text-amber-500" />
-                <div className="text-left">
-                  <span className="text-sm font-medium">New Tool</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Define a new MCP tool
-                  </span>
-                </div>
-              </Button>
-            </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -294,9 +307,9 @@ export function DashboardPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setCurrentView('connections')}
+              asChild
             >
-              View All
+              <Link href="/connections">View All</Link>
             </Button>
           </div>
         </CardHeader>

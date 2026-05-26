@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withFMSession } from '@/lib/filemaker/session'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 // GET /api/connections/[id]/schema - Get schema for a connection
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const connection = await db.fMConnection.findUnique({ where: { id } })
+export const GET = withAuth(async (request, { params, userId }) => {
+    try {
+    const { id } = params
+    const connection = await db.fMConnection.findFirst({
+      where: { id, userId }
+    })
 
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
@@ -18,7 +19,7 @@ export async function GET(
     // Check for cached schema (< 5 mins old)
     const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
     const cached = await db.fMSchemaCache.findFirst({
-      where: { 
+      where: {
         connectionId: id, 
         databaseName: connection.database,
         cachedAt: { gte: fiveMinutesAgo }
@@ -31,11 +32,11 @@ export async function GET(
         data: {
           databaseName: connection.database,
           cachedAt: cached.cachedAt,
-          layouts: JSON.parse(cached.layouts),
-          scripts: JSON.parse(cached.scripts),
-          tables: JSON.parse(cached.tables),
-          fields: JSON.parse(cached.fields),
-          relationships: JSON.parse(cached.relationships),
+          layouts: safeParseJSON(cached.layouts, []),
+          scripts: safeParseJSON(cached.scripts, []),
+          tables: safeParseJSON(cached.tables, []),
+          fields: safeParseJSON(cached.fields, []),
+          relationships: safeParseJSON(cached.relationships, []),
         }
       })
     }
@@ -96,7 +97,10 @@ export async function GET(
       const cachedAt = new Date()
       
       const existingCache = await db.fMSchemaCache.findFirst({
-        where: { connectionId: id, databaseName: connection.database }
+        where: {
+          connectionId: id,
+          databaseName: connection.database
+        }
       })
       
       if (existingCache) {
@@ -142,8 +146,8 @@ export async function GET(
         code: 'SCHEMA_FETCH_ERROR' 
       }, { status: 500 })
     }
-  } catch (error: any) {
+    } catch (error: any) {
     console.error('[API Error]', error)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    }
+    });

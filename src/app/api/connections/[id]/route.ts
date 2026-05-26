@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { encrypt } from '@/lib/crypto'
 import { z, ZodError } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { getFMConnection } from '@/lib/db/user-scoped';
 
 const updateConnectionSchema = z.object({
   name: z.string().min(1).optional(),
@@ -16,31 +18,29 @@ const updateConnectionSchema = z.object({
   sslVerify: z.boolean().optional(),
 })
 
+const connectionSelect = {
+  select: {
+    id: true,
+    name: true,
+    host: true,
+    port: true,
+    database: true,
+    username: true,
+    status: true,
+    authType: true,
+    sslVerify: true,
+    lastTested: true,
+    lastError: true,
+    createdAt: true,
+    updatedAt: true,
+  }
+}
+
 // GET /api/connections/[id] - Get a single connection
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const GET = withAuth(async (request, { params, userId }) => {
   try {
     const { id } = await params
-    const connection = await db.fMConnection.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        host: true,
-        port: true,
-        database: true,
-        username: true,
-        status: true,
-        authType: true,
-        sslVerify: true,
-        lastTested: true,
-        lastError: true,
-        createdAt: true,
-        updatedAt: true,
-      }
-    })
+    const connection = await getFMConnection(id, userId, connectionSelect)
 
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
@@ -51,19 +51,16 @@ export async function GET(
     console.error('[API Error]', error)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
   }
-}
+});
 
 // PUT /api/connections/[id] - Update a connection
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const PUT = withAuth(async (request, { params, userId }) => {
   try {
     const { id } = await params
     const body = await request.json()
     const parsed = updateConnectionSchema.parse(body)
 
-    const connection = await db.fMConnection.findUnique({ where: { id } })
+    const connection = await getFMConnection(id, userId)
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
     }
@@ -79,21 +76,7 @@ export async function PUT(
     const updated = await db.fMConnection.update({
       where: { id },
       data: dataToUpdate,
-      select: {
-        id: true,
-        name: true,
-        host: true,
-        port: true,
-        database: true,
-        username: true,
-        status: true,
-        authType: true,
-        sslVerify: true,
-        lastTested: true,
-        lastError: true,
-        createdAt: true,
-        updatedAt: true,
-      }
+      ...connectionSelect
     })
 
     return NextResponse.json({ success: true, data: updated })
@@ -109,16 +92,13 @@ export async function PUT(
     console.error('[API Error]', error)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
   }
-}
+});
 
 // DELETE /api/connections/[id] - Delete a connection
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export const DELETE = withAuth(async (request, { params, userId }) => {
   try {
     const { id } = await params
-    const connection = await db.fMConnection.findUnique({ where: { id } })
+    const connection = await getFMConnection(id, userId)
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
     }
@@ -129,4 +109,4 @@ export async function DELETE(
     console.error('[API Error]', error)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
   }
-}
+});

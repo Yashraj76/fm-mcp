@@ -1,7 +1,10 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -28,6 +31,7 @@ import {
 } from '@/components/ui/select'
 import { SchemaBuilder, type JsonSchema } from '@/components/tools/schema-builder'
 import { MultiTableBuilder, type ToolStep } from '@/components/tools/multi-table-builder'
+import { FieldMapper } from '@/components/tools/field-mapper'
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 import {
@@ -57,17 +61,6 @@ const FM_METHODS = [
   { value: 'custom', label: 'Custom' },
 ] as const
 
-// Mock layouts and scripts for autocomplete
-const MOCK_LAYOUTS = ['Contacts', 'Invoices', 'Products', 'Orders', 'Projects', 'Tasks']
-const MOCK_SCRIPTS = [
-  'Send Notification',
-  'Calculate Total',
-  'Generate Invoice PDF',
-  'Create Related Records',
-  'Import Data',
-  'Export Report',
-]
-
 interface ToolFormData {
   name: string
   description: string
@@ -79,7 +72,7 @@ interface ToolFormData {
   isEnabled: boolean
   inputSchema: JsonSchema
   outputSchema: JsonSchema
-  handlerConfig: Record<string, unknown>
+  handlerConfig: Record<string, unknown> & { connectionId?: string, fieldMappings?: Record<string, string> }
 }
 
 function getDefaultFormData(): ToolFormData {
@@ -95,12 +88,14 @@ function getDefaultFormData(): ToolFormData {
     inputSchema: { type: 'object', properties: {} },
     outputSchema: { type: 'object', properties: {} },
     handlerConfig: {
+      connectionId: '',
       method: 'custom',
       layout: '',
       script: null,
       recordIdField: 'recordId',
       requestParams: [],
       steps: [],
+      fieldMappings: {},
     },
   }
 }
@@ -110,14 +105,12 @@ interface ToolDialogProps {
 }
 
 export function ToolDialog({ prefilledData }: ToolDialogProps) {
-  const {
-    showToolDialog,
-    editingToolId,
-    currentServerId,
-    currentBranchId,
-    setShowToolDialog,
-    triggerRefreshTools,
-  } = useAppStore()
+  const showToolDialog = useAppStore((s) => s.showToolDialog)
+  const editingToolId = useAppStore((s) => s.editingToolId)
+  const currentServerId = useAppStore((s) => s.currentServerId)
+  const currentBranchId = useAppStore((s) => s.currentBranchId)
+  const setShowToolDialog = useAppStore((s) => s.setShowToolDialog)
+  const triggerRefreshTools = useAppStore((s) => s.triggerRefreshTools)
 
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('basic')
@@ -138,29 +131,82 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
 
   // Fetch existing tool data for editing
   const { data: existingTool, isLoading: isLoadingTool } = useQuery({
-    queryKey: ['tool', editingToolId],
-    queryFn: async () => {
-      const res = await fetch(`/api/servers/${currentServerId}/tools/${editingToolId}`)
-      if (!res.ok) throw new Error('Failed to fetch tool')
-      return res.json().then((r: { data?: any }) => r.data)
+    queryKey: ['tool', editingToolId, currentBranchId],
+    queryFn: () => {
+      const url = currentBranchId 
+        ? `/api/branches/${currentBranchId}/tools/${editingToolId}`
+        : `/api/servers/${currentServerId}/tools/${editingToolId}`
+      return api.get<any>(url)
     },
     enabled: isEditing && !!currentServerId && !!editingToolId,
   })
+
+  // Fetch server data for schema autocompletion
+  const { data: serverData } = useQuery({
+    queryKey: ['server', currentServerId],
+    queryFn: () => api.get<any>(`/api/servers/${currentServerId}`),
+    enabled: !!currentServerId,
+  })
+
+  const [availableLayouts, setAvailableLayouts] = useState<string[]>([])
+  const [availableScripts, setAvailableScripts] = useState<string[]>([])
+
+  useEffect(() => {
+    if (serverData?.connections) {
+      const layouts = new Set<string>()
+      const scripts = new Set<string>()
+      serverData.connections.forEach((conn: any) => {
+        if (conn.connection?.browsedSchema?.compiledSchema) {
+          try {
+            const schema = safeParseJSON(conn.connection.browsedSchema.compiledSchema, {})
+            schema.layouts?.forEach((l: any) => layouts.add(l.name))
+            schema.scripts?.forEach((s: any) => scripts.add(s.name))
+          } catch {}
+        }
+      })
+      setAvailableLayouts(Array.from(layouts).sort())
+      setAvailableScripts(Array.from(scripts).sort())
+    }
+  }, [serverData])
+
+  const [layoutFields, setLayoutFields] = useState<string[]>([])
+
+  useEffect(() => {
+    if (serverData?.connections && formData.fmLayout) {
+      let fields: string[] = []
+      serverData.connections.forEach((conn: any) => {
+        if (!formData.handlerConfig?.connectionId || conn.connection.id === formData.handlerConfig.connectionId) {
+          if (conn.connection?.browsedSchema?.compiledSchema) {
+            try {
+              const schema = safeParseJSON(conn.connection.browsedSchema.compiledSchema, {})
+              const layout = schema.layouts?.find((l: any) => l.name === formData.fmLayout)
+              if (layout && layout.fieldMetaData) {
+                fields = [...new Set([...fields, ...layout.fieldMetaData.map((f: any) => f.name)])]
+              }
+            } catch {}
+          }
+        }
+      })
+      setLayoutFields(fields.sort())
+    } else {
+      setLayoutFields([])
+    }
+  }, [serverData, formData.fmLayout, formData.handlerConfig?.connectionId])
 
   // Populate form when editing
   useEffect(() => {
     if (existingTool && isEditing) {
       try {
         const inputSchema = typeof existingTool.inputSchema === 'string'
-          ? JSON.parse(existingTool.inputSchema)
+          ? safeParseJSON(existingTool.inputSchema, {})
           : existingTool.inputSchema
         const outputSchema = existingTool.outputSchema
           ? typeof existingTool.outputSchema === 'string'
-            ? JSON.parse(existingTool.outputSchema)
+            ? safeParseJSON(existingTool.outputSchema, {})
             : existingTool.outputSchema
           : { type: 'object', properties: {} }
         const handlerConfig = typeof existingTool.handlerConfig === 'string'
-          ? JSON.parse(existingTool.handlerConfig)
+          ? safeParseJSON(existingTool.handlerConfig, {})
           : existingTool.handlerConfig
 
         queueMicrotask(() => {
@@ -258,8 +304,42 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     }
   }, [formData.fmMethod, formData.fmLayout, formData.fmScript, formData.recordIdField])
 
-  const updateField = useCallback(<K extends keyof ToolFormData>(key: K, value: ToolFormData[K]) => {
-    setFormData((prev) => ({ ...prev, [key]: value }))
+  const updateField = useCallback((field: keyof ToolFormData, value: any) => {
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value }
+
+      // Auto-sync inputSchema properties to fieldMappings
+      if (field === 'inputSchema' && prev.category !== 'Multi-Table') {
+        const inputProps = value?.properties || {}
+        const newMappings = { ...(prev.handlerConfig?.fieldMappings || {}) }
+        let hasChanges = false
+        
+        // Add new keys
+        for (const key of Object.keys(inputProps)) {
+          if (!(key in newMappings)) {
+            newMappings[key] = key
+            hasChanges = true
+          }
+        }
+        
+        // Remove deleted keys
+        for (const key of Object.keys(newMappings)) {
+          if (!(key in inputProps)) {
+            delete newMappings[key]
+            hasChanges = true
+          }
+        }
+
+        if (hasChanges) {
+          updated.handlerConfig = {
+            ...(prev.handlerConfig || {}),
+            fieldMappings: newMappings
+          }
+        }
+      }
+
+      return updated
+    })
   }, [])
 
   // Create/Update mutation
@@ -272,7 +352,8 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       }
       try {
         // Allow manual JSON override via the advanced editor
-        const editorParsed = JSON.parse(handlerConfigStr)
+        const editorParsed = safeParseJSON(handlerConfigStr, null)
+        if (!editorParsed) throw new Error('Invalid JSON')
         if (editorParsed?.steps?.length > 0) {
           // Ensure method is always sequential-multi-table when steps exist
           finalConfig = { ...editorParsed, method: 'sequential-multi-table' }
@@ -294,21 +375,15 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       }
 
       if (isEditing) {
-        const res = await fetch(`/api/servers/${currentServerId}/tools/${editingToolId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-        if (!res.ok) throw new Error('Failed to update tool')
-        return res.json()
+        const url = currentBranchId 
+          ? `/api/branches/${currentBranchId}/tools/${editingToolId}`
+          : `/api/servers/${currentServerId}/tools/${editingToolId}`
+        return api.put<any>(url, payload)
       } else {
-        const res = await fetch(`/api/servers/${currentServerId}/tools`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-        if (!res.ok) throw new Error('Failed to create tool')
-        return res.json()
+        const url = currentBranchId 
+          ? `/api/branches/${currentBranchId}/tools`
+          : `/api/servers/${currentServerId}/tools`
+        return api.post<any>(url, payload)
       }
     },
     onSuccess: () => {
@@ -317,7 +392,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       triggerRefreshTools()
       setShowToolDialog(false)
     },
-    onError: (err: Error) => {
+    onError: (err: any) => {
       toast.error(err.message || 'Failed to save tool')
     },
   })
@@ -339,48 +414,64 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
   }, [formData, currentBranchId, saveMutation, setShowToolDialog])
 
   const handleExecuteTest = useCallback(async () => {
-    if (!editingToolId || !currentServerId) return
+    if (!currentServerId) return
 
     setIsExecuting(true)
     setTestResult(null)
+    const startTime = Date.now()
     try {
       let body: Record<string, unknown>
       try {
-        body = JSON.parse(testBody)
+        body = safeParseJSON(testBody, null)
+        if (!body) throw new Error('Invalid JSON')
       } catch {
         toast.error('Invalid JSON in test body')
         setIsExecuting(false)
         return
       }
 
-      const res = await fetch(
-        `/api/servers/${currentServerId}/tools/${editingToolId}/execute`,
+      let finalConfig = formData.handlerConfig
+      if (multiTableSteps.length > 0) {
+        finalConfig = { ...finalConfig, steps: multiTableSteps, method: 'sequential-multi-table' }
+      }
+      try {
+        const editorParsed = safeParseJSON(handlerConfigStr, null)
+        if (!editorParsed) throw new Error('Invalid JSON')
+        if (editorParsed?.steps?.length > 0) {
+          finalConfig = { ...editorParsed, method: 'sequential-multi-table' }
+        } else if (multiTableSteps.length > 0) {
+          finalConfig = { ...editorParsed, steps: multiTableSteps, method: 'sequential-multi-table' }
+        } else {
+          finalConfig = editorParsed
+        }
+      } catch {}
+
+      const result = await api.post<any>(
+        `/api/servers/${currentServerId}/tools/dry-run`,
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          toolData: { ...formData, handlerConfig: finalConfig },
+          body: body
         }
       )
-      const result = await res.json()
       setTestResult({
-        status: result.status,
-        duration: result.duration,
-        data: result.data,
+        status: 200,
+        duration: Date.now() - startTime,
+        data: result,
       })
 
       if (testPanelRef.current) {
         testPanelRef.current.scrollIntoView({ behavior: 'smooth' })
       }
-    } catch {
+    } catch (err: any) {
       setTestResult({
-        status: 500,
-        duration: 0,
-        data: { error: 'Failed to execute tool' },
+        status: err.status || 500,
+        duration: Date.now() - startTime,
+        data: { error: err.message || 'Failed to execute tool' },
       })
     } finally {
       setIsExecuting(false)
     }
-  }, [editingToolId, currentServerId, testBody])
+  }, [currentServerId, formData, multiTableSteps, handlerConfigStr, testBody])
 
   const handleCopyResponse = useCallback(() => {
     if (testResult) {
@@ -388,6 +479,35 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       toast.success('Response copied to clipboard')
     }
   }, [testResult])
+
+  const handleDeriveOutputSchema = useCallback(() => {
+    if (testResult && testResult.data) {
+      const deriveSchema = (obj: any): any => {
+        if (Array.isArray(obj)) {
+          return {
+            type: 'array',
+            items: obj.length > 0 ? deriveSchema(obj[0]) : {},
+          }
+        } else if (typeof obj === 'object' && obj !== null) {
+          const properties: any = {}
+          for (const [k, v] of Object.entries(obj)) {
+            properties[k] = deriveSchema(v)
+          }
+          return { type: 'object', properties }
+        } else if (typeof obj === 'number') {
+          return { type: 'number' }
+        } else if (typeof obj === 'boolean') {
+          return { type: 'boolean' }
+        }
+        return { type: 'string' }
+      }
+      
+      const schema = deriveSchema(testResult.data)
+      updateField('outputSchema', schema)
+      toast.success('Output schema derived successfully!')
+      setActiveTab('output-schema')
+    }
+  }, [testResult, updateField])
 
   // Generate test body from input schema
   useEffect(() => {
@@ -455,6 +575,10 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                   <TabsTrigger value="input-schema" className="text-xs gap-1">
                     <FileJson className="size-3" />
                     <span className="hidden sm:inline">Input</span>
+                  </TabsTrigger>
+                  <TabsTrigger value="test" className="text-xs gap-1">
+                    <Play className="size-3" />
+                    <span className="hidden sm:inline">Test</span>
                   </TabsTrigger>
                   <TabsTrigger value="output-schema" className="text-xs gap-1">
                     <FileOutput className="size-3" />
@@ -530,79 +654,133 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
 
                 {/* ===== FILEMAKER MAPPING TAB ===== */}
                 <TabsContent value="fm-mapping" className="mt-0 space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="fm-method">FileMaker Method *</Label>
-                    <Select value={formData.fmMethod} onValueChange={(v) => updateField('fmMethod', v)}>
-                      <SelectTrigger id="fm-method">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {FM_METHODS.map((m) => (
-                          <SelectItem key={m.value} value={m.value}>
-                            {m.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="fm-connection">Target Connection</Label>
+                      <Select 
+                        value={(formData.handlerConfig?.connectionId as string) || 'default'} 
+                        onValueChange={(v) => {
+                          const val = v === 'default' ? '' : v
+                          const hc = { ...formData.handlerConfig, connectionId: val }
+                          updateField('handlerConfig', hc)
+                          setHandlerConfigStr(JSON.stringify(hc, null, 2))
+                        }}
+                      >
+                        <SelectTrigger id="fm-connection">
+                          <SelectValue placeholder="Default (First Connection)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default</SelectItem>
+                          {serverData?.connections?.map((c: any) => (
+                            <SelectItem key={c.connection.id} value={c.connection.id}>
+                              {c.connection.name} ({c.connection.database})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="fm-method">FileMaker Method *</Label>
+                      <Select value={formData.fmMethod} onValueChange={(v) => updateField('fmMethod', v)}>
+                        <SelectTrigger id="fm-method">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {FM_METHODS.map((m) => (
+                            <SelectItem key={m.value} value={m.value}>
+                              {m.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="fm-layout">FM Layout</Label>
-                      <div className="relative">
-                        <Input
-                          id="fm-layout"
-                          value={formData.fmLayout}
-                          onChange={(e) => updateField('fmLayout', e.target.value)}
-                          placeholder="Select or type layout name"
-                          list="layout-list"
-                          className="text-sm"
-                        />
-                        <datalist id="layout-list">
-                          {MOCK_LAYOUTS.map((l) => (
-                            <option key={l} value={l} />
+                      <Select
+                        value={formData.fmLayout || 'default'}
+                        onValueChange={(v) => updateField('fmLayout', v === 'default' ? '' : v)}
+                      >
+                        <SelectTrigger id="fm-layout" className="text-sm">
+                          <SelectValue placeholder="Select layout" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default" className="text-muted-foreground italic">None</SelectItem>
+                          {availableLayouts.map((l) => (
+                            <SelectItem key={l} value={l}>
+                              {l}
+                            </SelectItem>
                           ))}
-                        </datalist>
-                      </div>
+                        </SelectContent>
+                      </Select>
                       <p className="text-xs text-muted-foreground">
                         The FileMaker layout to target for data operations
                       </p>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="fm-script">FM Script</Label>
-                      <div className="relative">
-                        <Input
-                          id="fm-script"
-                          value={formData.fmScript}
-                          onChange={(e) => updateField('fmScript', e.target.value)}
-                          placeholder="Select or type script name"
-                          list="script-list"
-                          disabled={formData.fmMethod !== 'script'}
-                          className="text-sm"
-                        />
-                        <datalist id="script-list">
-                          {MOCK_SCRIPTS.map((s) => (
-                            <option key={s} value={s} />
+                      <Select
+                        value={formData.fmScript || 'default'}
+                        onValueChange={(v) => updateField('fmScript', v === 'default' ? '' : v)}
+                        disabled={formData.fmMethod !== 'script'}
+                      >
+                        <SelectTrigger id="fm-script" className="text-sm">
+                          <SelectValue placeholder="Select script" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default" className="text-muted-foreground italic">None</SelectItem>
+                          {availableScripts.map((s) => (
+                            <SelectItem key={s} value={s}>
+                              {s}
+                            </SelectItem>
                           ))}
-                        </datalist>
-                      </div>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
                   {(formData.fmMethod === 'read' ||
                     formData.fmMethod === 'update' ||
-                    formData.fmMethod === 'delete') && (
+                    formData.fmMethod === 'delete' ||
+                    formData.fmMethod === 'get') && (
                     <div className="space-y-2">
                       <Label htmlFor="record-id-field">Record ID Field Mapping</Label>
-                      <Input
-                        id="record-id-field"
-                        value={formData.recordIdField}
-                        onChange={(e) => updateField('recordIdField', e.target.value)}
-                        placeholder="recordId"
-                        className="font-mono text-sm w-48"
-                      />
+                      <div className="relative">
+                        <Input
+                          id="record-id-field"
+                          value={formData.recordIdField}
+                          onChange={(e) => updateField('recordIdField', e.target.value)}
+                          placeholder="recordId"
+                          list="record-id-list"
+                          className="font-mono text-sm w-64"
+                        />
+                        <datalist id="record-id-list">
+                          {layoutFields.map((f) => (
+                            <option key={f} value={f} />
+                          ))}
+                        </datalist>
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         The field name used to identify records in your schema
+                      </p>
+                    </div>
+                  )}
+
+                  {formData.fmLayout && layoutFields.length > 0 && (
+                    <div className="bg-muted/10 rounded-lg p-4 border mt-4">
+                      <FieldMapper 
+                        layoutFields={layoutFields}
+                        value={formData.handlerConfig?.fieldMappings as Record<string, string> || {}}
+                        onChange={(mappings) => {
+                          const hc = { ...formData.handlerConfig, fieldMappings: mappings }
+                          updateField('handlerConfig', hc)
+                          setHandlerConfigStr(JSON.stringify(hc, null, 2))
+                        }}
+                      />
+                      <p className="text-[11px] text-muted-foreground mt-3">
+                        Use this to map the input parameters (from Input Schema) to the actual FileMaker field names.
                       </p>
                     </div>
                   )}
@@ -618,7 +796,8 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                       onChange={(e) => setHandlerConfigStr(e.target.value)}
                       onBlur={() => {
                         try {
-                          const val = JSON.parse(handlerConfigStr)
+                          const val = safeParseJSON(handlerConfigStr, null)
+                          if (!val) throw new Error('Invalid JSON')
                           updateField('handlerConfig', val)
                         } catch (e) {
                           toast.error('Invalid JSON in Handler Config')
@@ -640,6 +819,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                   <MultiTableBuilder
                     steps={multiTableSteps}
                     connectionId={formData.handlerConfig?.connectionId as string || ''}
+                    serverData={serverData}
                     onChange={(steps) => {
                       setMultiTableSteps(steps)
                       // Keep category in sync
@@ -660,6 +840,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                     onChange={(schema) => updateField('inputSchema', schema)}
                     title="Input Schema"
                     description="Define the parameters that AI assistants will send to this tool"
+                    availableFields={layoutFields}
                   />
                 </TabsContent>
 
@@ -742,15 +923,24 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                               <Clock className="size-3" />
                               {testResult.duration}ms
                             </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={handleCopyResponse}
-                              className="h-6 text-xs gap-1 ml-auto"
-                            >
-                              <Copy className="size-3" />
-                              Copy
-                            </Button>
+                            <div className="flex gap-2 ml-auto">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={handleDeriveOutputSchema}
+                                className="h-7 text-xs gap-1"
+                              >
+                                Derive Schema
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={handleCopyResponse}
+                                className="h-7 px-2"
+                              >
+                                <Copy className="size-3" />
+                              </Button>
+                            </div>
                           </div>
                           <div className="bg-muted/20 rounded-lg p-4 font-mono text-xs overflow-auto max-h-[300px] custom-scrollbar border">
                             <pre className="whitespace-pre-wrap">

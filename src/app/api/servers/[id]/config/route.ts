@@ -1,30 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
-
-async function getEffectiveTools(branchId: string) {
-  const branchTools = await db.branchTool.findMany({
-    where: { branchId, action: { not: 'deleted' } },
-    include: { tool: true },
-    orderBy: { createdAt: 'asc' },
-  });
-
-  return branchTools.map(bt => {
-    const base = bt.tool;
-    const override = safeParseJSON(bt.overrideData, {});
-    return { ...base, ...override };
-  });
-}
+import { getEffectiveTools } from '@/lib/branching'
+import { withAuth } from "@/lib/auth/api-guard";
 
 // GET /api/servers/[id]/config - Generate MCP configuration
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const server = await db.mcpServer.findUnique({
-      where: { id },
+export const GET = withAuth(async (_request: NextRequest, { params, userId }) => {
+    try {
+    const { id } = params
+    const server = await db.mcpServer.findFirst({
+      where: { id, userId },
       include: {
         connections: {
           include: { connection: true },
@@ -44,10 +29,14 @@ export async function GET(
 
     let targetBranch: any = null
     if (reqBranchId) {
-      targetBranch = await db.branch.findFirst({ where: { serverId: id, id: reqBranchId } })
+      targetBranch = await db.branch.findFirst({
+        where: { serverId: id, id: reqBranchId }
+      })
     }
     if (!targetBranch) {
-      targetBranch = await db.branch.findFirst({ where: { serverId: id, isDefault: true } })
+      targetBranch = await db.branch.findFirst({
+        where: { serverId: id, isDefault: true }
+      })
     }
 
     let tools: any[] = []
@@ -74,7 +63,9 @@ export async function GET(
       || `server_${server.id.slice(0, 8)}`
 
     // Fetch API key metadata (prefix only — never the raw key)
-    const apiKeyRecord = await db.mcpApiKey.findUnique({ where: { serverId: server.id } }).catch(() => null)
+    const apiKeyRecord = await db.mcpApiKey.findUnique({
+      where: { serverId: server.id }
+    }).catch(() => null)
     const authNote = apiKeyRecord
       ? `Bearer <your-api-key>  (prefix: ${apiKeyRecord.keyPrefix}…)`
       : `No API key generated yet — POST /api/servers/${server.id}/api-key to create one`
@@ -158,11 +149,11 @@ export async function GET(
         })),
       },
     })
-  } catch (error) {
+    } catch (error) {
     console.error('[API Error]', error)
     return NextResponse.json(
       { success: false, error: 'Failed to generate configuration', code: 'SERVER_ERROR' },
       { status: 500 }
     )
-  }
-}
+    }
+    });

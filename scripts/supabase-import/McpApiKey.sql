@@ -1,0 +1,1 @@
+INSERT INTO "McpApiKey" ("id","serverId","keyHash","keyPrefix","createdAt","lastUsedAt") VALUES ('cmpdjtpc300a5v0dtx8pjjnt1','cmpcltxn3000qv0dt18dhw219','$2b$10$lewvT4eiKz1I/FnRmudWlOVNnxY9rDUeskkwGu9T3V5rX/rBmpxHG','mcp_ee4add01','2026-05-20T12:39:18.576Z','2026-05-20T15:20:58.466Z') ON CONFLICT ("id") DO NOTHING;

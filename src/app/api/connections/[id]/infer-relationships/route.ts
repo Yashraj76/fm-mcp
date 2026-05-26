@@ -2,13 +2,25 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { callAI } from '@/lib/ai/client';
 import { INFER_RELATIONSHIPS_PROMPT } from '@/lib/ai/prompts/infer-relationships';
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
+export const POST = withAuth(async (req, { params, userId }) => {
+    try {
+    const { id } = params;
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  try {
-    const { id } = await params;
+    // Verify connection ownership
+    const conn = await prisma.fMConnection.findFirst({
+      where: { id, userId }
+    });
+    if (!conn) {
+      return NextResponse.json(
+        { success: false, error: 'Connection not found', code: 'NOT_FOUND' },
+        { status: 404 }
+      );
+    }
 
     // Accept optional selectedLayouts from request body — allows app to pass
     // current UI selection without requiring a save first
@@ -31,8 +43,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     // Prefer request-body layouts → fallback to DB-saved selection
-    const selectedLayouts = bodyLayouts ?? JSON.parse(bs.selectedLayouts ?? '[]');
-    const layoutMeta = JSON.parse(bs.rawLayoutMeta ?? '{}');
+    const selectedLayouts = (bodyLayouts ?? safeParseJSON<string[]>(bs.selectedLayouts, [])) || [];
+    const layoutMeta = safeParseJSON(bs.rawLayoutMeta, {});
 
     if (selectedLayouts.length === 0) {
       return NextResponse.json(
@@ -74,11 +86,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         clean = aiText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       }
       
-      try {
-        parsed = JSON.parse(clean);
-      } catch (parseErr: any) {
+      parsed = safeParseJSON(clean);
+      if (!parsed) {
         console.error('[AI Parse Error] Raw text:', aiText);
-        throw new Error(`Parse error: ${parseErr.message}. Raw output: ${aiText.substring(0, 100)}`);
+        throw new Error(`Parse error: Invalid JSON structure. Raw output: ${aiText.substring(0, 100)}`);
       }
     } catch (err: any) {
       console.error('[Infer Relationships Error]', err);
@@ -105,7 +116,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     // Also update compiled schema with relationships and primary keys
     if (bs.compiledSchema) {
-      const compiled = JSON.parse(bs.compiledSchema);
+      const compiled = safeParseJSON(bs.compiledSchema, {});
       compiled.relationships = parsed.relationships ?? [];
       compiled.primaryKeys = parsed.primaryKeys ?? {};
       await prisma.browsedSchema.update({
@@ -123,61 +134,86 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         count: (parsed.relationships ?? []).length,
       },
     });
-  } catch (globalErr: any) {
+    } catch (globalErr: any) {
     console.error('[Infer Relationships Global Error]', globalErr);
     return NextResponse.json(
       { success: false, error: 'Internal Server Error: ' + globalErr.message, code: 'SERVER_ERROR' },
       { status: 500 }
     );
-  }
-}
-
-export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const rg = await prisma.relationshipGraph.findUnique({
-    where: { connectionId: id },
-  });
-  if (!rg) {
-    return NextResponse.json({ success: true, data: { relationships: [], primaryKeys: {} } });
-  }
-  return NextResponse.json({
-    success: true,
-    data: {
-      relationships: JSON.parse(rg.relationships),
-      generatedBy: rg.generatedBy,
-      generatedAt: rg.generatedAt,
-    },
-  });
-}
-
-export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const { relationships, primaryKeys } = await req.json();
-  await prisma.relationshipGraph.upsert({
-    where: { connectionId: id },
-    create: {
-      connectionId: id,
-      relationships: JSON.stringify(relationships),
-      generatedBy: 'manual',
-    },
-    update: {
-      relationships: JSON.stringify(relationships),
-      generatedBy: 'manual',
-      updatedAt: new Date(),
-    },
-  });
-
-  // Sync back to compiledSchema
-  const bs = await prisma.browsedSchema.findUnique({ where: { connectionId: id } });
-  if (bs?.compiledSchema) {
-    const compiled = JSON.parse(bs.compiledSchema);
-    compiled.relationships = relationships;
-    compiled.primaryKeys = primaryKeys ?? compiled.primaryKeys ?? {};
-    await prisma.browsedSchema.update({
-      where: { connectionId: id },
-      data: { compiledSchema: JSON.stringify(compiled) },
+    }
     });
-  }
+export const GET = withAuth(async (_, { params, userId }) => {
+    const { id } = params;
 
-  return NextResponse.json({ success: true, data: { updated: true } });
-}
+    // Verify connection ownership
+    const conn = await prisma.fMConnection.findFirst({
+      where: { id, userId }
+    });
+    if (!conn) {
+      return NextResponse.json(
+        { success: false, error: 'Connection not found', code: 'NOT_FOUND' },
+        { status: 404 }
+      );
+    }
+
+    const rg = await prisma.relationshipGraph.findUnique({
+      where: { connectionId: id },
+    });
+    if (!rg) {
+      return NextResponse.json({ success: true, data: { relationships: [], primaryKeys: {} } });
+    }
+    return NextResponse.json({
+      success: true,
+      data: {
+        relationships: safeParseJSON(rg.relationships, []),
+        generatedBy: rg.generatedBy,
+        generatedAt: rg.generatedAt,
+      },
+    });
+  });
+
+export const PUT = withAuth(async (req, { params, userId }) => {
+    const { id } = params;
+
+    // Verify connection ownership
+    const conn = await prisma.fMConnection.findFirst({
+      where: { id, userId }
+    });
+    if (!conn) {
+      return NextResponse.json(
+        { success: false, error: 'Connection not found', code: 'NOT_FOUND' },
+        { status: 404 }
+      );
+    }
+
+    const { relationships, primaryKeys } = await req.json();
+    await prisma.relationshipGraph.upsert({
+      where: { connectionId: id },
+      create: {
+        connectionId: id,
+        relationships: JSON.stringify(relationships),
+        generatedBy: 'manual',
+      },
+      update: {
+        relationships: JSON.stringify(relationships),
+        generatedBy: 'manual',
+        updatedAt: new Date(),
+      },
+    });
+
+    // Sync back to compiledSchema
+    const bs = await prisma.browsedSchema.findUnique({
+      where: { connectionId: id }
+    });
+    if (bs?.compiledSchema) {
+      const compiled = safeParseJSON(bs.compiledSchema, {});
+      compiled.relationships = relationships;
+      compiled.primaryKeys = primaryKeys ?? compiled.primaryKeys ?? {};
+      await prisma.browsedSchema.update({
+        where: { connectionId: id },
+        data: { compiledSchema: JSON.stringify(compiled) },
+      });
+    }
+
+    return NextResponse.json({ success: true, data: { updated: true } });
+  });

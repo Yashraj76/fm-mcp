@@ -1,6 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { api } from '@/lib/utils/api-client'
 import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -97,49 +98,45 @@ function ApiTokensCard() {
 
   const { data: servers, isLoading: serversLoading } = useQuery<ServerListItem[]>({
     queryKey: ['servers-list-for-tokens'],
-    queryFn: () => fetch('/api/servers').then(r => r.json()).then(res =>
-      (res.data ?? []).map((s: { id: string; name: string }) => ({ id: s.id, name: s.name }))
-    ),
+    queryFn: async () => {
+      const data = await api.get<any[]>('/api/servers')
+      return data.map((s: { id: string; name: string }) => ({ id: s.id, name: s.name }))
+    },
   })
 
   const { data: apiKeyMeta, refetch: refetchMeta } = useQuery<ApiKeyMeta | null>({
     queryKey: ['api-key-meta-settings', selectedServerId],
-    queryFn: () =>
-      fetch(`/api/servers/${selectedServerId}/api-key`).then(r => r.json()).then(res => res.data),
+    queryFn: () => api.get<ApiKeyMeta | null>(`/api/servers/${selectedServerId}/api-key`),
     enabled: !!selectedServerId,
   })
 
   const generateMutation = useMutation({
     mutationFn: () =>
-      fetch(`/api/servers/${selectedServerId}/api-key`, { method: 'POST' }).then(r => r.json()),
-    onSuccess: (res) => {
-      if (res.success) {
-        setNewKey(res.data.apiKey)
-        setShown(false)
-        setCopied(false)
-        toast.success('Token generated — copy it now!')
-        refetchMeta()
-        queryClient.invalidateQueries({ queryKey: ['config', selectedServerId] })
-      } else {
-        toast.error(res.error || 'Failed to generate token')
-      }
+      api.post<{ apiKey: string }>(`/api/servers/${selectedServerId}/api-key`),
+    onSuccess: (data) => {
+      setNewKey(data.apiKey)
+      setShown(false)
+      setCopied(false)
+      toast.success('Token generated — copy it now!')
+      refetchMeta()
+      queryClient.invalidateQueries({ queryKey: ['config', selectedServerId] })
     },
-    onError: () => toast.error('Failed to generate token'),
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to generate token')
+    },
   })
 
   const revokeMutation = useMutation({
     mutationFn: () =>
-      fetch(`/api/servers/${selectedServerId}/api-key`, { method: 'DELETE' }).then(r => r.json()),
-    onSuccess: (res) => {
-      if (res.success) {
-        setNewKey(null)
-        toast.success('Token revoked')
-        refetchMeta()
-      } else {
-        toast.error(res.error || 'Failed to revoke token')
-      }
+      api.delete<void>(`/api/servers/${selectedServerId}/api-key`),
+    onSuccess: () => {
+      setNewKey(null)
+      toast.success('Token revoked')
+      refetchMeta()
     },
-    onError: () => toast.error('Failed to revoke token'),
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to revoke token')
+    },
   })
 
   const handleCopy = async () => {
@@ -246,10 +243,10 @@ function ApiTokensCard() {
                   <span className="flex-1 text-green-500 break-all">
                     {shown ? newKey : '•'.repeat(Math.min(newKey.length, 48))}
                   </span>
-                  <button onClick={() => setShown(s => !s)} className="text-muted-foreground hover:text-foreground shrink-0">
+                  <button onClick={() => setShown(s => !s)} className="text-muted-foreground hover:text-foreground shrink-0" aria-label={shown ? "Hide API token" : "Show API token"}>
                     {shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </button>
-                  <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={handleCopy}>
+                  <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={handleCopy} aria-label="Copy token to clipboard">
                     {copied ? <Check className="size-3.5 text-green-500" /> : <Copy className="size-3.5" />}
                   </Button>
                 </div>
@@ -266,30 +263,64 @@ export function SettingsPage() {
   const queryClient = useQueryClient()
   const { data: settings, isLoading } = useQuery<SettingsData>({
     queryKey: ['settings'],
-    queryFn: async () => { const r = await fetch('/api/settings'); if (!r.ok) throw new Error(); return r.json() },
+    queryFn: async () => { 
+      const d = await api.get<any>('/api/settings'); 
+      // map flat to nested
+      return {
+        general: defaults.general,
+        filemakerApi: defaults.filemakerApi,
+        ai: {
+          ...defaults.ai,
+          provider: d.aiProvider ?? defaults.ai.provider,
+          model: d.aiModel ?? defaults.ai.model,
+          apiKeyMasked: d.aiApiKeyMasked,
+          baseUrl: d.aiBaseUrl ?? defaults.ai.baseUrl,
+          maxTokens: d.aiMaxTokens ?? defaults.ai.maxTokens,
+          temperature: d.aiTemperature ?? defaults.ai.temperature,
+        },
+        security: defaults.security
+      };
+    },
     retry: 1,
   })
 
   const saveMutation = useMutation({
     mutationFn: (s: Record<string, unknown>) =>
-      fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).then(r => r.json()),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['settings'] }); setLocalSettings(null); setTempApiKey(''); toast.success('Settings saved') },
-    onError: () => toast.error('Failed to save settings'),
+      api.put<any>('/api/settings', s),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+      setLocalSettings(null)
+      setTempApiKey('')
+      toast.success('Settings saved')
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Failed to save settings')
+    },
   })
 
   const testAiMutation = useMutation({
     mutationFn: (d: { provider: string; apiKey: string; baseUrl: string }) =>
-      fetch('/api/settings/test-ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(d) }).then(r => r.json()),
-    onSuccess: (d) => { if (d.success) { toast.success(`Connected to ${d.provider} — ${d.availableModels?.length ?? 0} models`) } else { toast.error(d.error || 'Failed') } },
-    onError: () => toast.error('Connection test failed'),
+      api.post<{ ok: boolean; provider: string }>('/api/settings/test-ai', d),
+    onSuccess: (data) => {
+      toast.success(`Connected to ${data.provider} — ${data.ok ? 'OK' : 'Failed'}`)
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Connection test failed')
+    },
   })
 
   const [localSettings, setLocalSettings] = useState<Partial<SettingsData> | null>(null)
   const [tempApiKey, setTempApiKey] = useState('')
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle')
 
-  const base = { ...defaults, ...settings }
-  const edited: SettingsData = { ...base, ...localSettings }
+  const base = { ...defaults, ...(settings || {}) }
+  const edited: SettingsData = {
+    ...base,
+    general: { ...base.general, ...localSettings?.general },
+    filemakerApi: { ...base.filemakerApi, ...localSettings?.filemakerApi },
+    ai: { ...base.ai, ...localSettings?.ai },
+    security: { ...base.security, ...localSettings?.security },
+  }
 
   const update = (section: string, key: string, value: unknown) => {
     setLocalSettings(prev => ({
@@ -299,17 +330,38 @@ export function SettingsPage() {
   }
 
   const handleSave = () => {
-    const payload = { ...localSettings }
-    if (tempApiKey) { (payload.ai as Record<string, unknown>).apiKey = tempApiKey }
-    saveMutation.mutate(payload)
+    // map nested to flat for API
+    const aiSettings = (localSettings?.ai || {}) as Partial<SettingsData['ai']>;
+    const payload: Record<string, unknown> = {};
+    if (aiSettings.provider !== undefined) payload.aiProvider = aiSettings.provider;
+    if (aiSettings.model !== undefined) payload.aiModel = aiSettings.model;
+    if (aiSettings.baseUrl !== undefined) payload.aiBaseUrl = aiSettings.baseUrl;
+    if (aiSettings.maxTokens !== undefined) payload.aiMaxTokens = aiSettings.maxTokens;
+    if (aiSettings.temperature !== undefined) payload.aiTemperature = aiSettings.temperature;
+    
+    if (tempApiKey) {
+      payload.aiApiKey = tempApiKey;
+    }
+    
+    // Only save if there's something to save
+    if (Object.keys(payload).length > 0) {
+      saveMutation.mutate(payload)
+    } else {
+      setLocalSettings(null);
+      toast.success('No changes to save');
+    }
   }
 
   const handleTestAi = async () => {
     const key = tempApiKey || ''
     if (!key && edited.ai.provider !== 'ollama') { toast.error('Enter an API key first'); return }
     setTestStatus('testing')
-    const res = await testAiMutation.mutateAsync({ provider: edited.ai.provider, apiKey: key, baseUrl: edited.ai.baseUrl })
-    setTestStatus(res.success ? 'success' : 'error')
+    try {
+      const res = await testAiMutation.mutateAsync({ provider: edited.ai.provider, apiKey: key, baseUrl: edited.ai.baseUrl })
+      setTestStatus(res.ok ? 'success' : 'error')
+    } catch {
+      setTestStatus('error')
+    }
     setTimeout(() => setTestStatus('idle'), 3000)
   }
 

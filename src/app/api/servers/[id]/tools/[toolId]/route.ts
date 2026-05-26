@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { toSafeTool } from '@/lib/utils/dto'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
 
 const updateToolSchema = z.object({
   name: z.string().min(1).optional(),
@@ -18,14 +22,17 @@ const updateToolSchema = z.object({
 })
 
 // GET /api/servers/[id]/tools/[toolId] - Get a single tool
-export async function GET(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string; toolId: string }> }
-) {
-  try {
+// PUT /api/servers/[id]/tools/[toolId] - Update a tool
+// DELETE /api/servers/[id]/tools/[toolId] - Delete a tool
+export const GET = withAuth(async (_request, { params, userId }) => {
+    try {
     const { id, toolId } = await params
     const tool = await db.tool.findFirst({
-      where: { id: toolId, serverId: id },
+      where: {
+        id: toolId,
+        serverId: id,
+        server: { userId }
+      },
       include: {
         executions: {
           orderBy: { createdAt: 'desc' },
@@ -35,36 +42,50 @@ export async function GET(
     })
 
     if (!tool) {
-      return NextResponse.json({ success: false, error: 'Tool not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Tool not found')
     }
 
-    return NextResponse.json({ success: true, data: tool })
-  } catch (error) {
+    return apiSuccess(toSafeTool(tool))
+    } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Failed to fetch tool', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    return apiServerError('Failed to fetch tool')
+    }
+    });
 
-// PUT /api/servers/[id]/tools/[toolId] - Update a tool
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ id: string; toolId: string }> }
-) {
-  try {
+export const PUT = withAuth(async (request, { params, userId }) => {
+    try {
     const { id, toolId } = await params
-    const tool = await db.tool.findFirst({ where: { id: toolId, serverId: id } })
+    const tool = await db.tool.findFirst({
+      where: {
+        id: toolId,
+        serverId: id,
+        server: { userId }
+      }
+    })
     if (!tool) {
-      return NextResponse.json({ error: 'Tool not found' }, { status: 404 })
+      return apiNotFound('Tool not found')
     }
 
     const body = await request.json()
     const parsed = updateToolSchema.safeParse(body)
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
+      return apiValidationFailed(parsed.error.flatten())
+    }
+
+    if (parsed.data.handlerConfig) {
+      let handlerConfigObj: any = safeParseJSON(parsed.data.handlerConfig, {})
+      if (handlerConfigObj.connectionId) {
+        const isLinked = await db.fMConnectionServer.findFirst({
+          where: {
+            connectionId: handlerConfigObj.connectionId,
+            serverId: id,
+          }
+        })
+        if (!isLinked) {
+          return apiError('The connection specified in handlerConfig is not linked to this server', 'VALIDATION_ERROR', 400)
+        }
+      }
     }
 
     const updateData: Record<string, unknown> = { ...parsed.data }
@@ -74,33 +95,39 @@ export async function PUT(
     }
 
     const updatedTool = await db.tool.update({
-      where: { id: toolId },
+      where: {
+        id: toolId },
       data: updateData,
     })
 
-    return NextResponse.json({ success: true, data: updatedTool })
-  } catch (error) {
+    return apiSuccess(toSafeTool(updatedTool))
+    } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Failed to update tool', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    return apiServerError('Failed to update tool')
+    }
+    });
 
-// DELETE /api/servers/[id]/tools/[toolId] - Delete a tool
-export async function DELETE(
-  _request: NextRequest,
-  { params }: { params: Promise<{ id: string; toolId: string }> }
-) {
-  try {
+export const DELETE = withAuth(async (_request, { params, userId }) => {
+    try {
     const { id, toolId } = await params
-    const tool = await db.tool.findFirst({ where: { id: toolId, serverId: id } })
+    const tool = await db.tool.findFirst({
+      where: {
+        id: toolId,
+        serverId: id,
+        server: { userId }
+      }
+    })
     if (!tool) {
-      return NextResponse.json({ error: 'Tool not found' }, { status: 404 })
+      return apiNotFound('Tool not found')
     }
 
-    await db.tool.delete({ where: { id: toolId } })
-    return NextResponse.json({ success: true, data: null })
-  } catch (error) {
+    await db.tool.delete({
+      where: {
+        id: toolId }
+    })
+    return apiSuccess(null)
+    } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Failed to delete tool', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    return apiServerError('Failed to delete tool')
+    }
+    });

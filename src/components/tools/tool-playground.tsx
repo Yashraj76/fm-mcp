@@ -1,9 +1,12 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
+import { api } from '@/lib/utils/api-client'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -63,29 +66,46 @@ interface ExecutionHistoryItem {
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ServerPlayground } from './server-playground'
+import { ResponseTable } from './response-table'
 
 
 export function ToolPlayground() {
-  const { currentServerId, setCurrentServer } = useAppStore()
+  const currentServerId = useAppStore((s) => s.currentServerId)
+  const setCurrentServer = useAppStore((s) => s.setCurrentServer)
+  const [currentBranchId, setCurrentBranchId] = useState<string>('')
 
   // Fetch all servers for the dropdown
   const { data: servers = [], isLoading: isLoadingServers } = useQuery({
     queryKey: ['servers'],
-    queryFn: async () => {
-      const res = await fetch('/api/servers')
-      if (!res.ok) throw new Error('Failed to fetch servers')
-      return res.json().then((r: { data?: Array<{ id: string; name: string }> }) => r.data ?? [])
-    },
+    queryFn: () => api.get<any[]>('/api/servers'),
   })
+
+  // Fetch branches for selector
+  const { data: branches = [], isLoading: isLoadingBranches } = useQuery({
+    queryKey: ['branches', currentServerId],
+    queryFn: async () => {
+      if (!currentServerId) return []
+      return api.get<any[]>(`/api/servers/${currentServerId}/branches`)
+    },
+    enabled: !!currentServerId,
+  })
+
+  // Auto-select main branch by default when branches load
+  useEffect(() => {
+    if (branches.length > 0 && !currentBranchId) {
+      const mainBranch = branches.find((b: any) => b.isDefault) || branches[0]
+      setCurrentBranchId(mainBranch.id)
+    }
+  }, [branches, currentBranchId])
 
   // Fetch tools for selector
   const { data: tools = [], isLoading: isLoadingTools } = useQuery({
-    queryKey: ['tools', currentServerId],
+    queryKey: ['tools', currentServerId, currentBranchId],
     queryFn: async () => {
       if (!currentServerId) return []
-      const res = await fetch(`/api/servers/${currentServerId}/tools`)
-      if (!res.ok) throw new Error('Failed to fetch tools')
-      return res.json().then((r: { data?: any[] }) => r.data ?? [])
+      let url = `/api/servers/${currentServerId}/tools`
+      if (currentBranchId) url += `?branchId=${currentBranchId}`
+      return api.get<any[]>(url)
     },
     enabled: !!currentServerId,
   })
@@ -99,21 +119,45 @@ export function ToolPlayground() {
           Tool Playground
         </h1>
         
-        <div className="w-[250px]">
-          <Select 
-            value={currentServerId || undefined} 
-            onValueChange={setCurrentServer}
-            disabled={isLoadingServers}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select a server to test..." />
-            </SelectTrigger>
-            <SelectContent>
-              {servers.map(s => (
-                <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex items-center gap-2">
+          <div className="w-[180px]">
+            <Select 
+              value={currentServerId || undefined} 
+              onValueChange={(val) => {
+                setCurrentServer(val)
+                setCurrentBranchId('') // reset branch on server change
+              }}
+              disabled={isLoadingServers}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select a server..." />
+              </SelectTrigger>
+              <SelectContent>
+                {servers.map(s => (
+                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div className="w-[180px]">
+            <Select 
+              value={currentBranchId || undefined} 
+              onValueChange={setCurrentBranchId}
+              disabled={isLoadingBranches || !currentServerId}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select branch..." />
+              </SelectTrigger>
+              <SelectContent>
+                {branches.map((b: any) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -123,7 +167,7 @@ export function ToolPlayground() {
           <TabsTrigger value="agent">Server AI Agent</TabsTrigger>
         </TabsList>
         <TabsContent value="manual" className="flex-1 min-h-0 m-0 data-[state=inactive]:hidden flex flex-col">
-          <ToolPlaygroundContent tools={tools} isLoadingTools={isLoadingTools} />
+          <ToolPlaygroundContent tools={tools} isLoadingTools={isLoadingTools} branchId={currentBranchId} />
         </TabsContent>
         <TabsContent value="agent" className="flex-1 min-h-0 m-0 data-[state=inactive]:hidden flex flex-col">
           <ServerPlayground />
@@ -136,9 +180,11 @@ export function ToolPlayground() {
 function ToolPlaygroundContent({
   tools,
   isLoadingTools,
+  branchId,
 }: {
   tools: any[]
   isLoadingTools: boolean
+  branchId: string
 }) {
   const [selectedToolId, setSelectedToolId] = useState<string>('')
   const [requestBody, setRequestBody] = useState('{\n  \n}')
@@ -162,7 +208,7 @@ function ToolPlaygroundContent({
     try {
       const inputSchema =
         typeof selectedTool.inputSchema === 'string'
-          ? JSON.parse(selectedTool.inputSchema)
+          ? safeParseJSON(selectedTool.inputSchema, {})
           : selectedTool.inputSchema
  
       if (inputSchema?.properties) {
@@ -193,10 +239,8 @@ function ToolPlaygroundContent({
   const handleExecute = useCallback(async () => {
     if (!selectedToolId || !selectedTool) return
 
-    let body: Record<string, unknown>
-    try {
-      body = JSON.parse(requestBody)
-    } catch {
+    const body = safeParseJSON<Record<string, unknown>>(requestBody, null)
+    if (!body) {
       toast.error('Invalid JSON in request body')
       return
     }
@@ -206,21 +250,17 @@ function ToolPlaygroundContent({
     const startTime = Date.now()
 
     try {
-      const res = await fetch(
-        `/api/servers/${selectedTool.serverId}/tools/${selectedToolId}/execute`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        }
-      )
-      const result = await res.json()
+      let url = `/api/servers/${selectedTool.serverId}/tools/${selectedToolId}/execute`
+      if (branchId) {
+        url += `?branchId=${branchId}`
+      }
+      
+      const data = await api.post<any>(url, body)
+      const duration = Date.now() - startTime
       const execResult: ExecutionResult = {
-        status: result.status || res.status,
-        duration: result.duration || 0,
-        data: result.success === false 
-          ? { error: result.error, code: result.code, details: result.details } 
-          : result.data,
+        status: 200,
+        duration,
+        data,
       }
       setResponse(execResult)
 
@@ -233,7 +273,7 @@ function ToolPlaygroundContent({
         responseStatus: execResult.status,
         responseBody: JSON.stringify(execResult.data, null, 2),
         duration: execResult.duration,
-        status: execResult.status >= 200 && execResult.status < 300 ? 'success' : 'error',
+        status: 'success',
         createdAt: new Date().toISOString(),
       }
       setHistory((prev) => [historyItem, ...prev])
@@ -241,16 +281,32 @@ function ToolPlaygroundContent({
       if (responseRef.current) {
         responseRef.current.scrollIntoView({ behavior: 'smooth' })
       }
-    } catch {
-      setResponse({
-        status: 500,
-        duration: Date.now() - startTime,
-        data: { error: 'Failed to execute tool' },
-      })
+    } catch (err: any) {
+      const duration = Date.now() - startTime
+      const errorMsg = err.message || 'Failed to execute tool'
+      const execResult: ExecutionResult = {
+        status: err.status || 500,
+        duration,
+        data: { error: errorMsg, code: err.code || 'EXECUTION_ERROR', details: err.details },
+      }
+      setResponse(execResult)
+
+      const historyItem: ExecutionHistoryItem = {
+        id: `exec_${Date.now()}`,
+        toolId: selectedToolId,
+        toolName: selectedTool.name as string,
+        requestBody,
+        responseStatus: execResult.status,
+        responseBody: JSON.stringify(execResult.data, null, 2),
+        duration: execResult.duration,
+        status: 'error',
+        createdAt: new Date().toISOString(),
+      }
+      setHistory((prev) => [historyItem, ...prev])
     } finally {
       setIsExecuting(false)
     }
-  }, [selectedToolId, selectedTool, requestBody])
+  }, [selectedToolId, selectedTool, requestBody, branchId])
 
   const handleReplay = useCallback((item: ExecutionHistoryItem) => {
     setSelectedToolId(item.toolId)
@@ -259,7 +315,7 @@ function ToolPlaygroundContent({
     setResponse({
       status: item.responseStatus || 500,
       duration: item.duration || 0,
-      data: item.responseBody ? JSON.parse(item.responseBody) : null,
+      data: item.responseBody ? safeParseJSON(item.responseBody, null) : null,
     })
   }, [])
 
@@ -323,12 +379,10 @@ function ToolPlaygroundContent({
                     <AutoGeneratedForm
                       tool={selectedTool}
                       onChange={(key, value) => {
-                        try {
-                          const body = JSON.parse(requestBody)
+                        const body = safeParseJSON(requestBody, null)
+                        if (body) {
                           body[key] = value
                           setRequestBody(JSON.stringify(body, null, 2))
-                        } catch {
-                          // ignore
                         }
                       }}
                       currentBody={requestBody}
@@ -529,24 +583,14 @@ function AutoGeneratedForm({
   onChange: (key: string, value: any) => void
   currentBody: string
 }) {
-  let inputSchema: Record<string, unknown> | null = null
-  try {
-    inputSchema =
-      typeof tool.inputSchema === 'string'
-        ? JSON.parse(tool.inputSchema)
-        : (tool.inputSchema as Record<string, unknown>)
-  } catch {
-    return null
-  }
+  const inputSchema =
+    typeof tool.inputSchema === 'string'
+      ? safeParseJSON<Record<string, unknown>>(tool.inputSchema, {})
+      : (tool.inputSchema as Record<string, unknown>)
 
   if (!inputSchema?.properties || typeof inputSchema.properties !== 'object') return null
 
-  let parsedBody: Record<string, unknown> = {}
-  try {
-    parsedBody = JSON.parse(currentBody)
-  } catch {
-    // ignore
-  }
+  const parsedBody = safeParseJSON<Record<string, unknown>>(currentBody, {})
 
   return (
     <div className="space-y-2 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
@@ -587,70 +631,4 @@ function AutoGeneratedForm({
   )
 }
 
-// ===== Response Table Formatter =====
-function ResponseTable({ data }: { data: any }) {
-  if (!data) return <div className="p-4 text-xs text-muted-foreground text-center">No data available</div>
 
-  let records: any[] = []
-  
-  if (data.stepResults && Array.isArray(data.stepResults)) {
-    // Multi-step tool result
-    records = data.stepResults.flatMap((step: any) => {
-      if (step?.response?.data && Array.isArray(step.response.data)) {
-        return step.response.data.map((r: any) => ({
-          recordId: r.recordId,
-          ...r.fieldData
-        }))
-      }
-      return []
-    })
-  } else if (data.response && Array.isArray(data.response.data)) {
-    // Standard FileMaker single-table result
-    records = data.response.data.map((r: any) => ({
-      recordId: r.recordId,
-      ...r.fieldData
-    }))
-  } else if (Array.isArray(data)) {
-    records = data
-  } else if (typeof data === 'object') {
-    records = [data]
-  }
-
-  if (records.length === 0) {
-    return <div className="p-4 text-xs text-muted-foreground text-center">Empty array or no records</div>
-  }
-
-  // Get all unique keys
-  const keys = Array.from(new Set(records.flatMap(r => Object.keys(r))))
-
-  return (
-    <div className="w-full h-full overflow-auto custom-scrollbar">
-      <table className="w-full text-xs text-left">
-        <thead className="bg-muted/50 text-muted-foreground sticky top-0 border-b backdrop-blur-sm">
-          <tr>
-            {keys.map((key) => (
-              <th key={key} className="px-3 py-2 font-medium truncate max-w-[150px]">{key}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {records.map((r, i) => (
-            <tr key={i} className="hover:bg-muted/30 transition-colors">
-              {keys.map((key) => {
-                let val = r[key]
-                if (typeof val === 'object' && val !== null) {
-                  val = JSON.stringify(val)
-                }
-                return (
-                  <td key={key} className="px-3 py-2 truncate max-w-[200px]" title={String(val ?? '')}>
-                    {String(val ?? '')}
-                  </td>
-                )
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}

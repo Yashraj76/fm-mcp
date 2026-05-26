@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withFMSession } from '@/lib/filemaker/session'
 import { z } from 'zod'
+import { withAuth } from "@/lib/auth/api-guard";
+import { safeParseJSON } from '@/lib/utils/safe-parse';
 
 const executeSchema = z.object({
   connectionId: z.string(),
@@ -12,14 +14,16 @@ const executeSchema = z.object({
 })
 
 // POST /api/playground/execute - Ad-hoc tool execution
-export async function POST(request: NextRequest) {
-  const startTime = Date.now()
-  try {
+export const POST = withAuth(async (request, { params, userId }) => {
+    const startTime = Date.now()
+    try {
     const bodyText = await request.text()
-    const requestBody = bodyText ? JSON.parse(bodyText) : {}
+    const requestBody = safeParseJSON(bodyText, {})
     const parsed = executeSchema.parse(requestBody)
 
-    const connection = await db.fMConnection.findUnique({ where: { id: parsed.connectionId }})
+    const connection = await db.fMConnection.findFirst({ where: {
+        userId: userId,
+        id: parsed.connectionId }})
 
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
@@ -60,7 +64,7 @@ export async function POST(request: NextRequest) {
       data: result
     })
 
-  } catch (error: any) {
+    } catch (error: any) {
     console.error('[Playground Execution Failed]', error)
     return NextResponse.json({ 
       success: false,
@@ -69,5 +73,5 @@ export async function POST(request: NextRequest) {
       error: error.message || 'Execution failed',
       code: 'FM_EXECUTION_ERROR'
     }, { status: 500 })
-  }
-}
+    }
+    });

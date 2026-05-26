@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { api } from '@/lib/utils/api-client'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,14 +32,14 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
   const [showPass, setShowPass] = useState(false)
   const [connectionName, setConnectionName] = useState('')
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
   const loadDatabases = useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const res = await fetch(`/api/server-connections/${serverId}/databases`)
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
-      setDatabases(data.data)
+      const dbs = await api.get<any[]>(`/api/server-connections/${serverId}/databases`)
+      setDatabases(dbs)
     } catch (e: any) {
       setError(e.message)
     } finally {
@@ -60,6 +61,7 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
     setSelectedDb(name)
     setConnectionName(name)
     setSaveError(null)
+    setTestResult(null)
   }
 
   async function handleCreate() {
@@ -69,23 +71,18 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
     }
     setCreating(selectedDb)
     setSaveError(null)
+    setTestResult(null)
     try {
-      const res = await fetch('/api/connections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: connectionName || selectedDb,
-          host: serverHost,
-          port: 443,
-          database: selectedDb,
-          username: fileUser,
-          password: filePass,
-          serverConnectionId: serverId,
-          sslVerify: true,
-        }),
+      await api.post('/api/connections', {
+        name: connectionName || selectedDb,
+        host: serverHost,
+        port: 443,
+        database: selectedDb,
+        username: fileUser,
+        password: filePass,
+        serverConnectionId: serverId,
+        sslVerify: true,
       })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
       onCreateConnection(selectedDb)
       onClose()
     } catch (e: any) {
@@ -95,9 +92,45 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
     }
   }
 
+  async function handleTestAndCreate() {
+    if (!selectedDb || !fileUser || !filePass) {
+      setSaveError('Username and password are required.')
+      return
+    }
+    setTesting(true)
+    setSaveError(null)
+    setTestResult(null)
+    try {
+      const conn = await api.post<any>('/api/connections', {
+        name: connectionName || selectedDb,
+        host: serverHost,
+        port: 443,
+        database: selectedDb,
+        username: fileUser,
+        password: filePass,
+        serverConnectionId: serverId,
+        sslVerify: true,
+      })
+
+      try {
+        await api.post(`/api/connections/${conn.id}/test`)
+        setTestResult({ ok: true, msg: `Connected successfully` })
+        onCreateConnection(selectedDb)
+        onClose()
+      } catch (testErr: any) {
+        await api.delete(`/api/connections/${conn.id}`)
+        setTestResult({ ok: false, msg: testErr.message || 'Connection failed' })
+      }
+    } catch (e: any) {
+      setSaveError(e.message)
+    } finally {
+      setTesting(false)
+    }
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl bg-[#0f1117] border border-white/10 text-white">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-[#0f1117] border border-white/10 text-white">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
             <Database className="w-5 h-5 text-purple-400" />
@@ -119,7 +152,7 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
           </div>
 
           {/* Database list */}
-          <div className="max-h-52 overflow-y-auto space-y-1.5 rounded-lg border border-white/10 p-2">
+          <div className="max-h-[50vh] min-h-[300px] overflow-y-auto space-y-1.5 rounded-lg border border-white/10 p-2">
             {loading && (
               <div className="flex items-center justify-center py-8 text-white/40">
                 <Loader2 className="w-5 h-5 animate-spin mr-2" />
@@ -210,14 +243,35 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
                   <XCircle className="w-3.5 h-3.5" /> {saveError}
                 </p>
               )}
-              <Button
-                onClick={handleCreate}
-                disabled={!!creating}
-                className="w-full bg-purple-600 hover:bg-purple-700 h-9"
-              >
-                {creating === selectedDb && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Create Connection
-              </Button>
+              {testResult && (
+                <div className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 border ${
+                  testResult.ok
+                    ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                    : 'text-red-400 bg-red-500/10 border-red-500/20'
+                }`}>
+                  {testResult.ok ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4 shrink-0" />}
+                  <span className="truncate">{testResult.msg}</span>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <Button
+                  variant="outline"
+                  onClick={handleTestAndCreate}
+                  disabled={!!creating || testing}
+                  className="border-purple-500/30 text-purple-400 hover:bg-purple-500/10 h-9 px-2 text-sm"
+                >
+                  {testing && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Test & Create
+                </Button>
+                <Button
+                  onClick={handleCreate}
+                  disabled={!!creating || testing}
+                  className="bg-purple-600 hover:bg-purple-700 h-9 px-2 text-sm"
+                >
+                  {creating === selectedDb && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Create
+                </Button>
+              </div>
             </div>
           )}
         </div>

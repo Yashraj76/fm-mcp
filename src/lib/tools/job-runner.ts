@@ -2,12 +2,13 @@ import { prisma } from '../prisma';
 import { callAI } from '../ai/client';
 import { CREATE_TOOLS_PROMPT } from '../ai/prompts/create-tools';
 import { seedDefaultTools } from './default-tools';
+import { safeParseJSON } from '../utils/safe-parse';
 
 type LogEntry = { time: string; message: string; level: 'info' | 'error' | 'success' };
 
 async function appendLog(jobId: string, message: string, level: LogEntry['level'] = 'info') {
   const job = await prisma.toolGenerationJob.findUnique({ where: { id: jobId } });
-  const log: LogEntry[] = JSON.parse(job?.log ?? '[]');
+  const log: LogEntry[] = safeParseJSON(job?.log, []);
   log.push({ time: new Date().toISOString(), message, level });
   await prisma.toolGenerationJob.update({
     where: { id: jobId },
@@ -15,7 +16,7 @@ async function appendLog(jobId: string, message: string, level: LogEntry['level'
   });
 }
 
-export async function runToolGenerationJob(jobId: string, serverId: string) {
+export async function runToolGenerationJob(jobId: string, serverId: string, userId: string) {
   await prisma.toolGenerationJob.update({
     where: { id: jobId },
     data: { status: 'running', startedAt: new Date(), progress: 5 },
@@ -23,11 +24,11 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
 
   try {
     await appendLog(jobId, 'Loading server and connection data...');
-    const server = await prisma.mcpServer.findUnique({
-      where: { id: serverId },
+    const server = await prisma.mcpServer.findFirst({
+      where: { id: serverId, userId },
       include: { connections: { include: { connection: { include: { browsedSchema: true } } } } },
     });
-    if (!server) throw new Error('Server not found');
+    if (!server) throw new Error('Server not found or unauthorized');
 
     const connServer = server.connections[0];
     if (!connServer || !connServer.connection) throw new Error('No connection linked to this server');
@@ -38,7 +39,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
       throw new Error('Connection has no compiled schema. Browse schema and save selections first.');
     }
 
-    const compiledSchema = JSON.parse(conn.browsedSchema.compiledSchema);
+    const compiledSchema = safeParseJSON(conn.browsedSchema.compiledSchema, {});
 
     // Seed default system tools first
     await appendLog(jobId, 'Creating default system tools (add, subtract, average, percentage)...');
@@ -79,7 +80,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
 
     let toolDefs: any[];
     try {
-      toolDefs = JSON.parse(clean);
+      toolDefs = safeParseJSON(clean);
       if (!Array.isArray(toolDefs)) throw new Error('Expected an array');
     } catch (parseErr: any) {
       console.error('[AI Parse Error] Raw output:', aiText.substring(0, 500));
@@ -89,76 +90,19 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
     await appendLog(jobId, `AI generated ${toolDefs.length} tools. Saving to database...`);
     await prisma.toolGenerationJob.update({ where: { id: jobId }, data: { progress: 80 } });
 
-    // Save tools
-    let saved = 0;
+    // We now just save the toolDefs to the job record so the UI can preview them
+    await appendLog(jobId, `AI generated ${toolDefs.length} tools. Waiting for user selection...`);
     
-    // Default branch fetching logic
-    const defaultBranch = await prisma.branch.findFirst({
-        where: { serverId, isDefault: true }
-    });
-    
-    if (!defaultBranch) {
-        throw new Error('No default branch found for this server');
-    }
-
-    for (const toolDef of toolDefs) {
-      try {
-        const handlerConfig = typeof toolDef.handlerConfig === 'string' 
-          ? JSON.parse(toolDef.handlerConfig) 
-          : { ...toolDef.handlerConfig };
-        
-        // Ensure connectionId is present for orchestration
-        if (!handlerConfig.connectionId) {
-          handlerConfig.connectionId = conn.id;
-        }
-
-        // Check for uniqueness per server
-        const exists = await prisma.tool.findFirst({
-          where: { serverId, name: toolDef.name }
-        });
-
-        if (exists) {
-          await appendLog(jobId, `Tool "${toolDef.name}" already exists. Skipping.`);
-          continue;
-        }
-
-        const createdTool = await prisma.tool.create({
-          data: {
-            name: toolDef.name,
-            description: toolDef.description,
-            inputSchema: JSON.stringify(toolDef.inputSchema),
-            handlerConfig: JSON.stringify(handlerConfig),
-            isEnabled: toolDef.enabled ?? true,
-            category: toolDef.category ?? 'generated',
-            fmMethod: toolDef.fmMethod || mapStrategy(toolDef.strategy),
-            serverId,
-            isAiGenerated: true
-          },
-        });
-        await prisma.branchTool.create({
-          data: {
-            branchId: defaultBranch.id,
-            toolId: createdTool.id,
-            action: 'added',
-            overrideData: '{}'
-          }
-        });
-        saved++;
-      } catch (e: any) {
-        await appendLog(jobId, `Skipped tool "${toolDef.name}": ${e.message}`, 'error');
-      }
-    }
-
     await prisma.toolGenerationJob.update({
       where: { id: jobId },
       data: {
         status: 'done',
         progress: 100,
-        toolsCreated: saved,
+        generatedTools: JSON.stringify(toolDefs),
         completedAt: new Date(),
       },
     });
-    await appendLog(jobId, `✓ Done. ${saved} tools created successfully.`, 'success');
+    await appendLog(jobId, `✓ Done. ${toolDefs.length} tools ready for preview.`, 'success');
 
   } catch (err: any) {
     await prisma.toolGenerationJob.update({
@@ -169,7 +113,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string) {
   }
 }
 
-function mapStrategy(strategy: string): string {
+export function mapStrategy(strategy: string): string {
   const map: Record<string, string> = {
     'fm-find': 'find', 'fm-create': 'create', 'fm-update': 'update',
     'fm-delete': 'delete', 'fm-list': 'list', 'fm-script': 'script',

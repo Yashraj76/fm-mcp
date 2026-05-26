@@ -1,7 +1,6 @@
 import { prisma } from '../prisma';
-import { executeMultiStepTool } from '../filemaker/multi-executor'; 
-import { executeSystemTool } from '../tools/system-executor';
-import { executeTool } from '../filemaker/executor';
+import { safeParseJSON } from '../utils/safe-parse';
+import { executeToolWithParams } from '../tools/executor-service';
 
 type StepLog = { stepIndex: number; toolName: string; reason: string; status: 'running' | 'done' | 'error'; result?: any; error?: string; durationMs?: number };
 
@@ -11,7 +10,7 @@ async function updateSession(id: string, patch: any) {
 
 async function appendStep(id: string, entry: StepLog) {
   const s = await prisma.playgroundSession.findUnique({ where: { id } });
-  const log: StepLog[] = JSON.parse(s?.stepLog ?? '[]');
+  const log: StepLog[] = safeParseJSON(s?.stepLog, []);
   const existing = log.findIndex(e => e.stepIndex === entry.stepIndex);
   if (existing >= 0) log[existing] = entry;
   else log.push(entry);
@@ -34,21 +33,22 @@ export async function runPlaygroundSession(sessionId: string, plan: any, serverI
       try {
         const tool = await prisma.tool.findFirst({
           where: serverId ? { serverId, name: step.toolName } : { name: step.toolName },
+          include: { server: { include: { connections: { include: { connection: true } } } } }
         });
 
         if (!tool) throw new Error(`Tool "${step.toolName}" not found`);
 
         let result: any;
-        const config = JSON.parse(tool.handlerConfig);
+        const config = safeParseJSON(tool.handlerConfig, {});
 
-        if (tool.category === 'system' || ['add', 'subtract', 'average', 'percentage'].includes(config.operation)) {
-          result = executeSystemTool(config.operation, resolvedParams);
-        } else if (tool.fmMethod === 'sequential-multi-table' || config.steps) {
-          result = await executeMultiStepTool(config.steps ?? [], config.connectionId, resolvedParams);
-        } else {
-          // Standard single-step tool
-          result = await executeTool(tool.id, resolvedParams);
+        let validConnectionId = config.connectionId;
+        let validConnection = tool.server?.connections?.find((c: any) => c.connectionId === validConnectionId)?.connection;
+        if (!validConnection) {
+          validConnection = tool.server?.connections?.[0]?.connection;
+          validConnectionId = validConnection?.id;
         }
+
+        result = await executeToolWithParams(tool, resolvedParams, validConnection);
 
         results[step.stepIndex] = result;
 

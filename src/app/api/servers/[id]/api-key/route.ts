@@ -2,18 +2,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'
 import { db } from '@/lib/db'
+import { withAuth } from "@/lib/auth/api-guard";
+import { toSafeApiKey } from '@/lib/utils/dto'
+import { apiSuccess, apiNotFound, apiServerError } from '@/lib/utils/api-response'
 
 // POST /api/servers/[id]/api-key — generate (or rotate) API key
-export async function POST(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id: serverId } = await params
+// GET /api/servers/[id]/api-key — get key metadata (never returns the raw key)
+// DELETE /api/servers/[id]/api-key — revoke API key
+export const POST = withAuth(async (_req, { params, userId }) => {
+    try {
+    const { id: serverId } = params
 
-    const server = await db.mcpServer.findUnique({ where: { id: serverId } })
+    const server = await db.mcpServer.findFirst({
+      where: { id: serverId, userId }
+    })
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 })
+      return apiNotFound('Server not found')
     }
 
     const rawKey = `mcp_${randomBytes(24).toString('hex')}`
@@ -26,64 +30,66 @@ export async function POST(
       update: { keyHash, keyPrefix, createdAt: new Date(), lastUsedAt: null },
     })
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        apiKey: rawKey,
-        keyPrefix,
-        message: 'Store this key now — it will not be shown again.',
-      },
+    return apiSuccess({
+      apiKey: rawKey,
+      keyPrefix,
+      message: 'Store this key now — it will not be shown again.',
     })
-  } catch (error) {
+    } catch (error) {
     console.error('[API Key] Generate error:', error)
-    return NextResponse.json({ success: false, error: 'Failed to generate API key' }, { status: 500 })
-  }
-}
-
-// GET /api/servers/[id]/api-key — get key metadata (never returns the raw key)
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id: serverId } = await params
-
-    const apiKey = await db.mcpApiKey.findUnique({ where: { serverId } })
-    if (!apiKey) {
-      return NextResponse.json({ success: true, data: null })
+    return apiServerError('Failed to generate API key')
     }
+  });
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        keyPrefix: apiKey.keyPrefix,
-        createdAt: apiKey.createdAt,
-        lastUsedAt: apiKey.lastUsedAt,
-      },
+export const GET = withAuth(async (_req, { params, userId }) => {
+    try {
+    const { id: serverId } = params
+
+    const server = await db.mcpServer.findFirst({
+      where: { id: serverId, userId }
     })
-  } catch (error) {
-    console.error('[API Key] Fetch error:', error)
-    return NextResponse.json({ success: false, error: 'Failed to fetch API key info' }, { status: 500 })
-  }
-}
-
-// DELETE /api/servers/[id]/api-key — revoke API key
-export async function DELETE(
-  _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id: serverId } = await params
-
-    const existing = await db.mcpApiKey.findUnique({ where: { serverId } })
-    if (!existing) {
-      return NextResponse.json({ success: false, error: 'No API key found' }, { status: 404 })
+    if (!server) {
+      return apiNotFound('Server not found')
     }
 
-    await db.mcpApiKey.delete({ where: { serverId } })
-    return NextResponse.json({ success: true, message: 'API key revoked' })
-  } catch (error) {
+    const apiKey = await db.mcpApiKey.findUnique({
+      where: { serverId }
+    })
+    if (!apiKey) {
+      return apiSuccess(null)
+    }
+
+    return apiSuccess(toSafeApiKey(apiKey))
+    } catch (error) {
+    console.error('[API Key] Fetch error:', error)
+    return apiServerError('Failed to fetch API key info')
+    }
+  });
+
+export const DELETE = withAuth(async (_req, { params, userId }) => {
+    try {
+    const { id: serverId } = params
+
+    const server = await db.mcpServer.findFirst({
+      where: { id: serverId, userId }
+    })
+    if (!server) {
+      return apiNotFound('Server not found')
+    }
+
+    const existing = await db.mcpApiKey.findUnique({
+      where: { serverId }
+    })
+    if (!existing) {
+      return apiNotFound('No API key found')
+    }
+
+    await db.mcpApiKey.delete({
+      where: { serverId }
+    })
+    return apiSuccess({ message: 'API key revoked' })
+    } catch (error) {
     console.error('[API Key] Delete error:', error)
-    return NextResponse.json({ success: false, error: 'Failed to revoke API key' }, { status: 500 })
-  }
-}
+    return apiServerError('Failed to revoke API key')
+    }
+  });

@@ -1,6 +1,8 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { api } from '@/lib/utils/api-client'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,18 +22,36 @@ export function ServerConnectionDialog({ isOpen, onClose, onSaved, existingServe
   const isEditing = !!existingServer
 
   const [form, setForm] = useState({
-    name: existingServer?.name || '',
-    host: existingServer?.host || '',
-    port: existingServer?.port ?? 443,
-    adminUsername: existingServer?.adminUsername || '',
+    name: '',
+    host: '',
+    port: 443,
+    adminUsername: '',
     adminPassword: '',
-    sslVerify: existingServer?.sslVerify ?? true,
+    sslVerify: true,
   })
   const [showPw, setShowPw] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (isOpen) {
+      setForm({
+        name: existingServer?.name || '',
+        host: existingServer?.host || '',
+        port: existingServer?.port ?? 443,
+        adminUsername: existingServer?.adminUsername || '',
+        adminPassword: '',
+        sslVerify: existingServer?.sslVerify ?? true,
+      })
+      setShowPw(false)
+      setSaving(false)
+      setTesting(false)
+      setTestResult(null)
+      setError(null)
+    }
+  }, [isOpen, existingServer])
 
   function set(key: string, val: any) {
     setForm((prev) => ({ ...prev, [key]: val }))
@@ -46,26 +66,17 @@ export function ServerConnectionDialog({ isOpen, onClose, onSaved, existingServe
     setTesting(true); setError(null); setTestResult(null)
     try {
       // Quick save-then-test approach, or test inline via a temp API
-      const res = await fetch('/api/server-connections', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
+      const serverConn = await api.post<any>('/api/server-connections', { ...form })
 
-      const testRes = await fetch(`/api/server-connections/${data.data.id}/test`, { method: 'POST' })
-      const testData = await testRes.json()
-
-      if (!testData.success) {
-        // Delete the temp server
-        await fetch(`/api/server-connections/${data.data.id}`, { method: 'DELETE' })
-        setTestResult({ ok: false, msg: testData.error })
-      } else {
-        // Keep it and use it
-        setTestResult({ ok: true, msg: `Connected in ${testData.data.duration}ms` })
-        onSaved(data.data)
+      try {
+        const testData = await api.post<any>(`/api/server-connections/${serverConn.id}/test`)
+        setTestResult({ ok: true, msg: `Connected in ${testData.duration}ms` })
+        onSaved(serverConn)
         onClose()
+      } catch (testErr: any) {
+        // Delete the temp server
+        await api.delete(`/api/server-connections/${serverConn.id}`)
+        setTestResult({ ok: false, msg: testErr.message || 'Connection test failed' })
       }
     } catch (e: any) {
       setTestResult({ ok: false, msg: e.message })
@@ -86,16 +97,10 @@ export function ServerConnectionDialog({ isOpen, onClose, onSaved, existingServe
     }
     setSaving(true)
     try {
-      const url = isEditing ? `/api/server-connections/${existingServer.id}` : '/api/server-connections'
-      const method = isEditing ? 'PUT' : 'POST'
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error)
-      onSaved(data.data)
+      const savedServer = isEditing 
+        ? await api.put<any>(`/api/server-connections/${existingServer.id}`, form)
+        : await api.post<any>('/api/server-connections', form)
+      onSaved(savedServer)
       onClose()
     } catch (e: any) {
       setError(e.message)

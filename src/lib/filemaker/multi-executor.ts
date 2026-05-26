@@ -15,7 +15,7 @@ export interface MultiStepConfig {
   connectionId: string;
 }
 
-export async function executeMultiStepTool(steps: any[], connectionId: string, params: any) {
+export async function executeMultiStepTool(steps: any[], connectionId: string, params: any, userId?: string) {
   let connId = connectionId;
 
   // Fallback: if connectionId is missing, try to find it from the server
@@ -26,7 +26,9 @@ export async function executeMultiStepTool(steps: any[], connectionId: string, p
 
   if (!connId) throw new Error('Connection ID missing in multi-step tool config');
 
-  const connection = await prisma.fMConnection.findUnique({ where: { id: connId } });
+  const connection = await prisma.fMConnection.findFirst({
+    where: userId ? { id: connId, userId } : { id: connId }
+  });
   if (!connection) throw new Error('Connection not found');
 
   return withFMSession(connection, async (client) => {

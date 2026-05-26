@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withAuth } from "@/lib/auth/api-guard";
+import { apiSuccess, apiServerError } from '@/lib/utils/api-response';
 
 // GET /api/playground/history - Get recent tool executions
-export async function GET(request: NextRequest) {
-  try {
+export const GET = withAuth(async (request, { params, userId }) => {
+    try {
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '50')
     const toolId = searchParams.get('toolId')
-    
+
     const history = await db.toolExecution.findMany({
-      where: toolId ? { toolId } : undefined,
+      where: {
+        tool: {
+          serverId: { not: '' },
+          server: { userId }
+        },
+        ...(toolId ? { toolId } : {})
+      },
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: {
@@ -18,10 +26,10 @@ export async function GET(request: NextRequest) {
         }
       }
     })
-    
-    return NextResponse.json({ success: true, data: history })
-  } catch (error) {
+
+    return apiSuccess(history)
+    } catch (error) {
     console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    return apiServerError('Internal server error')
+    }
+    });

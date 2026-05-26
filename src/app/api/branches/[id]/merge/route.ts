@@ -3,46 +3,52 @@ import { prisma } from '@/lib/prisma';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { incrementVersion } from '@/lib/utils/version';
+import { withAuth } from "@/lib/auth/api-guard";
+export const POST = withAuth(async (req, { params, userId }) => {
+    const { changelog } = await req.json();
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { changelog } = await req.json();
+    const branch = await prisma.branch.findFirst({
+      where: {
+        id: params.id,
+        server: { userId }
+      },
+      include: { server: true },
+    });
 
-  const branch = await prisma.branch.findUnique({
-    where: { id: (await params).id },
-    include: { server: true },
-  });
+    if (!branch) return NextResponse.json({ success: false, error: 'Branch not found' }, { status: 404 });
+    if (branch.isDefault) return NextResponse.json({ success: false, error: 'Cannot merge main into itself' }, { status: 400 });
+    if (branch.status !== 'active') return NextResponse.json({ success: false, error: `Branch is ${branch.status}` }, { status: 400 });
 
-  if (!branch) return NextResponse.json({ success: false, error: 'Branch not found' }, { status: 404 });
-  if (branch.isDefault) return NextResponse.json({ success: false, error: 'Cannot merge main into itself' }, { status: 400 });
-  if (branch.status !== 'active') return NextResponse.json({ success: false, error: `Branch is ${branch.status}` }, { status: 400 });
+    // Load the main branch
+    const mainBranch = await prisma.branch.findFirst({
+      where: {
+        serverId: branch.serverId,
+        isDefault: true
+      },
+    });
+    if (!mainBranch) throw new Error('Main branch not found');
 
-  // Load the main branch
-  const mainBranch = await prisma.branch.findFirst({
-    where: { serverId: branch.serverId, isDefault: true },
-  });
-  if (!mainBranch) throw new Error('Main branch not found');
+    // Load all branch changes
+    const branchChanges = await prisma.branchTool.findMany({
+      where: { branchId: params.id },
+      include: { tool: true },
+    });
 
-  // Load all branch changes
-  const branchChanges = await prisma.branchTool.findMany({
-    where: { branchId: (await params).id },
-    include: { tool: true },
-  });
+    const changesByAction = {
+      added: branchChanges.filter(c => c.action === 'added'),
+      modified: branchChanges.filter(c => c.action === 'modified'),
+      deleted: branchChanges.filter(c => c.action === 'deleted'),
+    };
 
-  const changesByAction = {
-    added: branchChanges.filter(c => c.action === 'added'),
-    modified: branchChanges.filter(c => c.action === 'modified'),
-    deleted: branchChanges.filter(c => c.action === 'deleted'),
-  };
+    // Determine next version
+    const lastDeployment = await prisma.deployment.findFirst({
+      where: { serverId: branch.serverId },
+      orderBy: { createdAt: 'desc' },
+    });
+    const nextVersion = incrementVersion(lastDeployment?.version ?? branch.server.version);
 
-  // Determine next version
-  const lastDeployment = await prisma.deployment.findFirst({
-    where: { serverId: branch.serverId },
-    orderBy: { createdAt: 'desc' },
-  });
-  const nextVersion = incrementVersion(lastDeployment?.version ?? branch.server.version);
-
-  // Execute merge in a transaction
-  const result = await prisma.$transaction(async (tx) => {
+    // Execute merge in a transaction
+    const result = await prisma.$transaction(async (tx) => {
 
     // 1. Apply ADDED tools — give them "inherited" status on main
     for (const change of changesByAction.added) {
@@ -76,7 +82,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     // 4. Mark branch as merged
     await tx.branch.update({
-      where: { id: (await params).id },
+      where: { id: params.id },
       data: { status: 'merged', mergedAt: new Date(), mergedIntoId: mainBranch.id },
     });
 
@@ -119,9 +125,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
 
     return { deployment, snapshot, nextVersion };
-  });
+    });
 
-  await log({
+    await log({
     action: LOG_ACTIONS.BRANCH_MERGED,
     entityType: 'branch', entityId: branch.id, entityName: branch.name,
     serverId: branch.serverId, branchId: mainBranch.id, deploymentId: result.deployment.id,
@@ -132,20 +138,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       toolsModified: changesByAction.modified.length,
       toolsDeleted: changesByAction.deleted.length,
     },
-  });
+    });
 
-  await log({
+    await log({
     action: LOG_ACTIONS.DEPLOYMENT_CREATED,
     entityType: 'deployment', entityId: result.deployment.id, entityName: `v${result.nextVersion}`,
     serverId: branch.serverId, deploymentId: result.deployment.id,
     meta: { version: result.nextVersion, mergedFrom: branch.name, changelog },
-  });
+    });
 
-  return NextResponse.json({
+    return NextResponse.json({
     success: true,
     data: {
       deployment: { id: result.deployment.id, version: result.nextVersion },
       stats: result.snapshot.stats,
     },
-  });
-}
+    });
+    });

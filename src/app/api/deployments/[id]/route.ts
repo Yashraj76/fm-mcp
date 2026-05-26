@@ -1,18 +1,21 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { withAuth } from "@/lib/auth/api-guard";
+import { apiSuccess, apiNotFound } from '@/lib/utils/api-response';
 
-export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
-  const dep = await prisma.deployment.findUnique({
-    where: { id: (await params).id },
-    include: { branch: { select: { name: true } }, server: { select: { name: true } } },
-  });
-  if (!dep) return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
+export const GET = withAuth(async (_, { params, userId }) => {
+    const dep = await prisma.deployment.findFirst({
+      where: {
+        id: (await params).id,
+        server: { userId }
+      },
+      include: { branch: { select: { name: true } }, server: { select: { name: true, userId: true } } },
+    });
+    if (!dep || dep.server.userId !== userId) return apiNotFound();
 
-  const snapshot = safeParseJSON(dep.snapshot, {});
-  return NextResponse.json({
-    success: true,
-    data: {
+    const snapshot = safeParseJSON(dep.snapshot, {});
+    return apiSuccess({
       id: dep.id, version: dep.version, changelog: dep.changelog,
       status: dep.status, isLive: dep.isLive, deployedAt: dep.deployedAt,
       server: dep.server, branch: dep.branch,
@@ -24,6 +27,5 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
           name: t.name, description: t.description, category: t.category, enabled: t.isEnabled ?? t.enabled,
         })),
       },
-    },
-  });
-}
+    });
+    });

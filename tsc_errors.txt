@@ -1,102 +1,68 @@
-create-custom-tools.ts(55,7): error TS2353: Object literal may only specify known properties, and 'steps' does not exist in type 'Without<ToolCreateInput, ToolUncheckedCreateInput> & ToolUncheckedCreateInput'.
-examples/websocket/frontend.tsx(4,20): error TS2307: Cannot find module 'socket.io-client' or its corresponding type declarations.
-examples/websocket/server.ts(2,24): error TS2307: Cannot find module 'socket.io' or its corresponding type declarations.
-scratch/check-passwords.ts(7,67): error TS2339: Property 'passwordEncrypted' does not exist on type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; }'.
-scratch/test-find.ts(6,29): error TS18047: 'tool' is possibly 'null'.
-scratch/test-find.ts(10,23): error TS2345: Argument of type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; } | null' is not assignable to parameter of type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; }'.
-  Type 'null' is not assignable to type '{ name: string; id: string; host: string; port: number; sslVerify: boolean; status: string; lastError: string | null; createdAt: Date; updatedAt: Date; database: string; username: string; ... 9 more ...; serverConnectionId: string | null; }'.
-scratch/test-multi.ts(2,10): error TS2305: Module '"../src/lib/filemaker/multi-executor"' has no exported member 'MultiExecutor'.
-skills/ASR/scripts/asr.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/image-edit/scripts/image-edit.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/image-generation/scripts/image-generation.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/image-understand/scripts/image-understand.ts(1,36): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/LLM/scripts/chat.ts(1,34): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/podcast-generate/generate.ts(13,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/stock-analysis-skill/src/analyzer.ts(6,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/stock-analysis-skill/src/dataFetcher.ts(5,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/stock-analysis-skill/src/dividend.ts(7,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/stock-analysis-skill/src/index.ts(15,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/stock-analysis-skill/src/rumorScanner.ts(9,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/stock-analysis-skill/src/watchlist.ts(7,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/TTS/tts.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/video-generation/scripts/video.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/video-understand/scripts/video-understand.ts(1,36): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/VLM/scripts/vlm.ts(1,36): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/web-reader/scripts/web-reader.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-skills/web-search/scripts/web_search.ts(1,17): error TS2307: Cannot find module 'z-ai-web-dev-sdk' or its corresponding type declarations.
-src/app/api/connections/[id]/schema/selections/route.ts(11,21): error TS2554: Expected 2-3 arguments, but got 1.
-src/app/api/connections/[id]/schema/selections/route.ts(75,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
-src/app/api/deployments/[id]/rollback/route.ts(21,30): error TS2339: Property 'snapshot' does not exist on type '{ id: string; status: string; createdAt: Date; version: string; branchId: string; serverId: string; branchName: string; branchSnapshot: string; changelog: string | null; deployedAt: Date | null; rolledBackAt: Date | null; rollbackFrom: string | null; configSnapshot: string; toolCount: number; }'.
-src/app/api/deployments/route.ts(38,9): error TS2353: Object literal may only specify known properties, and 'environment' does not exist in type '(Without<DeploymentCreateInput, DeploymentUncheckedCreateInput> & DeploymentUncheckedCreateInput) | (Without<...> & DeploymentCreateInput)'.
-src/app/api/playground/history/route.ts(13,18): error TS2353: Object literal may only specify known properties, and 'executedAt' does not exist in type 'ToolExecutionOrderByWithRelationInput | ToolExecutionOrderByWithRelationInput[]'.
-src/app/api/server-connections/[id]/route.ts(71,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
-src/app/api/server-connections/route.ts(55,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
-src/app/api/servers/[id]/ai/generate-server-tools/route.ts(18,19): error TS2554: Expected 2-3 arguments, but got 1.
-src/app/api/servers/[id]/ai/generate-server-tools/route.ts(153,7): error TS2353: Object literal may only specify known properties, and 'maxTokens' does not exist in type 'Omit<CallSettings, "stopSequences"> & { system?: string | SystemModelMessage | SystemModelMessage[] | undefined; allowSystemInMessages?: boolean | undefined; } & { ...; } & { ...; } & { ...; }'.
-src/app/api/settings/route.ts(88,115): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
-src/app/api/tools/[id]/route.ts(62,24): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
-src/app/api/tools/route.ts(52,24): error TS2339: Property 'errors' does not exist on type 'ZodError<unknown>'.
-src/app/api/tools/suggest/route.ts(11,19): error TS2554: Expected 2-3 arguments, but got 1.
-src/app/api/tools/suggest/route.ts(56,7): error TS2353: Object literal may only specify known properties, and 'maxTokens' does not exist in type 'Omit<CallSettings, "stopSequences"> & { system?: string | SystemModelMessage | SystemModelMessage[] | undefined; allowSystemInMessages?: boolean | undefined; } & { ...; } & { ...; } & { ...; }'.
-src/components/ai/ai-assistant-dialog.tsx(132,75): error TS2339: Property 'suggestionType' does not exist on type 'AiSuggestion'.
-src/components/ai/ai-assistant-dialog.tsx(133,32): error TS2339: Property 'fmMethod' does not exist on type 'AiSuggestion'.
-src/components/ai/ai-assistant-dialog.tsx(134,32): error TS2339: Property 'fmLayout' does not exist on type 'AiSuggestion'.
-src/components/ai/ai-assistant-dialog.tsx(135,32): error TS2339: Property 'fmScript' does not exist on type 'AiSuggestion'.
-src/components/ai/ai-assistant-dialog.tsx(143,36): error TS2339: Property 'fmMethod' does not exist on type 'AiSuggestion'.
-src/components/ai/ai-assistant-dialog.tsx(144,36): error TS2339: Property 'fmLayout' does not exist on type 'AiSuggestion'.
-src/components/ai/ai-suggestion-card.tsx(120,9): error TS2322: Type 'unknown' is not assignable to type 'ReactNode'.
-src/components/tools/tool-dialog.tsx(154,49): error TS2339: Property 'inputSchema' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(155,37): error TS2339: Property 'inputSchema' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(156,26): error TS2339: Property 'inputSchema' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(157,43): error TS2339: Property 'outputSchema' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(158,33): error TS2339: Property 'outputSchema' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(159,39): error TS2339: Property 'outputSchema' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(160,28): error TS2339: Property 'outputSchema' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(162,51): error TS2339: Property 'handlerConfig' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(163,37): error TS2339: Property 'handlerConfig' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(164,26): error TS2339: Property 'handlerConfig' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(168,32): error TS2339: Property 'name' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(169,39): error TS2339: Property 'description' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(170,36): error TS2339: Property 'category' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(171,36): error TS2339: Property 'fmMethod' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(172,36): error TS2339: Property 'fmLayout' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(173,36): error TS2339: Property 'fmScript' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(175,37): error TS2339: Property 'isEnabled' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(180,13): error TS1117: An object literal cannot have multiple properties with the same name.
-src/components/tools/tool-dialog.tsx(182,30): error TS2339: Property 'category' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(420,28): error TS2339: Property 'isAiGenerated' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(428,43): error TS2339: Property 'version' does not exist on type '{}'.
-src/components/tools/tool-dialog.tsx(428,76): error TS2339: Property 'name' does not exist on type '{}'.
-src/components/tools/tool-playground.tsx(126,34): error TS2322: Type 'unknown[]' is not assignable to type 'Record<string, unknown>[]'.
-  Type 'unknown' is not assignable to type 'Record<string, unknown>'.
-src/components/tools/tool-playground.tsx(564,48): error TS2345: Argument of type 'boolean' is not assignable to parameter of type 'string'.
-src/components/tools/tool-playground.tsx(578,33): error TS2345: Argument of type 'string | number' is not assignable to parameter of type 'string'.
-  Type 'number' is not assignable to type 'string'.
-src/components/tools/tools-page.tsx(176,42): error TS2304: Cannot find name 'currentBranchId'.
-src/components/tools/tools-page.tsx(198,25): error TS2769: No overload matches this call.
-  Overload 1 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => value is unknown, thisArg?: any): unknown[]', gave the following error.
-    Argument of type '(tool: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => value is unknown'.
-      Types of parameters 'tool' and 'value' are incompatible.
-        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
-  Overload 2 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => unknown, thisArg?: any): unknown[]', gave the following error.
-    Argument of type '(tool: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => unknown'.
-      Types of parameters 'tool' and 'value' are incompatible.
-        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
-src/components/tools/tools-page.tsx(217,37): error TS2769: No overload matches this call.
-  Overload 1 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => value is unknown, thisArg?: any): unknown[]', gave the following error.
-    Argument of type '(t: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => value is unknown'.
-      Types of parameters 't' and 'value' are incompatible.
-        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
-  Overload 2 of 2, '(predicate: (value: unknown, index: number, array: unknown[]) => unknown, thisArg?: any): unknown[]', gave the following error.
-    Argument of type '(t: Record<string, unknown>) => boolean' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => unknown'.
-      Types of parameters 't' and 'value' are incompatible.
-        Type 'unknown' is not assignable to type 'Record<string, unknown>'.
-src/components/tools/tools-page.tsx(336,30): error TS2345: Argument of type '(tool: Record<string, unknown>) => JSX.Element' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => Element'.
-  Types of parameters 'tool' and 'value' are incompatible.
-    Type 'unknown' is not assignable to type 'Record<string, unknown>'.
-src/components/tools/tools-page.tsx(355,30): error TS2345: Argument of type '(tool: Record<string, unknown>) => JSX.Element' is not assignable to parameter of type '(value: unknown, index: number, array: unknown[]) => Element'.
-  Types of parameters 'tool' and 'value' are incompatible.
-    Type 'unknown' is not assignable to type 'Record<string, unknown>'.
-src/lib/ai/client.ts(57,5): error TS2353: Object literal may only specify known properties, and 'maxTokens' does not exist in type 'CallSettings & { system?: string | SystemModelMessage | SystemModelMessage[] | undefined; allowSystemInMessages?: boolean | undefined; } & { ...; } & { ...; }'.
-src/lib/tools/job-runner.ts(141,49): error TS2304: Cannot find name 'tool'.
-test-prisma.ts(10,55): error TS18046: 'err' is of type 'unknown'.
+.next/types/validator.ts(53,39): error TS2307: Cannot find module '../../src/app/login/page.js' or its corresponding type declarations.
+.next/types/validator.ts(62,39): error TS2307: Cannot find module '../../src/app/page.js' or its corresponding type declarations.
+src/app/api/dashboard/route.ts(86,18): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolExecutionWhereInput'.
+src/app/api/dashboard/route.ts(102,18): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'DeploymentWhereInput'.
+src/app/api/dashboard/route.ts(127,18): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereInput'.
+src/app/api/dashboard/route.ts(181,25): error TS2551: Property 'server' does not exist on type '{ status: string; id: string; version: string; createdAt: Date; serverId: string; branchId: string; snapshot: string; changelog: string | null; isLive: boolean; deployedAt: Date; }'. Did you mean 'serverId'?
+src/app/api/dashboard/route.ts(184,25): error TS2551: Property 'branch' does not exist on type '{ status: string; id: string; version: string; createdAt: Date; serverId: string; branchId: string; snapshot: string; changelog: string | null; isLive: boolean; deployedAt: Date; }'. Did you mean 'branchId'?
+src/app/api/dashboard/route.ts(201,23): error TS2551: Property 'server' does not exist on type '{ name: string; id: string; version: number; createdAt: Date; updatedAt: Date; serverId: string; description: string; category: string | null; inputSchema: string; outputSchema: string | null; ... 7 more ...; sortOrder: number; }'. Did you mean 'serverId'?
+src/app/api/dashboard/route.ts(203,27): error TS2339: Property '_count' does not exist on type '{ name: string; id: string; version: number; createdAt: Date; updatedAt: Date; serverId: string; description: string; category: string | null; inputSchema: string; outputSchema: string | null; ... 7 more ...; sortOrder: number; }'.
+src/app/api/deployments/[id]/rollback/route.ts(9,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'DeploymentWhereUniqueInput'.
+src/app/api/deployments/[id]/rollback/route.ts(19,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'BranchWhereInput'.
+src/app/api/deployments/[id]/route.ts(8,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'DeploymentWhereUniqueInput'.
+src/app/api/deployments/[id]/route.ts(20,19): error TS2551: Property 'server' does not exist on type '{ status: string; id: string; version: string; createdAt: Date; serverId: string; branchId: string; snapshot: string; changelog: string | null; isLive: boolean; deployedAt: Date; }'. Did you mean 'serverId'?
+src/app/api/deployments/[id]/route.ts(20,39): error TS2551: Property 'branch' does not exist on type '{ status: string; id: string; version: string; createdAt: Date; serverId: string; branchId: string; snapshot: string; changelog: string | null; isLive: boolean; deployedAt: Date; }'. Did you mean 'branchId'?
+src/app/api/logs/[id]/route.ts(7,7): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ActivityLogWhereUniqueInput'.
+src/app/api/servers/[id]/ai/generate-server-tools/route.ts(54,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'BranchWhereInput'.
+src/app/api/servers/[id]/ai/generate-server-tools/route.ts(76,13): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'BrowsedSchemaWhereUniqueInput'.
+src/app/api/servers/[id]/ai/generate-server-tools/route.ts(173,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereInput'.
+src/app/api/servers/[id]/ai/generate-server-tools/route.ts(179,13): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolCreateInput, ToolUncheckedCreateInput> & ToolUncheckedCreateInput) | (Without<...> & ToolCreateInput)'.
+src/app/api/servers/[id]/ai/generate-server-tools/route.ts(197,15): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'Without<BranchToolCreateInput, BranchToolUncheckedCreateInput> & BranchToolUncheckedCreateInput'.
+src/app/api/servers/[id]/ai/generate-tool/route.ts(39,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'BranchWhereInput'.
+src/app/api/servers/[id]/ai/generate-tool/route.ts(205,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<AiSuggestionCreateInput, AiSuggestionUncheckedCreateInput> & AiSuggestionUncheckedCreateInput) | (Without<...> & AiSuggestionCreateInput)'.
+src/app/api/servers/[id]/ai/suggest/route.ts(103,15): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<AiSuggestionCreateInput, AiSuggestionUncheckedCreateInput> & AiSuggestionUncheckedCreateInput) | (Without<...> & AiSuggestionCreateInput)'.
+src/app/api/servers/[id]/generate-tools/save/route.ts(29,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'BranchWhereInput'.
+src/app/api/servers/[id]/generate-tools/save/route.ts(56,15): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereInput'.
+src/app/api/servers/[id]/generate-tools/save/route.ts(66,15): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolCreateInput, ToolUncheckedCreateInput> & ToolUncheckedCreateInput) | (Without<...> & ToolCreateInput)'.
+src/app/api/servers/[id]/generate-tools/save/route.ts(81,15): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'Without<BranchToolCreateInput, BranchToolUncheckedCreateInput> & BranchToolUncheckedCreateInput'.
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(21,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(40,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'BranchToolWhereInput'.
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(44,37): error TS2551: Property 'server' does not exist on type '{ name: string; id: string; version: number; createdAt: Date; updatedAt: Date; serverId: string; description: string; category: string | null; inputSchema: string; outputSchema: string | null; ... 7 more ...; sortOrder: number; }'. Did you mean 'serverId'?
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(46,14): error TS2551: Property 'server' does not exist on type '{ name: string; id: string; version: number; createdAt: Date; updatedAt: Date; serverId: string; description: string; category: string | null; inputSchema: string; outputSchema: string | null; ... 7 more ...; sortOrder: number; }'. Did you mean 'serverId'?
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(90,13): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolExecutionCreateInput, ToolExecutionUncheckedCreateInput> & ToolExecutionUncheckedCreateInput) | (Without<...> & ToolExecutionCreateInput)'.
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(104,27): error TS2551: Property 'server' does not exist on type '{ name: string; id: string; version: number; createdAt: Date; updatedAt: Date; serverId: string; description: string; category: string | null; inputSchema: string; outputSchema: string | null; ... 7 more ...; sortOrder: number; }'. Did you mean 'serverId'?
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(115,25): error TS2551: Property 'server' does not exist on type '{ name: string; id: string; version: number; createdAt: Date; updatedAt: Date; serverId: string; description: string; category: string | null; inputSchema: string; outputSchema: string | null; ... 7 more ...; sortOrder: number; }'. Did you mean 'serverId'?
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(353,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolExecutionCreateInput, ToolExecutionUncheckedCreateInput> & ToolExecutionUncheckedCreateInput) | (Without<...> & ToolExecutionCreateInput)'.
+src/app/api/servers/[id]/tools/[toolId]/execute/route.ts(385,13): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolExecutionCreateInput, ToolExecutionUncheckedCreateInput> & ToolExecutionUncheckedCreateInput) | (Without<...> & ToolExecutionCreateInput)'.
+src/app/api/servers/[id]/tools/[toolId]/route.ts(29,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereInput'.
+src/app/api/servers/[id]/tools/[toolId]/route.ts(53,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereInput'.
+src/app/api/servers/[id]/tools/[toolId]/route.ts(77,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/servers/[id]/tools/[toolId]/route.ts(92,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereInput'.
+src/app/api/servers/[id]/tools/[toolId]/route.ts(99,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/servers/[id]/tools/dry-run/route.ts(40,7): error TS2322: Type '{ status: string; name: string; userId: string; id: string; host: string; port: number; database: string; username: string; password: string; authType: string; clientId: string | null; clientSecret: string | null; ... 9 more ...; serverConnectionId: string | null; } | null' is not assignable to type '{ status: string; name: string; userId: string; id: string; host: string; port: number; database: string; username: string; password: string; authType: string; clientId: string | null; clientSecret: string | null; ... 9 more ...; serverConnectionId: string | null; } | undefined'.
+  Type 'null' is not assignable to type '{ status: string; name: string; userId: string; id: string; host: string; port: number; database: string; username: string; password: string; authType: string; clientId: string | null; clientSecret: string | null; ... 9 more ...; serverConnectionId: string | null; } | undefined'.
+src/app/api/servers/[id]/tools/route.ts(101,13): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'BranchWhereInput'.
+src/app/api/servers/[id]/tools/route.ts(115,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereInput'.
+src/app/api/servers/[id]/tools/route.ts(130,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolCreateInput, ToolUncheckedCreateInput> & ToolUncheckedCreateInput) | (Without<...> & ToolCreateInput)'.
+src/app/api/servers/route.ts(103,7): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'Without<BranchCreateInput, BranchUncheckedCreateInput> & BranchUncheckedCreateInput'.
+src/app/api/servers/route.ts(137,13): error TS2554: Expected 3 arguments, but got 2.
+src/app/api/tools/[id]/execute/route.ts(19,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/tools/[id]/execute/route.ts(53,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolExecutionCreateInput, ToolExecutionUncheckedCreateInput> & ToolExecutionUncheckedCreateInput) | (Without<...> & ToolExecutionCreateInput)'.
+src/app/api/tools/[id]/execute/route.ts(73,13): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type '(Without<ToolExecutionCreateInput, ToolExecutionUncheckedCreateInput> & ToolExecutionUncheckedCreateInput) | (Without<...> & ToolExecutionCreateInput)'.
+src/app/api/tools/[id]/route.ts(21,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/tools/[id]/route.ts(41,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/tools/[id]/route.ts(49,11): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/tools/[id]/route.ts(72,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/app/api/tools/[id]/route.ts(79,9): error TS2353: Object literal may only specify known properties, and 'userId' does not exist in type 'ToolWhereUniqueInput'.
+src/components/settings/settings-page.tsx(332,20): error TS2339: Property 'provider' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(332,76): error TS2339: Property 'provider' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(333,20): error TS2339: Property 'model' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(333,70): error TS2339: Property 'model' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(334,20): error TS2339: Property 'baseUrl' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(334,74): error TS2339: Property 'baseUrl' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(335,20): error TS2339: Property 'maxTokens' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(335,78): error TS2339: Property 'maxTokens' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(336,20): error TS2339: Property 'temperature' does not exist on type '{}'.
+src/components/settings/settings-page.tsx(336,82): error TS2339: Property 'temperature' does not exist on type '{}'.
+src/components/tools/tools-page.tsx(504,10): error TS2741: Property 'serverId' is missing in type '{ open: true; onOpenChange: Dispatch<SetStateAction<boolean>>; }' but required in type 'AutoGeneratePreviewDialogProps'.
+src/components/tools/tools-page.tsx(510,10): error TS2741: Property 'serverId' is missing in type '{ open: true; onOpenChange: Dispatch<SetStateAction<boolean>>; }' but required in type 'AiPromptToolDialogProps'.

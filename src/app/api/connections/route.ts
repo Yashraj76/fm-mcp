@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { z, ZodError } from 'zod'
 import { encrypt } from '@/lib/crypto'
+import { withAuth } from "@/lib/auth/api-guard";
 
 const createConnectionSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -17,12 +18,11 @@ const createConnectionSchema = z.object({
   sslVerify: z.boolean().default(true),
   serverConnectionId: z.string().optional(), // FK to FMServerConnection
 })
-
-
-export async function GET() {
-  try {
+export const GET = withAuth(async (req, { params, userId }) => {
+    try {
     const connections = await db.fMConnection.findMany({
-      orderBy: { createdAt: 'desc' },
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         name: true,
@@ -41,22 +41,32 @@ export async function GET() {
     })
 
     return NextResponse.json({ success: true, data: connections })
-  } catch (error) {
+    } catch (error) {
     console.error('[API Error]', error)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
+    }
+    });
+export const POST = withAuth(async (request, { params, userId }) => {
+    try {
     const body = await request.json()
     const parsed = createConnectionSchema.parse(body)
+
+    // Verify serverConnectionId belongs to user
+    if (parsed.serverConnectionId) {
+      const sc = await db.fMServerConnection.findFirst({
+        where: { id: parsed.serverConnectionId, userId }
+      });
+      if (!sc) {
+        return NextResponse.json({ success: false, error: 'Server connection not found', code: 'NOT_FOUND' }, { status: 404 });
+      }
+    }
 
     // Encrypt the password before storing
     const encryptedPassword = encrypt(parsed.password)
 
     const connection = await db.fMConnection.create({
       data: {
+          userId: userId,
         name: parsed.name,
         host: parsed.host,
         port: parsed.port,
@@ -87,7 +97,7 @@ export async function POST(request: NextRequest) {
     })
 
     return NextResponse.json({ success: true, data: connection }, { status: 201 })
-  } catch (error) {
+    } catch (error) {
     if (error instanceof ZodError) {
       return NextResponse.json({
         success: false,
@@ -98,5 +108,5 @@ export async function POST(request: NextRequest) {
     }
     console.error('[API Error]', error)
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-  }
-}
+    }
+    });
