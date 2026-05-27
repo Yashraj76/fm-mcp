@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
@@ -135,6 +135,19 @@ export function ToolsPage() {
       setCurrentBranch(null)
     }
   }
+
+  // Auto-select default branch if none selected or if selected doesn't belong to current server
+  useEffect(() => {
+    if (selectedServer?.branches) {
+      const isValidBranch = selectedServer.branches.some((b: any) => b.id === currentBranchId)
+      if (!isValidBranch) {
+        const defBranch = selectedServer.branches.find((b: any) => b.isDefault)
+        if (defBranch) {
+          setCurrentBranch(defBranch.id)
+        }
+      }
+    }
+  }, [selectedServer, currentBranchId, setCurrentBranch])
 
   // Fetch tools
   const { data: tools = [], isLoading } = useQuery({

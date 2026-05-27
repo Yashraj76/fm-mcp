@@ -42,7 +42,8 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
       while (true) {
         await new Promise(resolve => setTimeout(resolve, 2000))
         
-        const job = await api.get<any>(`/api/servers/${serverId}/generate-tools/status`)
+        // Pass jobId to always poll the correct job (not a stale previous one)
+        const job = await api.get<any>(`/api/servers/${serverId}/generate-tools/status?jobId=${jobId}`)
         
         if (job.status === 'done') {
           return job

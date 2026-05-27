@@ -67,6 +67,23 @@ GET /fmi/odata/v4/{db}/{Table}?$filter=Field eq 'value'&$expand=RelatedTable
 8. Use multi-table strategy only if the user's request clearly needs data from multiple layouts.
 9. Return ONLY the JSON array containing exactly one tool object. No prose, no markdown.
 
+## REQUIRED FIELDS — Every Tool MUST Include ALL of These
+
+Every tool object MUST have ALL of:
+- "name": snake_case, unique, starts with verb
+- "description": 1-2 sentences, never empty
+- "category": EXACTLY one of: CRUD | Find | Script | Custom | Multi-Table
+- "enabled": true
+- "executionStrategy": EXACTLY one of: fm-find | fm-create | fm-update | fm-delete | fm-list | fm-script | sequential-multi-table | odata-filter | odata-expand
+- "inputSchema": { "type": "object", "properties": { ... }, "required": [...] }
+- "handlerConfig": { "connectionId": "<from compiledSchema — REQUIRED>", "steps": [...] }
+
+category/executionStrategy must be consistent:
+- fm-find → Find; fm-create/update/delete/list → CRUD; fm-script → Script
+- sequential-multi-table/odata-expand → Multi-Table; odata-filter → Custom
+
+For update/delete tools: inputSchema MUST include "recordId" as a required string field.
+
 ## Output Format
 
 Return ONLY a valid JSON array with exactly ONE tool object:
@@ -181,6 +198,23 @@ Generate 3–8 tools that together make the workflow completable by an AI agent 
 7. Use multi-table strategy only when the workflow genuinely requires data from multiple layouts.
 8. Tools must cover the full workflow — don't stop at just lookups.
 9. Return ONLY the JSON array. No prose, no markdown, no explanation.
+
+## REQUIRED FIELDS — Every Tool MUST Include ALL of These
+
+Every tool object in the array MUST have ALL of:
+- "name": snake_case, unique, starts with verb
+- "description": 1-2 sentences, never empty
+- "category": EXACTLY one of: CRUD | Find | Script | Custom | Multi-Table
+- "enabled": true
+- "executionStrategy": EXACTLY one of: fm-find | fm-create | fm-update | fm-delete | fm-list | fm-script | sequential-multi-table | odata-filter | odata-expand
+- "inputSchema": { "type": "object", "properties": { ... }, "required": [...] }
+- "handlerConfig": { "connectionId": "<from compiledSchema — REQUIRED>", "steps": [...] }
+
+category/executionStrategy must be consistent:
+- fm-find → Find; fm-create/update/delete/list → CRUD; fm-script → Script
+- sequential-multi-table/odata-expand → Multi-Table; odata-filter → Custom
+
+For update/delete tools: inputSchema MUST include "recordId" as a required string field.
 
 ## Output Format
 

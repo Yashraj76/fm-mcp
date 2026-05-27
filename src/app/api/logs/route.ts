@@ -14,8 +14,24 @@ export const GET = withAuth(async (req, { params, userId }) => {
     const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 200);
     const cursor = searchParams.get('cursor') ?? undefined; // for pagination
 
+    // Fetch all servers owned by the logged-in user to restrict logs access
+    const userServers = await prisma.mcpServer.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const userServerIds = userServers.map((s) => s.id);
+
     const where: any = {};
-    if (serverId) where.serverId = serverId;
+    if (serverId) {
+      if (!userServerIds.includes(serverId)) {
+        return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 });
+      }
+      where.serverId = serverId;
+    } else {
+      // Restrict only to servers owned by the user
+      where.serverId = { in: userServerIds };
+    }
+
     if (branchId) where.branchId = branchId;
     if (entityType) where.entityType = entityType;
     if (action) where.action = action;

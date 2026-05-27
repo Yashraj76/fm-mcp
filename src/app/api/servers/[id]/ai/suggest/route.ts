@@ -5,6 +5,7 @@ import { callAI } from '@/lib/ai/client'
 import { SUGGEST_TOOLS_PROMPT } from '@/lib/ai/prompts/suggest-tools'
 import { withAuth } from "@/lib/auth/api-guard";
 import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { normalizeTool } from '@/lib/tools/normalize-tool';
 
 const suggestSchema = z.object({
   branchId: z.string().optional(),
@@ -77,6 +78,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
       systemPrompt: SUGGEST_TOOLS_PROMPT,
       userMessage: JSON.stringify(inputPayload, null, 2),
       maxOutputTokens: 2500,
+      userId,
     });
 
     // Parse AI output defensively
@@ -98,8 +100,25 @@ export const POST = withAuth(async (request, { params, userId }) => {
 
     // Save suggestions to database
     const savedSuggestions = await Promise.all(
-      suggestions.map((suggestion) =>
-        db.aiSuggestion.create({
+      suggestions.map((suggestion) => {
+        // Normalise the proposedConfig so the dialog opens with all fields pre-filled
+        const rawConfig = suggestion.proposedConfig ?? {}
+        const normalized = normalizeTool({ ...rawConfig, isAiGenerated: true })
+        const normalizedConfig = {
+          ...rawConfig,
+          name: normalized.name,
+          description: normalized.description,
+          category: normalized.category,
+          fmMethod: normalized.fmMethod,
+          fmLayout: normalized.fmLayout,
+          fmScript: normalized.fmScript,
+          isEnabled: normalized.isEnabled,
+          isAiGenerated: true,
+          inputSchema: safeParseJSON(normalized.inputSchema, {}),
+          outputSchema: safeParseJSON(normalized.outputSchema, {}),
+          handlerConfig: safeParseJSON(normalized.handlerConfig, {}),
+        }
+        return db.aiSuggestion.create({
           data: {
             serverId: id,
             branchId: parsed.data.branchId || null,
@@ -107,11 +126,11 @@ export const POST = withAuth(async (request, { params, userId }) => {
             suggestionType: parsed.data.suggestionType,
             title: suggestion.title as string,
             description: suggestion.description as string,
-            proposedConfig: JSON.stringify(suggestion.proposedConfig),
+            proposedConfig: JSON.stringify(normalizedConfig),
             status: 'pending',
           },
         })
-      )
+      })
     );
 
     return NextResponse.json({

@@ -76,6 +76,7 @@ export const POST = withAuth(async (req, { params, userId }) => {
         systemPrompt: INFER_RELATIONSHIPS_PROMPT,
         userMessage: JSON.stringify(inputPayload, null, 2),
         maxOutputTokens: 8192,
+        userId,
       });
       
       let clean = aiText;

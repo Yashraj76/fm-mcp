@@ -47,6 +47,7 @@ export const POST = withAuth(async (req, { params, userId }) => {
         systemPrompt: PLAYGROUND_ORCHESTRATOR_PROMPT,
         userMessage: `Available tools:\n${JSON.stringify(toolList, null, 2)}\n\nUser request: ${message}`,
         maxOutputTokens: 3000,
+        userId,
       });
       const clean = aiText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       plan = safeParseJSON(clean, null);

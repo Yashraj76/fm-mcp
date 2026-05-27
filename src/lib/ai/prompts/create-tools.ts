@@ -197,4 +197,29 @@ Return ONLY a valid JSON array. No prose, no markdown, no explanation:
 10. For multi-table tools: extractField must be a field that exists in the step's layout.
 11. Scripts: use operation "script" and include "scriptName" in the step (exact name from compiledSchema.scripts).
 12. Return ONLY the JSON array. Nothing else.
+
+## REQUIRED FIELDS — Every Tool MUST Include ALL of These
+
+Every tool object in the output array MUST have every one of these fields populated. No nulls. No omissions.
+
+- "name": string — snake_case, starts with verb, unique
+- "description": string — 1-2 sentences for AI agents. Never empty.
+- "category": string — EXACTLY one of: CRUD | Find | Script | Custom | Multi-Table
+- "enabled": true
+- "executionStrategy": string — EXACTLY one of: fm-find | fm-create | fm-update | fm-delete | fm-list | fm-script | sequential-multi-table | odata-filter | odata-expand | odata-batch
+- "inputSchema": { "type": "object", "properties": { ... }, "required": [...] }
+- "handlerConfig": {
+    "connectionId": "<same connectionId from the input payload — REQUIRED>",
+    "steps": [{ "stepIndex": 0, "api": "data-api", "operation": "...", "layout": "...", "fieldMappings": { ... } }]
+  }
+
+category and executionStrategy must be consistent:
+- executionStrategy "fm-find" → category "Find"
+- executionStrategy "fm-create" | "fm-update" | "fm-delete" | "fm-list" → category "CRUD"
+- executionStrategy "fm-script" → category "Script"
+- executionStrategy "sequential-multi-table" | "odata-expand" | "odata-batch" → category "Multi-Table"
+- executionStrategy "odata-filter" → category "Custom"
+
+handlerConfig.connectionId MUST always equal the connectionId provided in the input payload.
+For update and delete tools: inputSchema.properties MUST include "recordId" as a required string field.
 `.trim();
