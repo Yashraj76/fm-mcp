@@ -77,6 +77,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
       systemPrompt: SUGGEST_TOOLS_PROMPT,
       userMessage: JSON.stringify(inputPayload, null, 2),
       maxOutputTokens: 2500,
+      userId,
     });
 
     // Parse AI output defensively

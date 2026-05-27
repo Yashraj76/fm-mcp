@@ -1,17 +1,14 @@
-import { db } from '@/lib/db'
 import { decrypt } from '@/lib/crypto'
+import { getAppSettings } from '@/lib/settings'
 import { generateText } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 
-// Reads AI config from AppSettings singleton (never hardcoded)
-export async function getAISettings() {
-  const settings = await db.appSettings.upsert({
-    where: { id: 'singleton' },
-    create: { id: 'singleton' },
-    update: {},
-  })
+// Reads AI config — checks user-specific settings first, falls back to global singleton.
+// Always pass userId when calling from an authenticated context.
+export async function getAISettings(userId?: string) {
+  const settings = await getAppSettings(userId)
   return {
     provider: settings.aiProvider,
     model: settings.aiModel,
@@ -42,6 +39,7 @@ export interface AICallOptions {
   systemPrompt: string
   userMessage: string
   maxOutputTokens?: number
+  userId?: string  // Pass to resolve user-specific API key
   configOverride?: {
     provider?: string
     apiKey?: string
@@ -51,7 +49,8 @@ export interface AICallOptions {
 }
 
 export async function callAI(options: AICallOptions): Promise<string> {
-  const settings = await getAISettings()
+  // Use userId to resolve user-specific key first; fall back to global singleton
+  const settings = await getAISettings(options.userId)
   
   const provider = options.configOverride?.provider || settings.provider
   const apiKey = options.configOverride?.apiKey || settings.apiKey
@@ -77,13 +76,14 @@ import { SUGGEST_RELATIONSHIPS_PROMPT } from './prompts/suggest-relationships'
 export async function suggestRelationships(payload: {
   layouts: { name: string; fields: string[] }[]
   tables: { name: string; fields: string[] }[]
-}): Promise<{ from: string; to: string; key: string; confidence: 'high' | 'medium' | 'low'; reason: string }[]> {
+}, userId?: string): Promise<{ from: string; to: string; key: string; confidence: 'high' | 'medium' | 'low'; reason: string }[]> {
   const schemaStr = JSON.stringify(payload, null, 2)
 
   const text = await callAI({
     systemPrompt: SUGGEST_RELATIONSHIPS_PROMPT,
     userMessage: `Analyze this FileMaker schema and return relationship suggestions:\n\n${schemaStr}`,
     maxOutputTokens: 2048,
+    userId,
   })
 
   // Extract JSON from response

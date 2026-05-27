@@ -107,6 +107,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
       systemPrompt,
       userMessage,
       maxOutputTokens: mode === 'single' ? 2000 : 6000,
+      userId,
     })
 
     // Defensively parse AI output — strip code fences, find JSON array

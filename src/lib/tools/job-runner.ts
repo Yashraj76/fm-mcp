@@ -62,6 +62,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string, user
       systemPrompt: CREATE_TOOLS_PROMPT,
       userMessage: JSON.stringify(inputPayload, null, 2),
       maxOutputTokens: 8000,
+      userId,
     });
     await prisma.toolGenerationJob.update({ where: { id: jobId }, data: { progress: 70 } });
 

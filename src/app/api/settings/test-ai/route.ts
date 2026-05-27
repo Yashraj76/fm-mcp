@@ -11,6 +11,7 @@ export const POST = withAuth(async (req, { params, userId }) => {
       systemPrompt: TEST_AI_PROMPT,
       userMessage: 'ping',
       maxOutputTokens: 10,
+      userId,
       configOverride: {
         provider,
         apiKey,
