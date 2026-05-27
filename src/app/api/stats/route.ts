@@ -6,25 +6,28 @@ import { withAuth } from "@/lib/auth/api-guard";
 export const GET = withAuth(async (req, { params, userId }) => {
     try {
     const [connections, servers, tools, deployments] = await Promise.all([
-      db.fMConnection.count(),
-      db.mcpServer.count(),
-      db.tool.count(),
-      db.deployment.count(),
+      db.fMConnection.count({ where: { userId } }),
+      db.mcpServer.count({ where: { userId } }),
+      db.tool.count({ where: { server: { userId } } }),
+      db.deployment.count({ where: { server: { userId } } }),
     ])
 
     const connectedConnections = await db.fMConnection.count({
-      where: { status: 'connected' },
+      where: { userId, status: 'connected' },
     })
 
     const activeServers = await db.mcpServer.count({
-      where: { status: { in: ['staging', 'deployed'] } },
+      where: { userId, status: { in: ['staging', 'deployed'] } },
     })
 
     const [totalExecutions, passedExecutions, failedExecutions, avgDurationResult] = await Promise.all([
-      db.toolExecution.count(),
-      db.toolExecution.count({ where: { status: 'success' } }),
-      db.toolExecution.count({ where: { status: 'error' } }),
-      db.toolExecution.aggregate({ _avg: { duration: true } })
+      db.toolExecution.count({ where: { tool: { server: { userId } } } }),
+      db.toolExecution.count({ where: { status: 'success', tool: { server: { userId } } } }),
+      db.toolExecution.count({ where: { status: 'error', tool: { server: { userId } } } }),
+      db.toolExecution.aggregate({
+        _avg: { duration: true },
+        where: { tool: { server: { userId } } }
+      })
     ])
 
     return NextResponse.json({

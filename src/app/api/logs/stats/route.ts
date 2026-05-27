@@ -6,7 +6,21 @@ export const GET = withAuth(async (req, { params, userId }) => {
     const serverId = searchParams.get('serverId') ?? undefined;
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // last 7 days
 
-    const where = { ...(serverId ? { serverId } : {}), createdAt: { gte: since } };
+    // Fetch all servers owned by the logged-in user to restrict logs access
+    const userServers = await prisma.mcpServer.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+    const userServerIds = userServers.map((s) => s.id);
+
+    if (serverId && !userServerIds.includes(serverId)) {
+      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 });
+    }
+
+    const where = {
+      serverId: serverId ? serverId : { in: userServerIds },
+      createdAt: { gte: since },
+    };
 
     const [total, byAction, byEntity, executions] = await Promise.all([
     prisma.activityLog.count({ where }),
