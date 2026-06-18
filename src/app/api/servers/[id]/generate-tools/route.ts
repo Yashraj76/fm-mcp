@@ -7,9 +7,9 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 export const POST = withAuth(async (_, { params, userId }) => {
     const { id } = await params;
-    const server = await prisma.mcpServer.findUnique({ where: {
-      userId: userId,
-    id } });
+    const server = await prisma.mcpServer.findFirst({
+      where: { id, userId }
+    });
     if (!server) return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 });
 
     // Create job record

@@ -42,10 +42,8 @@ export const POST = withAuth(async (request, { params, userId }) => {
     const { prompt, mode } = parsed.data
 
     // Load server with active connections + browsed schema
-    const server = await db.mcpServer.findUnique({
-      where: {
-          userId: userId,
-        id },
+    const server = await db.mcpServer.findFirst({
+      where: { id, userId },
       include: {
         connections: {
           where: { isActive: true },

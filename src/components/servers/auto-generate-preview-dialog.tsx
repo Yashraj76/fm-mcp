@@ -136,13 +136,13 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
       if (!val && (step === 'generating' || saveMutation.isPending)) return // prevent closing while working
       onOpenChange(val)
     }}>
-      <DialogContent className="sm:max-w-[700px] bg-neutral-900 border-white/10 text-white shadow-2xl p-0 flex flex-col" style={{ maxHeight: '85vh', height: '85vh' }}>
-        <DialogHeader className="p-6 pb-4 border-b border-white/5 shrink-0">
+      <DialogContent className="sm:max-w-[700px] shadow-2xl p-0 flex flex-col" style={{ maxHeight: '85vh', height: '85vh' }}>
+        <DialogHeader className="p-6 pb-4 border-b shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Brain className="size-5 text-indigo-400" />
             Auto-Generate Suite
           </DialogTitle>
-          <DialogDescription className="text-neutral-400">
+          <DialogDescription>
             {step === 'generating' ? 'Analyzing schema and generating tools...' : 'Select the tools you want to add to your server.'}
           </DialogDescription>
         </DialogHeader>
@@ -155,21 +155,21 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
                   <div className="absolute inset-0 bg-indigo-500/20 blur-xl rounded-full" />
                   <Loader2 className="size-12 animate-spin text-indigo-400 relative z-10" />
                 </div>
-                <p className="text-sm text-neutral-400 max-w-[250px]">
+                <p className="text-sm text-muted-foreground max-w-[250px]">
                   This usually takes 15-30 seconds depending on schema size...
                 </p>
               </div>
               <div className="space-y-3">
-                <Skeleton className="h-16 w-full rounded-xl bg-white/5" />
-                <Skeleton className="h-16 w-full rounded-xl bg-white/5" />
-                <Skeleton className="h-16 w-full rounded-xl bg-white/5" />
+                <Skeleton className="h-16 w-full rounded-xl" />
+                <Skeleton className="h-16 w-full rounded-xl" />
+                <Skeleton className="h-16 w-full rounded-xl" />
               </div>
             </div>
           )}
 
           {step === 'preview' && (
             <>
-              <div className="px-6 py-3 border-b border-white/5 bg-white/[0.02] flex items-center justify-between shrink-0">
+              <div className="px-6 py-3 border-b bg-muted/30 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
                   <Checkbox 
                     id="select-all" 
@@ -177,11 +177,11 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
                     onCheckedChange={toggleAll}
                     className="border-white/20 data-[state=checked]:bg-indigo-500 data-[state=checked]:border-indigo-500"
                   />
-                  <label htmlFor="select-all" className="text-sm font-medium text-neutral-300 cursor-pointer">
+                  <label htmlFor="select-all" className="text-sm font-medium cursor-pointer">
                     Select All ({selectedIndices.size} of {tools.length})
                   </label>
                 </div>
-                <span className="text-xs text-neutral-500">{tools.length} tools generated</span>
+                <span className="text-xs text-muted-foreground">{tools.length} tools generated</span>
               </div>
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="space-y-3">
@@ -193,7 +193,7 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
                         className={`flex items-start gap-4 p-4 rounded-xl border transition-all cursor-pointer ${
                           isSelected 
                             ? 'bg-indigo-500/10 border-indigo-500/30 shadow-sm shadow-indigo-500/5' 
-                            : 'bg-white/[0.02] border-white/[0.05] hover:bg-white/[0.05]'
+                            : 'bg-muted/30 border hover:bg-muted/60'
                         }`}
                         onClick={() => toggleSelection(idx)}
                       >
@@ -204,17 +204,17 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
                         />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <Wrench className={`size-3.5 ${isSelected ? 'text-indigo-400' : 'text-neutral-500'}`} />
-                            <h4 className={`text-sm font-semibold tracking-wide ${isSelected ? 'text-white' : 'text-neutral-300'}`}>
+                            <Wrench className={`size-3.5 ${isSelected ? 'text-indigo-400' : 'text-muted-foreground'}`} />
+                            <h4 className={`text-sm font-semibold tracking-wide ${isSelected ? 'text-foreground' : 'text-muted-foreground'}`}>
                               {tool.name}
                             </h4>
                             {tool.category && (
-                              <Badge variant="outline" className="text-[9px] uppercase font-bold py-0 h-4 bg-black/40 text-neutral-400 border-white/10">
+                              <Badge variant="outline" className="text-[9px] uppercase font-bold py-0 h-4 bg-muted text-muted-foreground">
                                 {tool.category}
                               </Badge>
                             )}
                           </div>
-                          <p className="text-xs text-neutral-400 line-clamp-2">
+                          <p className="text-xs text-muted-foreground line-clamp-2">
                             {tool.description}
                           </p>
                         </div>
@@ -227,12 +227,12 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
           )}
         </div>
 
-        <DialogFooter className="p-6 pt-4 border-t border-white/5 shrink-0 bg-neutral-900">
+        <DialogFooter className="p-6 pt-4 border-t shrink-0">
           <Button 
             variant="ghost" 
             onClick={() => onOpenChange(false)}
             disabled={step === 'generating' || saveMutation.isPending}
-            className="text-neutral-400 hover:text-white"
+            className="text-muted-foreground hover:text-foreground"
           >
             Cancel
           </Button>

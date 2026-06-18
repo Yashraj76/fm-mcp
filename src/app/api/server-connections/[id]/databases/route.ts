@@ -7,9 +7,9 @@ type Params = { params: Promise<{ id: string }> }
 export const GET = withAuth(async (_req, { params, userId }) => {
     try {
     const { id } = await params
-    const server = await db.fMServerConnection.findUnique({ where: {
-        userId: userId,
-        id } })
+    const server = await db.fMServerConnection.findFirst({
+      where: { id, userId }
+    })
     if (!server) return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
 
     const databases = await withAdminSession(server, async (client) => {

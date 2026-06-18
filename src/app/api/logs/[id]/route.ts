@@ -4,11 +4,17 @@ import { withAuth } from "@/lib/auth/api-guard";
 import { apiSuccess, apiNotFound } from '@/lib/utils/api-response';
 
 export const GET = withAuth(async (_, { params, userId }) => {
-    const entry = await prisma.activityLog.findUnique({
-      where: { id: (await params).id },
+    const entry = await prisma.activityLog.findFirst({
+      where: {
+        id: (await params).id,
+        OR: [
+          { serverId: null },
+          { server: { userId } }
+        ]
+      },
       include: { server: true }
     });
-    if (!entry || (entry.serverId && entry.server?.userId !== userId)) {
+    if (!entry) {
       return apiNotFound();
     }
 

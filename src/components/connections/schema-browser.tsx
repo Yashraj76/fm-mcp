@@ -41,7 +41,7 @@ interface Relationship {
 const CONFIDENCE_COLORS: Record<string, string> = {
   high: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
   medium: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  low: 'bg-white/10 text-white/50 border-white/20',
+  low: 'bg-muted text-muted-foreground border-border',
 }
 
 export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
@@ -251,16 +251,16 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center pt-6 pb-6 px-4">
-      <div className="w-full max-w-[95vw] h-[95vh] bg-[#0d0f18] border border-white/10 rounded-2xl shadow-2xl flex flex-col">
+      <div className="w-full max-w-[95vw] h-[95vh] bg-background border rounded-2xl shadow-2xl flex flex-col">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
           <div>
-            <h2 className="text-base font-semibold text-white flex items-center gap-2">
+            <h2 className="text-base font-semibold flex items-center gap-2">
               <Layout className="w-4 h-4 text-blue-400" />
               Schema Browser
             </h2>
-            <p className="text-xs text-white/40 mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Select layouts, tables, and scripts to include in your compiled schema
             </p>
           </div>
@@ -270,7 +270,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               variant="ghost"
               onClick={fetchSchema}
               disabled={isWorking}
-              className="text-white/50 hover:text-white h-8"
+              className="text-muted-foreground hover:text-foreground h-8"
             >
               <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${phase === 'fetching' ? 'animate-spin' : ''}`} />
               Refresh
@@ -300,7 +300,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                 : <Save className="w-3.5 h-3.5 mr-1.5" />}
               {saved ? 'Saved!' : 'Save Selections'}
             </Button>
-            <Button size="sm" variant="ghost" onClick={onClose} className="text-white/40 hover:text-white h-8">✕</Button>
+            <Button size="sm" variant="ghost" onClick={onClose} className="text-muted-foreground hover:text-foreground h-8">✕</Button>
           </div>
         </div>
 
@@ -308,7 +308,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
         {phase === 'fetching' && (
           <div className="flex-1 flex flex-col items-center justify-center py-16 gap-3">
             <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
-            <p className="text-white/60 text-sm">
+            <p className="text-muted-foreground text-sm">
               Fetching schema from FileMaker…
             </p>
           </div>
@@ -319,7 +319,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
           <div className="flex-1 flex flex-col items-center justify-center py-12 gap-4">
             <XCircle className="w-8 h-8 text-red-400" />
             <p className="text-red-300 text-sm">{error}</p>
-            <Button size="sm" onClick={fetchSchema} className="bg-white/10 hover:bg-white/15">
+            <Button size="sm" onClick={fetchSchema} variant="outline">
               <RefreshCw className="w-4 h-4 mr-2" /> Retry
             </Button>
           </div>
@@ -330,26 +330,26 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
           <div className="flex-1 overflow-hidden flex">
 
             {/* ── Layouts ── */}
-            <div className="w-2/5 border-r border-white/10 flex flex-col">
-              <div className="px-4 py-3 border-b border-white/10 shrink-0">
+            <div className="w-2/5 border-r flex flex-col">
+              <div className="px-4 py-3 border-b shrink-0">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                     <Layout className="w-4 h-4" /> Layouts
-                    <Badge className="ml-1 bg-white/10 text-white/50 border-none text-xs">{selectedLayouts.size}/{result.layouts.length}</Badge>
+                    <Badge className="ml-1 bg-muted text-muted-foreground border-none text-xs">{selectedLayouts.size}/{result.layouts.length}</Badge>
                   </span>
                   <div className="flex gap-1.5">
                     <button onClick={() => setSelectedLayouts(new Set(result.layouts))} className="text-xs text-blue-400 hover:text-blue-300">All</button>
-                    <span className="text-white/20">·</span>
-                    <button onClick={() => setSelectedLayouts(new Set())} className="text-xs text-white/40 hover:text-white/60">None</button>
+                    <span className="text-muted-foreground/30">·</span>
+                    <button onClick={() => setSelectedLayouts(new Set())} className="text-xs text-muted-foreground hover:text-foreground">None</button>
                   </div>
                 </div>
                 <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                   <Input
                     placeholder="Filter layouts…"
                     value={layoutSearch}
                     onChange={(e) => setLayoutSearch(e.target.value)}
-                    className="pl-8 h-7 text-xs bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                    className="pl-8 h-7 text-xs"
                   />
                 </div>
               </div>
@@ -360,19 +360,19 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                   const isSelected = selectedLayouts.has(layout)
                   return (
                     <div key={layout}>
-                      <div className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer group transition-colors ${isSelected ? 'bg-blue-500/10' : 'hover:bg-white/5'}`}>
+                      <div className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer group transition-colors ${isSelected ? 'bg-blue-500/10' : 'hover:bg-muted'}`}>
                         <Checkbox
                           checked={isSelected}
                           onCheckedChange={() => toggleLayout(layout)}
                           className="h-4 w-4 border-white/30 data-[state=checked]:bg-blue-500 data-[state=checked]:border-blue-500"
                         />
                         <span
-                          className="flex-1 text-sm text-white/80 truncate cursor-pointer"
+                          className="flex-1 text-sm truncate cursor-pointer"
                           onClick={() => toggleLayout(layout)}
                         >{layout}</span>
                                                   <button
                             onClick={() => toggleExpandLayout(layout)}
-                            className="text-white/20 hover:text-white/60 shrink-0"
+                            className="text-muted-foreground/40 hover:text-muted-foreground shrink-0"
                           >
                             {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
                           </button>
@@ -380,20 +380,20 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                       {isExpanded && (
                         <div className="ml-7 mb-1 space-y-0.5">
                           {!meta ? (
-                            <p className="text-[10px] text-white/30 px-2 py-0.5 flex items-center gap-1.5 animate-pulse">
+                            <p className="text-[10px] text-muted-foreground/50 px-2 py-0.5 flex items-center gap-1.5 animate-pulse">
                               <Loader2 className="w-3 h-3 animate-spin" /> Loading fields...
                             </p>
                           ) : (
                             <>
                               <div className="flex items-center justify-between px-2 py-0.5 mb-1">
-                                <p className="text-xs text-white/40">{meta.fields.length} fields</p>
+                                <p className="text-xs text-muted-foreground">{meta.fields.length} fields</p>
                                 <div className="flex gap-1.5">
                                   <button onClick={(e) => { e.stopPropagation(); setSelectedFields(prev => ({...prev, [layout]: new Set(meta.fields)})) }} className="text-xs text-blue-400 hover:text-blue-300">All</button>
-                                  <button onClick={(e) => { e.stopPropagation(); setSelectedFields(prev => ({...prev, [layout]: new Set()})) }} className="text-xs text-white/40 hover:text-white/60">None</button>
+                                  <button onClick={(e) => { e.stopPropagation(); setSelectedFields(prev => ({...prev, [layout]: new Set()})) }} className="text-xs text-muted-foreground hover:text-foreground">None</button>
                                 </div>
                               </div>
                               {meta.fields.map((f: string) => (
-                                <div key={f} className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer ${selectedFields[layout]?.has(f) ? 'bg-blue-500/10 text-white/80' : 'text-white/40 hover:bg-white/5 hover:text-white/60'}`} onClick={() => toggleField(layout, f)}>
+                                <div key={f} className={`flex items-center gap-1.5 px-2 py-0.5 rounded cursor-pointer ${selectedFields[layout]?.has(f) ? 'bg-blue-500/10' : 'hover:bg-muted'}`} onClick={() => toggleField(layout, f)}>
                                   <Checkbox
                                     checked={selectedFields[layout]?.has(f) || false}
                                     onCheckedChange={() => toggleField(layout, f)}
@@ -403,8 +403,8 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                                 </div>
                               ))}
                               {meta.portals.length > 0 && (
-                                <div className="mt-2 pt-1 border-t border-white/5">
-                                  <p className="text-xs text-white/30 px-2 py-0.5">{meta.portals.length} portals</p>
+                                <div className="mt-2 pt-1 border-t">
+                                  <p className="text-xs text-muted-foreground px-2 py-0.5">{meta.portals.length} portals</p>
                                   {meta.portals.map((p: string) => (
                                     <div key={p} className="flex items-center gap-1.5 px-2 py-0.5 text-xs text-purple-400/70">
                                       <GitBranch className="w-3 h-3 shrink-0" />
@@ -424,32 +424,32 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
             </div>
 
             {/* ── OData Tables ── */}
-            <div className="w-1/5 border-r border-white/10 flex flex-col">
-              <div className="px-4 py-3 border-b border-white/10 shrink-0">
+            <div className="w-1/5 border-r flex flex-col">
+              <div className="px-4 py-3 border-b shrink-0">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                     <Table2 className="w-4 h-4" /> OData Tables
-                    <Badge className="ml-1 bg-white/10 text-white/50 border-none text-xs">{selectedTables.size}/{result.odataTables.length}</Badge>
+                    <Badge className="ml-1 bg-muted text-muted-foreground border-none text-xs">{selectedTables.size}/{result.odataTables.length}</Badge>
                   </span>
                 </div>
                 <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                   <Input
                     placeholder="Filter…"
                     value={tableSearch}
                     onChange={(e) => setTableSearch(e.target.value)}
-                    className="pl-8 h-7 text-xs bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                    className="pl-8 h-7 text-xs"
                   />
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
                 {filteredTables.length === 0 && (
-                  <p className="text-[11px] text-white/25 text-center pt-6 px-2">No OData tables available</p>
+                  <p className="text-[11px] text-muted-foreground text-center pt-6 px-2">No OData tables available</p>
                 )}
                 {filteredTables.map((table) => (
                   <div
                     key={table}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${selectedTables.has(table) ? 'bg-purple-500/10' : 'hover:bg-white/5'}`}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${selectedTables.has(table) ? 'bg-purple-500/10' : 'hover:bg-muted'}`}
                     onClick={() => toggleTable(table)}
                   >
                     <Checkbox
@@ -457,7 +457,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                       onCheckedChange={() => toggleTable(table)}
                       className="h-4 w-4 border-white/30 data-[state=checked]:bg-purple-500 data-[state=checked]:border-purple-500"
                     />
-                    <span className="flex-1 text-sm text-white/80 truncate">{table}</span>
+                    <span className="flex-1 text-sm truncate">{table}</span>
                   </div>
                 ))}
               </div>
@@ -466,37 +466,37 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
             {/* ── Scripts + Relationships ── */}
             <div className="flex-1 flex flex-col">
               {/* Scripts */}
-              <div className="border-b border-white/10 flex flex-col" style={{ maxHeight: '45%' }}>
-                <div className="px-4 py-3 border-b border-white/10 shrink-0">
+              <div className="border-b flex flex-col" style={{ maxHeight: '45%' }}>
+                <div className="px-4 py-3 border-b shrink-0">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                       <FileCode className="w-4 h-4" /> Scripts
-                      <Badge className="ml-1 bg-white/10 text-white/50 border-none text-xs">{selectedScripts.size}/{result.scripts.length}</Badge>
+                      <Badge className="ml-1 bg-muted text-muted-foreground border-none text-xs">{selectedScripts.size}/{result.scripts.length}</Badge>
                     </span>
                     <div className="flex gap-1.5">
                       <button onClick={() => setSelectedScripts(new Set(result.scripts))} className="text-xs text-blue-400 hover:text-blue-300">All</button>
-                      <span className="text-white/20">·</span>
-                      <button onClick={() => setSelectedScripts(new Set())} className="text-xs text-white/40 hover:text-white/60">None</button>
+                      <span className="text-muted-foreground/30">·</span>
+                      <button onClick={() => setSelectedScripts(new Set())} className="text-xs text-muted-foreground hover:text-foreground">None</button>
                     </div>
                   </div>
                   <div className="relative">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
                       placeholder="Filter scripts…"
                       value={scriptSearch}
                       onChange={(e) => setScriptSearch(e.target.value)}
-                      className="pl-8 h-7 text-xs bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                      className="pl-8 h-7 text-xs"
                     />
                   </div>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
                   {filteredScripts.length === 0 && (
-                    <p className="text-[11px] text-white/25 text-center pt-4">No scripts</p>
+                    <p className="text-[11px] text-muted-foreground text-center pt-4">No scripts</p>
                   )}
                   {filteredScripts.map((script) => (
                     <div
                       key={script}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${selectedScripts.has(script) ? 'bg-amber-500/10' : 'hover:bg-white/5'}`}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition-colors ${selectedScripts.has(script) ? 'bg-amber-500/10' : 'hover:bg-muted'}`}
                       onClick={() => toggleScript(script)}
                     >
                       <Checkbox
@@ -504,7 +504,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                         onCheckedChange={() => toggleScript(script)}
                         className="h-4 w-4 border-white/30 data-[state=checked]:bg-amber-500 data-[state=checked]:border-amber-500"
                       />
-                      <span className="flex-1 text-sm text-white/80 truncate">{script}</span>
+                      <span className="flex-1 text-sm truncate">{script}</span>
                     </div>
                   ))}
                 </div>
@@ -512,9 +512,9 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
 
               {/* Relationships */}
               <div className="flex-1 flex flex-col overflow-hidden">
-                <div className="px-4 py-3 border-b border-white/10 shrink-0">
+                <div className="px-4 py-3 border-b shrink-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-white/60 uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
                       <GitBranch className="w-4 h-4 text-purple-400" /> Relationships
                       <Badge className="ml-1 bg-purple-500/20 text-purple-400 border-none text-xs">{relationships.length}</Badge>
                     </span>
@@ -544,22 +544,22 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                   {relationships.length === 0 && (
                     <div className="flex flex-col items-center justify-center py-8 text-center px-4">
                       <GitBranch className="w-5 h-5 text-purple-400/40 mb-2" />
-                      <p className="text-[11px] text-white/40 font-medium mb-1">No relationships detected yet</p>
-                      <p className="text-[10px] text-white/25">Select layouts then click "Detect" to find joins via field name patterns and portals</p>
+                      <p className="text-[11px] text-muted-foreground font-medium mb-1">No relationships detected yet</p>
+                      <p className="text-[10px] text-muted-foreground/50">Select layouts then click "Detect" to find joins via field name patterns and portals</p>
                     </div>
                   )}
                                     {relationships.map((rel, i) => (
-                    <div key={i} className="bg-white/3 border border-white/8 rounded-md px-3 py-2 hover:bg-white/5 transition-colors group relative">
-                      <button onClick={() => setRelationships(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-2 right-2 text-white/20 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><XCircle className="w-3.5 h-3.5" /></button>
-                      <div className="flex items-center gap-1.5 text-[11px] text-white/80 mb-1 pr-6">
+                    <div key={i} className="bg-muted/50 border rounded-md px-3 py-2 hover:bg-muted transition-colors group relative">
+                      <button onClick={() => setRelationships(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-2 right-2 text-muted-foreground/30 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><XCircle className="w-3.5 h-3.5" /></button>
+                      <div className="flex items-center gap-1.5 text-[11px] mb-1 pr-6">
                         <span className="font-medium text-blue-300 truncate max-w-[35%]" title={rel.from}>{rel.from}</span>
-                        <span className="text-white/30 shrink-0">↔</span>
+                        <span className="text-muted-foreground/40 shrink-0">↔</span>
                         <span className="font-medium text-purple-300 truncate max-w-[35%]" title={rel.to}>{rel.to}</span>
                         <Badge className={`ml-auto shrink-0 text-[9px] border ${CONFIDENCE_COLORS[rel.confidence]}`}>{rel.confidence}</Badge>
                       </div>
-                      <p className="text-[10px] text-white/35 leading-relaxed">
+                      <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
                         <span className="text-emerald-400/70 font-mono">{rel.key}</span>
-                        <span className="mx-1 text-white/20">·</span>
+                        <span className="mx-1 text-muted-foreground/30">·</span>
                         {rel.reason}
                       </p>
                     </div>
@@ -567,10 +567,10 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                   
                   {/* Manual Relationship Form */}
                   {showAddRelation ? (
-                    <div className="bg-white/5 border border-purple-500/30 rounded-md p-3 space-y-2 mt-2">
+                    <div className="bg-muted border border-purple-500/30 rounded-md p-3 space-y-2 mt-2">
                       <div className="flex items-center gap-2">
                          <div className="flex-1 space-y-1">
-                           <p className="text-[10px] text-white/50">From Layout</p>
+                           <p className="text-[10px] text-muted-foreground">From Layout</p>
                            <select 
                              value={newRelFrom} 
                              onChange={e => {
@@ -578,14 +578,14 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                                setNewRelFrom(val)
                                if (val && !result?.layoutMeta[val]) toggleExpandLayout(val)
                              }} 
-                             className="w-full h-6 text-[11px] px-1 bg-black/20 border border-white/10 rounded text-white"
+                             className="w-full h-6 text-[11px] px-1 bg-background border rounded text-foreground"
                            >
                              <option value="">Select Layout...</option>
                              {Array.from(selectedLayouts).map(l => <option key={l} value={l}>{l}</option>)}
                            </select>
                          </div>
                          <div className="flex-1 space-y-1">
-                           <p className="text-[10px] text-white/50">To Layout</p>
+                           <p className="text-[10px] text-muted-foreground">To Layout</p>
                            <select 
                              value={newRelTo} 
                              onChange={e => {
@@ -593,7 +593,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                                setNewRelTo(val)
                                if (val && !result?.layoutMeta[val]) toggleExpandLayout(val)
                              }} 
-                             className="w-full h-6 text-[11px] px-1 bg-black/20 border border-white/10 rounded text-white"
+                             className="w-full h-6 text-[11px] px-1 bg-background border rounded text-foreground"
                            >
                              <option value="">Select Layout...</option>
                              {Array.from(selectedLayouts).map(l => <option key={l} value={l}>{l}</option>)}
@@ -602,24 +602,22 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                       </div>
                       <div className="flex items-center gap-2">
                          <div className="flex-1 space-y-1">
-                           <p className="text-[10px] text-white/50">From Field</p>
+                           <p className="text-[10px] text-muted-foreground">From Field</p>
                            <select 
                              value={newRelKey} 
                              onChange={e => setNewRelKey(e.target.value)} 
-                             className="w-full h-6 text-[11px] px-1 bg-black/20 border border-white/10 rounded text-white"
-                             disabled={!newRelFrom || !result?.layoutMeta[newRelFrom]}
+                             className="w-full h-6 text-[11px] px-1 bg-background border rounded text-foreground disabled:opacity-50"
                            >
                              <option value="">Select Field...</option>
                              {newRelFrom && result?.layoutMeta[newRelFrom]?.fields?.map((f: string) => <option key={f} value={f}>{f}</option>)}
                            </select>
                          </div>
                          <div className="flex-1 space-y-1">
-                           <p className="text-[10px] text-white/50">To Field</p>
+                           <p className="text-[10px] text-muted-foreground">To Field</p>
                            <select 
                              value={newRelToKey} 
                              onChange={e => setNewRelToKey(e.target.value)} 
-                             className="w-full h-6 text-[11px] px-1 bg-black/20 border border-white/10 rounded text-white"
-                             disabled={!newRelTo || !result?.layoutMeta[newRelTo]}
+                             className="w-full h-6 text-[11px] px-1 bg-background border rounded text-foreground disabled:opacity-50"
                            >
                              <option value="">Select Field...</option>
                              {newRelTo && result?.layoutMeta[newRelTo]?.fields?.map((f: string) => <option key={f} value={f}>{f}</option>)}
@@ -653,7 +651,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
 
         {/* Footer */}
         {phase === 'done' && result && (
-          <div className="px-6 py-3 border-t border-white/10 flex items-center justify-between text-[11px] text-white/35 shrink-0">
+          <div className="px-6 py-3 border-t flex items-center justify-between text-[11px] text-muted-foreground shrink-0">
             <span>
               {selectedLayouts.size} layouts · {selectedTables.size} tables · {selectedScripts.size} scripts · {relationships.length} relationships
             </span>

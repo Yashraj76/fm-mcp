@@ -63,7 +63,7 @@ const statusConfig: Record<string, { color: string; badge: string; label: string
 const serverStatusConfig: Record<string, { dot: string; badge: string }> = {
   online:  { dot: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25' },
   error:   { dot: 'bg-red-500', badge: 'bg-red-500/15 text-red-400 border-red-500/25' },
-  unknown: { dot: 'bg-white/20', badge: 'bg-white/10 text-white/40 border-white/15' },
+  unknown: { dot: 'bg-muted-foreground/30', badge: 'bg-muted text-muted-foreground border-border' },
 }
 
 export function ConnectionsPage() {
@@ -199,23 +199,23 @@ export function ConnectionsPage() {
             size="sm"
             variant="outline"
             onClick={() => { setEditServer(null); setShowServerDialog(true) }}
-            className="h-8 text-xs border-white/15 text-white/70 hover:text-white hover:bg-white/8"
+            className="h-8 text-xs"
           >
             <Plus className="w-3.5 h-3.5 mr-1.5" /> Add Server
           </Button>
         </div>
 
         {!servers?.length ? (
-          <div className="border border-dashed border-white/15 rounded-xl py-10 flex flex-col items-center gap-3 text-center">
-            <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
-              <ServerIcon className="w-5 h-5 text-white/30" />
+          <div className="border border-dashed border-border rounded-xl py-10 flex flex-col items-center gap-3 text-center">
+            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+              <ServerIcon className="w-5 h-5 text-muted-foreground" />
             </div>
-            <p className="text-sm text-white/40">No FM Servers added yet</p>
+            <p className="text-sm text-muted-foreground">No FM Servers added yet</p>
             <Button
               size="sm"
               variant="ghost"
               onClick={() => { setEditServer(null); setShowServerDialog(true) }}
-              className="text-blue-400 hover:text-blue-300 text-xs h-7"
+              className="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 text-xs h-7"
             >
               <Plus className="w-3.5 h-3.5 mr-1" /> Add your first server
             </Button>
@@ -225,36 +225,36 @@ export function ConnectionsPage() {
             {servers.map((server) => {
               const sc = serverStatusConfig[server.status] || serverStatusConfig.unknown
               return (
-                <Card key={server.id} className="py-0 gap-0 bg-[#0d1017] border-white/10 hover:border-white/20 transition-colors">
+                <Card key={server.id} className="py-0 gap-0 hover:border-foreground/20 transition-colors">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <div className="w-8 h-8 rounded-lg bg-blue-500/15 flex items-center justify-center shrink-0">
-                          <Server className="w-4 h-4 text-blue-400" />
+                          <Server className="w-4 h-4 text-blue-500 dark:text-blue-400" />
                         </div>
                         <div className="min-w-0">
-                          <h3 className="text-sm font-medium truncate text-white/90">{server.name}</h3>
-                          <p className="text-xs text-white/40 truncate">{server.host}:{server.port}</p>
+                          <h3 className="text-sm font-medium truncate">{server.name}</h3>
+                          <p className="text-xs text-muted-foreground truncate">{server.host}:{server.port}</p>
                         </div>
                       </div>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="size-7 text-white/30 hover:text-white shrink-0" aria-label="Server options">
+                          <Button variant="ghost" size="icon" className="size-7 shrink-0" aria-label="Server options">
                             <MoreVertical className="size-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-[#0f1117] border-white/10">
-                          <DropdownMenuItem onClick={() => { setEditServer(server); setShowServerDialog(true) }} className="text-white/70">
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => { setEditServer(server); setShowServerDialog(true) }}>
                             <Pencil className="size-4 mr-2" /> Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => testServerMutation.mutate(server.id)} className="text-white/70">
+                          <DropdownMenuItem onClick={() => testServerMutation.mutate(server.id)}>
                             <Zap className="size-4 mr-2" /> Test Connection
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setDbPickerServer(server)} className="text-white/70">
+                          <DropdownMenuItem onClick={() => setDbPickerServer(server)}>
                             <Database className="size-4 mr-2" /> Browse Databases
                           </DropdownMenuItem>
-                          <DropdownMenuSeparator className="bg-white/10" />
-                          <DropdownMenuItem onClick={() => setDeleteServerId(server.id)} className="text-red-400">
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => setDeleteServerId(server.id)} className="text-destructive focus:text-destructive">
                             <Trash2 className="size-4 mr-2" /> Remove
                           </DropdownMenuItem>
                         </DropdownMenuContent>
@@ -306,12 +306,12 @@ export function ConnectionsPage() {
         </div>
 
         {!connections?.length ? (
-          <div className="border border-dashed border-white/15 rounded-xl py-10 flex flex-col items-center gap-3 text-center">
-            <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center">
-              <Database className="w-5 h-5 text-white/30" />
+          <div className="border border-dashed border-border rounded-xl py-10 flex flex-col items-center gap-3 text-center">
+            <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+              <Database className="w-5 h-5 text-muted-foreground" />
             </div>
-            <p className="text-sm text-white/40">No connections yet</p>
-            <p className="text-xs text-white/25 max-w-xs">Add a server above and pick a database, or add a manual connection</p>
+            <p className="text-sm text-muted-foreground">No connections yet</p>
+            <p className="text-xs text-muted-foreground/60 max-w-xs">Add a server above and pick a database, or add a manual connection</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

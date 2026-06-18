@@ -86,16 +86,16 @@ function StatusBadge({ status }: { status: string }) {
 
 function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolItem; onToggle?: () => void; onEdit?: () => void; onDelete?: () => void; readOnly?: boolean }) {
   return (
-    <div className="flex items-center justify-between py-3 px-4 rounded-xl border border-white/[0.05] bg-white/[0.02] hover:bg-white/[0.05] transition-all duration-200 group mb-2 shadow-sm">
+    <div className="flex items-center justify-between py-3 px-4 rounded-xl border bg-muted/30 hover:bg-muted/60 transition-all duration-200 group mb-2 shadow-sm">
       <div className="flex items-center gap-3 min-w-0">
-        <div className={`p-2 rounded-lg shrink-0 ${tool.isEnabled ? 'bg-blue-500/10 text-blue-400' : 'bg-neutral-500/10 text-neutral-500'}`}>
+        <div className={`p-2 rounded-lg shrink-0 ${tool.isEnabled ? 'bg-blue-500/10 text-blue-500 dark:text-blue-400' : 'bg-muted text-muted-foreground'}`}>
           <Wrench className="size-4" />
         </div>
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-semibold text-white truncate tracking-wide">{tool.name}</span>
+          <span className="text-sm font-semibold truncate tracking-wide">{tool.name}</span>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {tool.category && (
-              <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider py-0 px-1.5 bg-neutral-800 text-neutral-300 border-neutral-700">
+              <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider py-0 px-1.5">
                 {tool.category}
               </Badge>
             )}
@@ -114,7 +114,7 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="size-8 rounded-lg border border-white/5 hover:border-blue-500/30 hover:bg-blue-500/10 text-neutral-400 hover:text-blue-400 transition-all" 
+                className="size-8 rounded-lg border hover:border-blue-500/30 hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-all" 
                 onClick={onEdit}
                 title="Edit Tool"
                 aria-label="Edit tool"
@@ -126,7 +126,7 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
               <Button 
                 variant="ghost" 
                 size="icon" 
-                className="size-8 rounded-lg border border-white/5 hover:border-red-500/30 hover:bg-red-500/10 text-neutral-400 hover:text-red-400 transition-all" 
+                className="size-8 rounded-lg border hover:border-red-500/30 hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-all" 
                 onClick={onDelete}
                 title="Delete Tool"
                 aria-label="Delete tool"
@@ -141,7 +141,7 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
                 className={`size-8 rounded-lg border transition-all ${
                   tool.isEnabled 
                     ? 'bg-emerald-500/10 border-emerald-500/20 hover:border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/20' 
-                    : 'bg-neutral-500/5 border-white/5 hover:border-neutral-500/30 text-neutral-500 hover:text-neutral-400 hover:bg-neutral-500/10'
+                    : 'bg-muted border hover:border-muted-foreground/30 text-muted-foreground hover:bg-muted/80'
                 }`}
                 onClick={onToggle}
                 title={tool.isEnabled ? 'Disable Tool' : 'Enable Tool'}
@@ -156,7 +156,7 @@ function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolIte
             <span className={`text-[10px] uppercase font-bold tracking-wider py-0.5 px-2 rounded-full border ${
               tool.isEnabled 
                 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
-                : 'bg-neutral-500/10 border-white/5 text-neutral-500'
+                : 'bg-muted border text-muted-foreground'
             }`}>
               {tool.isEnabled ? 'Enabled' : 'Disabled'}
             </span>
@@ -372,7 +372,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
           <div>
             <div className="flex items-center gap-3">
               <Server className="size-5 text-muted-foreground" />
-              <h1 className="text-2xl font-bold tracking-tight text-white">{server.name}</h1>
+              <h1 className="text-2xl font-bold tracking-tight">{server.name}</h1>
               <StatusBadge status={server.status} />
             </div>
             {server.description && (
@@ -381,11 +381,11 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="border-white/10 hover:bg-white/5 text-neutral-300 hover:text-white" onClick={() => setShowConfigDialog(true)}>
+          <Button variant="outline" size="sm" onClick={() => setShowConfigDialog(true)}>
             <FileJson className="size-3.5" />
             Generate Config
           </Button>
-          <Button variant="outline" size="sm" className="border-white/10 hover:bg-white/5 text-neutral-300 hover:text-white" onClick={() => setShowServerDialog(true, server.id)}>
+          <Button variant="outline" size="sm" onClick={() => setShowServerDialog(true, server.id)}>
             <Pencil className="size-3.5" />
             Edit
           </Button>
@@ -393,25 +393,25 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
       </div>
 
       {/* Server Info & Connections Container */}
-      <Card className="border-white/10 bg-white/[0.02] overflow-hidden">
-        <div className="p-4 flex flex-wrap items-center gap-6 border-b border-white/[0.05] bg-white/[0.01]">
+      <Card className="overflow-hidden">
+        <div className="p-4 flex flex-wrap items-center gap-6 border-b">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-neutral-450">Version:</span>
-            <span className="text-sm font-semibold text-white">v{server.version}</span>
+            <span className="text-xs text-muted-foreground">Version:</span>
+            <span className="text-sm font-semibold">v{server.version}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-neutral-450">Active Tools:</span>
-            <span className="text-sm font-semibold text-white">{activeTools.length}</span>
+            <span className="text-xs text-muted-foreground">Active Tools:</span>
+            <span className="text-sm font-semibold">{activeTools.length}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs text-neutral-450">Created:</span>
-            <span className="text-sm font-semibold text-white">{format(new Date(server.createdAt), 'MMM d, yyyy')}</span>
+            <span className="text-xs text-muted-foreground">Created:</span>
+            <span className="text-sm font-semibold">{format(new Date(server.createdAt), 'MMM d, yyyy')}</span>
           </div>
         </div>
         
         {server.connections.length > 0 && (
           <div className="p-4 flex flex-col gap-3">
-            <span className="text-xs text-neutral-400 font-medium">Linked Connections</span>
+            <span className="text-xs text-muted-foreground font-medium">Linked Connections</span>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {(server.connections ?? []).filter(c => c.isActive).map((conn) => {
                 let stats = { layouts: 0, tables: 0, scripts: 0, relationships: 0 }
@@ -426,17 +426,15 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                 }
                 
                 return (
-                  <div key={conn.connection.id} className="flex flex-col gap-2.5 bg-white/[0.01] border border-white/[0.05] hover:border-white/10 transition-colors rounded-lg p-3">
+                  <div key={conn.connection.id} className="flex flex-col gap-2.5 bg-muted/30 border hover:border-foreground/10 transition-colors rounded-lg p-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 min-w-0">
                         <Link2 className="size-4 text-blue-400 shrink-0" />
-                        <span className="font-semibold text-sm text-neutral-200 truncate">{conn.connection.name}</span>
+                        <span className="font-semibold text-sm truncate">{conn.connection.name}</span>
                       </div>
-                      <Badge variant="outline" className="text-[10px] py-0 border-white/5 bg-white/[0.02] font-mono">
-                        {conn.connection.database}
-                      </Badge>
+                      <Badge variant="outline" className="text-[10px] py-0 font-mono">{conn.connection.database}</Badge>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-neutral-450 flex-wrap">
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
                       <span title="Layouts">{stats.layouts} L</span>
                       <span title="OData Tables">{stats.tables} T</span>
                       <span title="Scripts">{stats.scripts} S</span>
@@ -453,16 +451,16 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
       {/* Mode Tabs */}
       <Tabs value={serverMode} onValueChange={(v) => setServerMode(v as typeof serverMode)}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <TabsList className="bg-white/[0.02] border border-white/5 p-1 rounded-lg">
-            <TabsTrigger value="edit" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
+          <TabsList className="border p-1 rounded-lg">
+            <TabsTrigger value="edit" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
               <Pencil className="size-3.5 mr-1.5" />
               Edit
             </TabsTrigger>
-            <TabsTrigger value="staging" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
+            <TabsTrigger value="staging" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
               <Eye className="size-3.5 mr-1.5" />
               Staging
             </TabsTrigger>
-            <TabsTrigger value="deployed" className="data-[state=active]:bg-white/5 data-[state=active]:text-white text-neutral-400 transition-all">
+            <TabsTrigger value="deployed" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
               <Rocket className="size-3.5 mr-1.5" />
               Deployed
             </TabsTrigger>
@@ -494,7 +492,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
               <Button
                 size="sm"
                 variant="outline"
-                className="border-white/10 hover:bg-white/5 text-neutral-300 hover:text-white gap-1.5"
+                className="gap-1.5"
                 onClick={() => setShowBranchDialog(true)}
               >
                 <GitBranch className="size-3.5" />
@@ -508,14 +506,14 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
         <TabsContent value="edit" className="mt-4">
           <div className="grid lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-4">
-              <Card className="border-white/10 bg-white/[0.02]">
-                <CardHeader className="pb-3 border-b border-white/[0.05]">
+              <Card>
+                <CardHeader className="pb-3 border-b">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <CardTitle className="text-sm font-semibold text-white">
+                    <CardTitle className="text-sm font-semibold text-foreground">
                       Tools ({branchTools.length} total, {activeTools.length} active)
                     </CardTitle>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Button variant="outline" size="sm" className="border-white/10 hover:bg-white/5 text-neutral-350 hover:text-white" onClick={() => setShowAiPromptDialog(true)}>
+                      <Button variant="outline" size="sm" onClick={() => setShowAiPromptDialog(true)}>
                         <Sparkles className="size-3.5 mr-1.5 text-violet-400" />
                         AI Assistant
                       </Button>
@@ -539,9 +537,9 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                 <CardContent className="max-h-[500px] overflow-y-auto pt-4 space-y-1">
                   {branchTools.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16 text-center">
-                      <Wrench className="size-10 text-neutral-600 mb-3" />
-                      <p className="text-sm font-semibold text-neutral-450">No tools configured yet</p>
-                      <p className="text-xs text-neutral-500 mt-1">Add tools manually or use the AI Assistant</p>
+                      <Wrench className="size-10 text-muted-foreground mb-3" />
+                      <p className="text-sm font-semibold text-muted-foreground">No tools configured yet</p>
+                      <p className="text-xs text-muted-foreground/70 mt-1">Add tools manually or use the AI Assistant</p>
                     </div>
                   ) : (
                     <div className="space-y-1">
@@ -566,14 +564,14 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
 
             {/* Branch Sidebar */}
             <div className="space-y-4">
-              <Card className="border-white/10 bg-white/[0.02]">
-                <CardHeader className="pb-3 border-b border-white/[0.05]">
+              <Card>
+                <CardHeader className="pb-3 border-b">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-semibold text-white flex items-center gap-2">
+                    <CardTitle className="text-sm font-semibold text-foreground flex items-center gap-2">
                       <GitBranch className="size-4 text-blue-400" />
                       Branches
                     </CardTitle>
-                    <Button variant="outline" size="sm" className="h-7 px-2 border-white/10 hover:bg-white/5 text-neutral-300 hover:text-white" onClick={() => setShowBranchDialog(true)}>
+                    <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => setShowBranchDialog(true)}>
                       <Plus className="size-3.5 mr-1" />
                       New
                     </Button>
@@ -581,7 +579,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                 </CardHeader>
                 <CardContent className="p-3 max-h-[400px] overflow-y-auto space-y-2.5">
                   {server.branches.length === 0 ? (
-                    <p className="text-xs text-neutral-500 text-center py-6">No branches available</p>
+                    <p className="text-xs text-muted-foreground text-center py-6">No branches available</p>
                   ) : (
                     server.branches.map(branch => {
                       const isSelected = branch.id === currentBranchId
@@ -591,14 +589,14 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                           className={`group/branch flex flex-col p-3 rounded-xl border transition-all duration-200 cursor-pointer ${
                             isSelected 
                               ? 'bg-blue-500/5 border-blue-500/30 shadow-sm shadow-blue-500/5' 
-                              : 'bg-white/[0.01] border-white/[0.05] hover:bg-white/[0.03] hover:border-white/10'
+                              : 'bg-card border hover:bg-muted/50 hover:border-foreground/10'
                           }`}
                           onClick={() => setCurrentBranch(branch.id)}
                         >
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 min-w-0">
-                              <GitBranch className={`size-3.5 shrink-0 ${isSelected ? 'text-blue-400' : 'text-neutral-400'}`} />
-                              <span className={`text-sm font-semibold truncate ${isSelected ? 'text-white' : 'text-neutral-300'}`}>
+                              <GitBranch className={`size-3.5 shrink-0 ${isSelected ? 'text-blue-400' : 'text-muted-foreground'}`} />
+                              <span className={`text-sm font-semibold truncate ${isSelected ? 'text-foreground' : 'text-muted-foreground'}`}>
                                 {branch.name}
                               </span>
                               {branch.isDefault && (
@@ -611,13 +609,13 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                           </div>
                           
                           {branch.commitMessage && (
-                            <p className="text-[11px] text-neutral-400 mt-1 line-clamp-2 italic">
+                            <p className="text-[11px] text-muted-foreground mt-1 line-clamp-2 italic">
                               &ldquo;{branch.commitMessage}&rdquo;
                             </p>
                           )}
                           
-                          <div className="flex items-center justify-between mt-2.5 pt-2 border-t border-white/[0.04]">
-                            <span className="text-[10px] text-neutral-500">
+                          <div className="flex items-center justify-between mt-2.5 pt-2 border-t">
+                            <span className="text-[10px] text-muted-foreground">
                               {branch.createdAt ? format(new Date(branch.createdAt), 'MMM d, yyyy') : ''}
                             </span>
                             
@@ -627,7 +625,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="size-6 rounded hover:bg-blue-500/10 hover:text-blue-400 text-neutral-400"
+                                  className="size-6 rounded hover:bg-blue-500/10 hover:text-blue-400 text-muted-foreground"
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     if (confirm(`Merge branch "${branch.name}" into production?`)) {
@@ -642,7 +640,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="size-6 rounded hover:bg-orange-500/10 hover:text-orange-400 text-neutral-400"
+                                  className="size-6 rounded hover:bg-orange-500/10 hover:text-orange-400 text-muted-foreground"
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     archiveMutation.mutate(branch.id)
@@ -655,7 +653,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="size-6 rounded hover:bg-red-500/10 hover:text-red-400 text-neutral-400"
+                                  className="size-6 rounded hover:bg-red-500/10 hover:text-red-400 text-muted-foreground"
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     if (confirm(`Are you sure you want to delete branch "${branch.name}"?`)) {
@@ -683,10 +681,10 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
         {/* Staging Mode */}
         <TabsContent value="staging" className="mt-4">
           <div className="space-y-4">
-            <Card className="border-white/10 bg-white/[0.02]">
-              <CardHeader className="pb-3 border-b border-white/[0.05]">
+            <Card>
+              <CardHeader className="pb-3 border-b">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold text-white">Tools Preview (Staging)</CardTitle>
+                  <CardTitle className="text-sm font-semibold text-foreground">Tools Preview (Staging)</CardTitle>
                   <Badge variant="outline" className="bg-yellow-500/15 text-yellow-500 border-yellow-500/20">
                     Read-Only Preview
                   </Badge>
@@ -695,8 +693,8 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
               <CardContent className="max-h-96 overflow-y-auto pt-4 space-y-1">
                 {branchTools.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Wrench className="size-10 text-neutral-600 mb-3" />
-                    <p className="text-sm text-neutral-450">No tools to preview</p>
+                    <Wrench className="size-10 text-muted-foreground/50 mb-3" />
+                    <p className="text-sm text-muted-foreground">No tools to preview</p>
                   </div>
                 ) : (
                   <div className="space-y-1">
@@ -709,21 +707,21 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
             </Card>
 
             {lastDeployment && (
-              <Card className="border-white/10 bg-white/[0.02]">
-                <CardHeader className="pb-3 border-b border-white/[0.05]">
-                  <CardTitle className="text-sm font-semibold text-white">Comparison with Current Deployment</CardTitle>
+              <Card>
+                <CardHeader className="pb-3 border-b">
+                  <CardTitle className="text-sm font-semibold text-foreground">Comparison with Current Deployment</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-4">
                   <div className="grid sm:grid-cols-2 gap-4">
-                    <div className="space-y-1 bg-white/[0.01] border border-white/5 rounded-xl p-3.5">
-                      <span className="text-xs text-neutral-400 block">Current Deployment</span>
-                      <p className="text-sm font-bold text-white">v{lastDeployment.version}</p>
-                      <p className="text-xs text-neutral-500">{lastDeployment.toolCount} tools active</p>
+                    <div className="space-y-1 bg-muted/30 border rounded-xl p-3.5">
+                      <span className="text-xs text-muted-foreground block">Current Deployment</span>
+                      <p className="text-sm font-bold text-foreground">v{lastDeployment.version}</p>
+                      <p className="text-xs text-muted-foreground">{lastDeployment.toolCount} tools active</p>
                     </div>
-                    <div className="space-y-1 bg-white/[0.01] border border-white/5 rounded-xl p-3.5">
-                      <span className="text-xs text-neutral-400 block">Staging Version</span>
-                      <p className="text-sm font-bold text-white">{activeTools.length} tools</p>
-                      <p className="text-xs text-neutral-500">
+                    <div className="space-y-1 bg-muted/30 border rounded-xl p-3.5">
+                      <span className="text-xs text-muted-foreground block">Staging Version</span>
+                      <p className="text-sm font-bold text-foreground">{activeTools.length} tools</p>
+                      <p className="text-xs text-muted-foreground">
                         {activeTools.length !== lastDeployment.toolCount
                           ? `${Math.abs(activeTools.length - lastDeployment.toolCount)} tool difference`
                           : 'Same tool count'}
@@ -740,10 +738,10 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
         {/* Deployed Mode */}
         <TabsContent value="deployed" className="mt-4">
           <div className="space-y-4">
-            <Card className="border-white/10 bg-white/[0.02]">
-              <CardHeader className="pb-3 border-b border-white/[0.05]">
+            <Card>
+              <CardHeader className="pb-3 border-b">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-sm font-semibold text-white">Deployed Tools</CardTitle>
+                  <CardTitle className="text-sm font-semibold text-foreground">Deployed Tools</CardTitle>
                   <Badge variant="outline" className="bg-emerald-500/15 text-emerald-400 border-emerald-500/20">
                     Production
                   </Badge>
@@ -761,17 +759,17 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                   
                   return (
                     <>
-                      <div className="flex items-center gap-3 mb-4 text-sm text-neutral-450 px-1 bg-white/[0.01] border border-white/5 p-2 rounded-lg">
+                      <div className="flex items-center gap-3 mb-4 text-sm text-muted-foreground px-1 bg-muted/30 border p-2 rounded-lg">
                         <Clock className="size-4 text-blue-400" />
                         <span>
-                          Version <strong className="text-white font-mono">v{lastDeployment.version}</strong> — Deployed{' '}
+                          Version <strong className="text-foreground font-mono">v{lastDeployment.version}</strong> — Deployed{' '}
                           {lastDeployment.deployedAt 
                             ? format(new Date(lastDeployment.deployedAt), 'MMM d, yyyy HH:mm') 
                             : 'recently'}
                         </span>
                       </div>
                       {snapshotTools.length === 0 ? (
-                        <p className="text-xs text-neutral-500 py-4 text-center">No tools found in deployment snapshot</p>
+                        <p className="text-xs text-muted-foreground py-4 text-center">No tools found in deployment snapshot</p>
                       ) : (
                         <div className="space-y-2">
                           {snapshotTools.map(tool => (
@@ -783,9 +781,9 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                   );
                 })() : (
                   <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <Rocket className="size-10 text-neutral-600 mb-3" />
-                    <p className="text-sm font-semibold text-neutral-450">No deployments yet</p>
-                    <p className="text-xs text-neutral-550 mt-1">Deploy from staging to see production tools here</p>
+                    <Rocket className="size-10 text-muted-foreground/50 mb-3" />
+                    <p className="text-sm font-semibold text-muted-foreground">No deployments yet</p>
+                    <p className="text-xs text-muted-foreground/75 mt-1">Deploy from staging to see production tools here</p>
                   </div>
                 )}
               </CardContent>
@@ -793,17 +791,17 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
 
             {/* Deployment History */}
             {server.deployments.length > 0 && (
-              <Card className="border-white/10 bg-white/[0.02]">
-                <CardHeader className="pb-3 border-b border-white/[0.05]">
-                  <CardTitle className="text-sm font-semibold text-white">Deployment History</CardTitle>
+              <Card>
+                <CardHeader className="pb-3 border-b">
+                  <CardTitle className="text-sm font-semibold text-foreground">Deployment History</CardTitle>
                 </CardHeader>
                 <CardContent className="max-h-64 overflow-y-auto pt-2">
-                  <div className="divide-y divide-white/[0.04]">
+                  <div className="divide-y">
                     {server.deployments.map((deployment, index) => (
-                      <div key={deployment.id} className="flex items-center justify-between py-3 hover:bg-white/[0.01] px-2 rounded-lg transition-colors">
+                      <div key={deployment.id} className="flex items-center justify-between py-3 hover:bg-muted/30 px-2 rounded-lg transition-colors">
                         <div className="space-y-1 min-w-0 flex-1 pr-4">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-bold text-white font-mono">v{deployment.version}</span>
+                            <span className="text-sm font-bold text-foreground font-mono font-bold">v{deployment.version}</span>
                             <StatusBadge status={deployment.status} />
                             {index === 0 && (
                               <Badge className="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] font-bold">
@@ -812,11 +810,11 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                             )}
                           </div>
                           {deployment.changelog && (
-                            <p className="text-xs text-neutral-450 line-clamp-1 italic">
+                            <p className="text-xs text-muted-foreground line-clamp-1 italic">
                               &ldquo;{deployment.changelog}&rdquo;
                             </p>
                           )}
-                          <div className="flex items-center gap-2 text-[10px] text-neutral-500">
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                             <span>
                               Deployed{' '}
                               {deployment.deployedAt
@@ -830,7 +828,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="size-7 rounded-md border border-white/5 hover:border-orange-500/30 hover:bg-orange-500/10 text-neutral-450 hover:text-orange-400 transition-all"
+                              className="size-7 rounded-md border hover:border-orange-500/30 hover:bg-orange-500/10 text-muted-foreground hover:text-orange-400 transition-all"
                               onClick={() => {
                                 if (confirm(`Are you sure you want to roll back to version v${deployment.version}?`)) {
                                   rollbackMutation.mutate(deployment.id)
