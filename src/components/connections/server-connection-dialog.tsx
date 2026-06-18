@@ -111,65 +111,65 @@ export function ServerConnectionDialog({ isOpen, onClose, onSaved, existingServe
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg bg-[#0f1117] border border-white/10 text-white">
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg font-semibold">
             <Server className="w-5 h-5 text-blue-400" />
             {isEditing ? 'Edit FM Server' : 'Add FM Server'}
           </DialogTitle>
-          <p className="text-sm text-white/50 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Admin credentials for listing hosted databases. Not used for record-level access.
           </p>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <Label className="text-white/80 text-xs">Server Name *</Label>
+            <Label className="text-xs">Server Name *</Label>
             <Input
               id="sc-name"
               placeholder="e.g. Production FM Server"
               value={form.name}
               onChange={(e) => set('name', e.target.value)}
-              className="bg-white/5 border-white/10 text-white placeholder:text-white/30 h-9"
+              className="h-9"
             />
           </div>
 
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2 space-y-1.5">
-              <Label className="text-white/80 text-xs">Host / IP *</Label>
+              <Label className="text-xs">Host / IP *</Label>
               <Input
                 id="sc-host"
                 placeholder="192.168.1.100 or fm.example.com"
                 value={form.host}
                 onChange={(e) => set('host', e.target.value)}
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 h-9"
+                className="h-9"
               />
             </div>
             <div className="space-y-1.5">
-              <Label className="text-white/80 text-xs">Port</Label>
+              <Label className="text-xs">Port</Label>
               <Input
                 id="sc-port"
                 type="number"
                 value={form.port}
                 onChange={(e) => set('port', parseInt(e.target.value) || 443)}
-                className="bg-white/5 border-white/10 text-white h-9"
+                className="h-9"
               />
             </div>
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-white/80 text-xs">Admin Username *</Label>
+            <Label className="text-xs">Admin Username *</Label>
             <Input
               id="sc-user"
               placeholder="Admin"
               value={form.adminUsername}
               onChange={(e) => set('adminUsername', e.target.value)}
-              className="bg-white/5 border-white/10 text-white placeholder:text-white/30 h-9"
+              className="h-9"
             />
           </div>
 
           <div className="space-y-1.5">
-            <Label className="text-white/80 text-xs">Admin Password {isEditing ? '(leave blank to keep current)' : '*'}</Label>
+            <Label className="text-xs">Admin Password {isEditing ? '(leave blank to keep current)' : '*'}</Label>
             <div className="relative">
               <Input
                 id="sc-pw"
@@ -177,12 +177,12 @@ export function ServerConnectionDialog({ isOpen, onClose, onSaved, existingServe
                 placeholder={isEditing ? '••••••••' : 'Enter admin password'}
                 value={form.adminPassword}
                 onChange={(e) => set('adminPassword', e.target.value)}
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 h-9 pr-10"
+                className="h-9 pr-10"
               />
               <button
                 type="button"
                 onClick={() => setShowPw(!showPw)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/80"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -195,7 +195,7 @@ export function ServerConnectionDialog({ isOpen, onClose, onSaved, existingServe
               checked={form.sslVerify}
               onCheckedChange={(v) => set('sslVerify', v)}
             />
-            <Label htmlFor="sc-ssl" className="text-white/70 text-sm cursor-pointer">Verify SSL Certificate</Label>
+            <Label htmlFor="sc-ssl" className="text-sm cursor-pointer">Verify SSL Certificate</Label>
           </div>
 
           {error && (
@@ -218,7 +218,7 @@ export function ServerConnectionDialog({ isOpen, onClose, onSaved, existingServe
         </div>
 
         <DialogFooter className="gap-2">
-          <Button variant="ghost" onClick={onClose} className="text-white/60 hover:text-white">
+          <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           {!isEditing && (

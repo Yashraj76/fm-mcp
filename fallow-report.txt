@@ -1,0 +1,1055 @@
+── Unused Code ─────────────────────────────────────
+
+● Unused files (12)
+  scratch/list-servers.ts
+  scripts/import-final.ts
+  scripts/import-rest-prisma.ts
+  scripts/import-rest.ts
+  scripts/migrate-to-supabase.ts
+  scripts/split-sql.ts
+  src/components/connections/schema-explorer.tsx
+  src/components/tools/ai-suggest-dialog.tsx
+  src/components/tools/field-mapper.tsx
+  src/lib/db/ownership.ts
+  ... and 2 more (--format json for full list)
+  Files not reachable from any entry point — https://docs.fallow.tools/explanations/dead-code#unused-files
+  To suppress: // fallow-ignore-next-line unused-files
+
+● Unused exports (12)
+  src/lib/utils/dto.ts (4)
+    :24 toSafeServerConnection
+    :66 toSafeConnection
+    :260 toSafeDeployment
+    :305 toSafeAppSettings
+  src/lib/utils/api-client.ts (2)
+    :1 ApiError
+    :15 apiFetch
+  src/components/tools/schema-builder.tsx
+    :390 parseJsonSchema
+  src/lib/db/user-scoped.ts
+    :55 listFMConnections
+  src/lib/logging/logger.ts
+    :72 logAwait
+  src/lib/tools/job-runner.ts
+    :117 mapStrategy
+  src/lib/utils/api-response.ts
+    :32 apiUnauthorized
+  src/lib/utils/version.ts
+    :10 incrementMinorVersion
+  Exported symbols with no known consumers — https://docs.fallow.tools/explanations/dead-code#unused-exports
+  To auto-fix: fallow fix --dry-run
+  To suppress: // fallow-ignore-next-line unused-exports
+
+● Unused type exports (2)
+  src/lib/filemaker/executor.ts
+    :7 ToolHandlerConfig
+  src/lib/logging/logger.ts
+    :33 LogAction
+  Type exports with no known consumers — https://docs.fallow.tools/explanations/dead-code#unused-types
+
+● Unused class members (3)
+  src/lib/filemaker/client.ts (3)
+    :116 FileMakerClient.getLayouts
+    :120 FileMakerClient.getLayoutMetadata
+    :124 FileMakerClient.getScripts
+  Class methods or properties never referenced outside their class — https://docs.fallow.tools/explanations/dead-code#unused-class-members
+  To suppress: // fallow-ignore-next-line unused-class-members
+
+── Dependencies ─────────────────────────────────────
+
+● Unused dependencies (18)
+  @dnd-kit/core
+  @dnd-kit/sortable
+  @dnd-kit/utilities
+  @hookform/resolvers
+  @mdxeditor/editor
+  @reactuses/core
+  @tanstack/react-table
+  @upstash/redis
+  fast-xml-parser
+  framer-motion
+  ... and 8 more (--format json for full list)
+  Listed in dependencies but never imported — https://docs.fallow.tools/explanations/dead-code#unused-dependencies
+  To suppress: // fallow-ignore-next-line unused-dependencies
+
+● Unused devDependencies (1)
+  ts-morph
+  Listed in devDependencies but never imported or referenced — https://docs.fallow.tools/explanations/dead-code#unused-dependencies
+
+● Unlisted dependencies (2)
+  @libsql/client
+  dotenv
+  Packages imported in code but missing from package.json — https://docs.fallow.tools/explanations/dead-code#unlisted-dependencies
+
+● Test-only production dependencies (consider moving to devDependencies) (1)
+  tailwindcss-animate
+
+● Duplicates (60 clone groups)
+
+     47 lines  2 instances  dup:89d79ee0
+    src/components/branches/branches-page.tsx:354-394
+    src/components/deployments/deployments-page.tsx:149-195
+
+     36 lines  2 instances  dup:6d44e97b
+    src/app/(auth)/forgot-password/page.tsx:27-53
+    src/app/(auth)/signup/page.tsx:41-76
+
+     34 lines  2 instances  dup:df45c7ca
+    src/components/tools/tools-page.tsx:564-597
+    src/components/tools/tools-page.tsx:702-729
+
+     33 lines  2 instances  dup:e6e612b8
+    src/app/(auth)/signup/page.tsx:44-76
+    src/app/(auth)/update-password/page.tsx:37-63
+
+     32 lines  2 instances  dup:d035b040
+    src/app/api/branches/[id]/tools/[toolId]/route.ts:68-89
+    src/app/api/branches/[id]/tools/route.ts:67-98
+
+     30 lines  2 instances  dup:72c71f59
+    src/app/(auth)/signup/page.tsx:90-119
+    src/app/(auth)/update-password/page.tsx:63-91
+
+     24 lines  2 instances  dup:6565ae1a
+    src/lib/filemaker/odata-executor.ts:80-103
+    src/lib/filemaker/odata-executor.ts:128-151
+
+     23 lines  2 instances  dup:54142813
+    src/app/api/connections/[id]/layout-fields/route.ts:17-39
+    src/app/api/connections/[id]/schema/route.ts:10-20
+
+     21 lines  3 instances  dup:97ae8d00
+    src/app/(auth)/forgot-password/page.tsx:53-73
+    src/app/(auth)/login/page.tsx:69-85
+    src/app/(auth)/signup/page.tsx:76-92
+
+     21 lines  2 instances  dup:83ac8a91
+    src/app/api/settings/route.ts:26-43
+    src/app/api/settings/route.ts:76-96
+
+  ... and 50 more clone groups
+  Identical code blocks detected via suffix-array analysis — https://docs.fallow.tools/explanations/duplication#clone-groups
+
+● Clone families (11 with multiple groups)
+
+  5 groups, 103 lines across src/components/branches/branches-page.tsx, src/components/deployments/deployments-page.tsx
+    → Extract 5 shared clone groups (103 lines) from branches-page.tsx, deployments-page.tsx into a shared directory
+
+  4 groups, 77 lines across src/components/tools/tools-page.tsx
+    → Extract 4 shared clone groups (77 lines) from tools-page.tsx into src/components/tools
+
+  2 groups, 63 lines across src/app/(auth)/signup/page.tsx, src/app/(auth)/update-password/page.tsx
+    → Extract 2 shared clone groups (63 lines) from page.tsx, page.tsx into a shared directory
+
+  3 groups, 52 lines across src/app/api/branches/[id]/tools/[toolId]/route.ts, src/app/api/branches/[id]/tools/route.ts
+    → Extract 3 shared clone groups (52 lines) from route.ts, route.ts into a shared directory
+
+  3 groups, 49 lines across src/lib/filemaker/odata-executor.ts
+    → Extract shared function (15 lines) from odata-executor.ts, odata-executor.ts
+    → Extract shared function (24 lines) from odata-executor.ts, odata-executor.ts
+    → Extract shared function (10 lines) from odata-executor.ts, odata-executor.ts, odata-executor.ts
+
+  2 groups, 29 lines across src/app/api/connections/[id]/infer-relationships/route.ts
+    → Extract shared function (12 lines) from route.ts, route.ts, route.ts
+    → Extract shared function (17 lines) from route.ts, route.ts
+
+  2 groups, 29 lines across src/app/api/servers/[id]/route.ts, src/app/api/servers/route.ts
+    → Extract shared function (12 lines) from route.ts, route.ts
+    → Extract shared function (17 lines) from route.ts, route.ts
+
+  2 groups, 27 lines across src/components/servers/server-detail-page.tsx, src/components/tools/tools-page.tsx
+    → Extract shared function (12 lines) from server-detail-page.tsx, tools-page.tsx
+    → Extract shared function (15 lines) from server-detail-page.tsx, tools-page.tsx
+
+  2 groups, 26 lines across src/app/api/connections/[id]/schema/ai-relationships/route.ts
+    → Extract shared function (11 lines) from route.ts, route.ts
+    → Extract shared function (15 lines) from route.ts, route.ts
+
+  2 groups, 24 lines across src/app/api/servers/[id]/branches/route.ts, src/app/api/servers/[id]/logs/route.ts
+    → Extract shared function (15 lines) from route.ts, route.ts
+    → Extract shared function (9 lines) from route.ts, route.ts
+
+  ... and 1 more families
+
+  Groups of related clones across the same files — https://docs.fallow.tools/explanations/duplication#clone-families
+
+■ Metrics: 24,814 LOC · dead files 7.4% · dead exports 5.0% · avg cyclomatic 2.9 · p90 cyclomatic 7 · maintainability 88.4 (good) · 17 unused deps
+
+  Function size: 80% low · 8% medium · 6% high · 7% very high  (1-15 / 16-30 / 31-60 / >60 LOC)
+
+● Large functions (10 shown, 97 total)
+  src/components/tools/tool-dialog.tsx
+    :122 ToolDialog  1033 lines
+  src/components/servers/server-detail-page.tsx
+    :174 ServerDetailPage  703 lines
+  src/components/connections/schema-browser.tsx
+    :47 SchemaBrowser  621 lines
+  src/components/branches/branches-page.tsx
+    :256 BranchesPage  485 lines
+  src/components/tools/tools-page.tsx
+    :88 ToolsPage  426 lines
+  src/components/ai/ai-assistant-dialog.tsx
+    :83 AiAssistantDialog  414 lines
+  src/components/connections/connection-dialog.tsx
+    :55 ConnectionDialog  412 lines
+  src/components/ai/ai-prompt-tool-dialog.tsx
+    :67 AiPromptToolDialog  398 lines
+  src/components/connections/connections-page.tsx
+    :69 ConnectionsPage  397 lines
+  src/components/tools/tool-playground.tsx
+    :180 ToolPlaygroundContent  395 lines
+  Functions exceeding 60 lines of code (very high risk): https://docs.fallow.tools/explanations/health#unit-size
+  use --top 97 to see all
+
+● High complexity functions (216)
+  CRAP scores are estimated from export references; run `fallow health --coverage <coverage-final.json>` for exact scores.
+  src/lib/tools/normalize-tool.ts
+    :71 normalizeTool CRITICAL
+          65 cyclomatic   57 cognitive  125 lines
+         4290.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :122 ToolDialog CRITICAL
+          49 cyclomatic   48 cognitive  1033 lines
+         2450.0 CRAP
+  src/components/connections/connection-dialog.tsx
+    :55 ConnectionDialog CRITICAL
+          47 cyclomatic   44 cognitive  412 lines
+         2256.0 CRAP
+  src/components/tools/multi-table-builder.tsx
+    :163 StepEditor CRITICAL
+          45 cyclomatic   33 cognitive  311 lines
+         2070.0 CRAP
+  src/lib/tools/executor-service.ts
+    :93 executeMultiStepTool CRITICAL
+          41 cyclomatic   67 cognitive  148 lines
+         1722.0 CRAP
+  src/components/servers/config-dialog.tsx
+    :94 ConfigDialog CRITICAL
+          40 cyclomatic   37 cognitive  293 lines
+         1640.0 CRAP
+  src/components/connections/schema-browser.tsx
+    :47 SchemaBrowser CRITICAL
+          36 cyclomatic   33 cognitive  621 lines
+         1332.0 CRAP
+  src/lib/tools/executor-service.ts
+    :15 executeSingleStepTool CRITICAL
+          34 cyclomatic   35 cognitive   74 lines
+         1190.0 CRAP
+  src/app/api/servers/[id]/ai/generate-server-tools/route.ts
+    :34 POST CRITICAL
+          33 cyclomatic   40 cognitive  191 lines
+         1122.0 CRAP
+  src/app/api/servers/[id]/ai/generate-tool/route.ts
+    :16 POST CRITICAL
+          32 cyclomatic   32 cognitive  221 lines
+         1056.0 CRAP
+  src/app/api/connections/[id]/schema/ai-relationships/route.ts
+    :24 detectRelationships CRITICAL
+          31 cyclomatic   60 cognitive  133 lines
+         992.0 CRAP
+  src/components/settings/settings-page.tsx
+    :262 SettingsPage CRITICAL
+          31 cyclomatic   27 cognitive  340 lines
+         992.0 CRAP
+  src/components/dashboard/dashboard-page.tsx
+    :98 DashboardPage CRITICAL
+          30 cyclomatic   19 cognitive  276 lines
+         930.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :254 <arrow> CRITICAL
+          28 cyclomatic   21 cognitive   33 lines
+         812.0 CRAP
+  src/components/ai/ai-prompt-tool-dialog.tsx
+    :67 AiPromptToolDialog CRITICAL
+          27 cyclomatic   24 cognitive  398 lines
+         756.0 CRAP
+  src/components/branches/branches-page.tsx
+    :256 BranchesPage CRITICAL
+          26 cyclomatic   31 cognitive  485 lines
+         702.0 CRAP
+  src/components/ai/ai-assistant-dialog.tsx
+    :117 mutationFn CRITICAL
+          25 cyclomatic   17 cognitive   40 lines
+         650.0 CRAP
+  src/components/branches/branches-page.tsx
+    :104 LogTimelineItem CRITICAL
+          24 cyclomatic   28 cognitive  151 lines
+         600.0 CRAP
+  src/app/api/connections/[id]/infer-relationships/route.ts
+    :10 POST CRITICAL
+          22 cyclomatic   21 cognitive  136 lines
+         506.0 CRAP
+  src/app/api/logs/route.ts
+    :5 GET CRITICAL
+          21 cyclomatic   24 cognitive   68 lines
+         462.0 CRAP
+  src/components/ai/ai-suggestion-card.tsx
+    :50 AiSuggestionCard CRITICAL
+          21 cyclomatic   19 cognitive  156 lines
+         462.0 CRAP
+  src/lib/tools/validate-tool.ts
+    :12 validateToolForSave CRITICAL
+          21 cyclomatic   23 cognitive   59 lines
+         462.0 CRAP
+  src/app/api/servers/[id]/generate-tools/save/route.ts
+    :10 POST CRITICAL
+          20 cyclomatic   24 cognitive  106 lines
+         420.0 CRAP
+  src/components/servers/server-detail-page.tsx
+    :174 ServerDetailPage CRITICAL
+          20 cyclomatic   18 cognitive  703 lines
+         420.0 CRAP
+  src/app/api/connections/[id]/schema/ai-relationships/route.ts
+    :158 POST CRITICAL
+          19 cyclomatic   19 cognitive   94 lines
+         380.0 CRAP
+  src/app/api/servers/[id]/ai/generate-from-prompt/route.ts
+    :19 POST CRITICAL
+          19 cyclomatic   17 cognitive  146 lines
+         380.0 CRAP
+  src/components/tools/response-table.tsx
+    :5 ResponseTable CRITICAL
+          18 cyclomatic   16 cognitive  125 lines
+         342.0 CRAP
+  src/components/tools/tool-playground.tsx
+    :180 ToolPlaygroundContent CRITICAL
+          18 cyclomatic   22 cognitive  395 lines
+         342.0 CRAP
+  src/app/api/branches/[id]/tools/[toolId]/route.ts
+    :49 PUT CRITICAL
+          17 cyclomatic   18 cognitive   80 lines
+         306.0 CRAP
+  src/components/tools/tools-page.tsx
+    :88 ToolsPage CRITICAL
+          17 cyclomatic   26 cognitive  426 lines
+         306.0 CRAP
+  src/components/connections/database-picker.tsx
+    :21 DatabasePicker CRITICAL
+          17 cyclomatic   13 cognitive  261 lines
+         306.0 CRAP
+  src/lib/filemaker/odata-executor.ts
+    :62 executeODataFilter CRITICAL
+          17 cyclomatic   13 cognitive   44 lines
+         306.0 CRAP
+  src/lib/filemaker/multi-executor.ts
+    :34 <arrow> CRITICAL
+          16 cyclomatic   26 cognitive   61 lines
+         272.0 CRAP
+  src/app/api/servers/[id]/ai/suggest/route.ts
+    :20 POST CRITICAL
+          16 cyclomatic   13 cognitive  134 lines
+         272.0 CRAP
+  src/components/connections/server-connection-dialog.tsx
+    :21 ServerConnectionDialog CRITICAL
+          16 cyclomatic   15 cognitive  227 lines
+         272.0 CRAP
+  src/lib/utils/api-client.ts
+    :15 apiFetch CRITICAL
+          16 cyclomatic   15 cognitive   37 lines
+         272.0 CRAP
+  src/lib/filemaker/client.ts
+    :25 fetch CRITICAL
+          16 cyclomatic   14 cognitive   53 lines
+         272.0 CRAP
+  src/components/servers/server-detail-page.tsx
+    :87 ToolRow CRITICAL
+          15 cyclomatic   18 cognitive   82 lines
+         240.0 CRAP
+  src/components/tools/multi-table-builder.tsx
+    :106 getLayoutFields CRITICAL
+          15 cyclomatic   15 cognitive   35 lines
+         240.0 CRAP
+  src/app/api/servers/[id]/tools/[toolId]/execute/route.ts
+    :8 POST CRITICAL
+          15 cyclomatic   15 cognitive  133 lines
+         240.0 CRAP
+  src/components/tools/server-playground.tsx
+    :34 ServerPlayground CRITICAL
+          15 cyclomatic   12 cognitive  248 lines
+         240.0 CRAP
+  src/app/api/branches/[id]/tools/route.ts
+    :55 POST CRITICAL
+          15 cyclomatic   14 cognitive   68 lines
+         240.0 CRAP
+  src/app/api/servers/[id]/test-mcp-endpoint/route.ts
+    :5 POST CRITICAL
+          15 cyclomatic   12 cognitive   73 lines
+         240.0 CRAP
+  src/components/settings/settings-page.tsx
+    :92 ApiTokensCard CRITICAL
+          15 cyclomatic   13 cognitive  169 lines
+         240.0 CRAP
+  src/app/api/playground/ai-run/route.ts
+    :12 POST CRITICAL
+          15 cyclomatic   15 cognitive   78 lines
+         240.0 CRAP
+  src/components/servers/server-dialog.tsx
+    :36 ServerDialog CRITICAL
+          14 cyclomatic   17 cognitive  210 lines
+         210.0 CRAP
+  src/app/api/servers/[id]/tools/dry-run/route.ts
+    :11 POST CRITICAL
+          14 cyclomatic   12 cognitive   64 lines
+         210.0 CRAP
+  src/lib/filemaker/odata-executor.ts
+    :109 executeODataExpand CRITICAL
+          14 cyclomatic   10 cognitive   45 lines
+         210.0 CRAP
+  src/app/api/mcp/[serverId]/[transport]/route.ts
+    :84 handler CRITICAL
+          14 cyclomatic   14 cognitive   69 lines
+         210.0 CRAP
+    :38 handleMcpRequest CRITICAL
+          14 cyclomatic   15 cognitive  127 lines
+         210.0 CRAP
+  src/lib/tools/executor-service.ts
+    :245 executeToolWithParams CRITICAL
+          14 cyclomatic   10 cognitive   51 lines
+         210.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :394 <arrow> CRITICAL
+          13 cyclomatic   17 cognitive   21 lines
+         182.0 CRAP
+  src/lib/playground/session-runner.ts
+    :20 runPlaygroundSession CRITICAL
+          13 cyclomatic   16 cognitive   59 lines
+         182.0 CRAP
+    :80 resolveParams CRITICAL
+          13 cyclomatic   30 cognitive   38 lines
+         182.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :484 handleExecuteTest CRITICAL
+          13 cyclomatic   12 cognitive   48 lines
+         182.0 CRAP
+  src/components/tools/tool-playground.tsx
+    :200 <arrow> CRITICAL
+          13 cyclomatic   15 cognitive   38 lines
+         182.0 CRAP
+  src/lib/tools/job-runner.ts
+    :19 runToolGenerationJob CRITICAL
+          13 cyclomatic   10 cognitive   97 lines
+         182.0 CRAP
+  src/app/api/servers/[id]/config/route.ts
+    :8 GET CRITICAL
+          13 cyclomatic   12 cognitive  152 lines
+         182.0 CRAP
+  src/app/api/playground/execute/route.ts
+    :33 result CRITICAL
+          13 cyclomatic    9 cognitive   24 lines
+         182.0 CRAP
+  src/app/api/tools/suggest/route.ts
+    :24 POST CRITICAL
+          13 cyclomatic   13 cognitive   55 lines
+         182.0 CRAP
+  src/app/api/servers/route.ts
+    :59 POST CRITICAL
+          13 cyclomatic   14 cognitive  106 lines
+         182.0 CRAP
+  src/lib/filemaker/odata-executor.ts
+    :157 executeODataBatch CRITICAL
+          12 cyclomatic   24 cognitive   85 lines
+         156.0 CRAP
+  src/app/api/settings/route.ts
+    :45 PUT CRITICAL
+          12 cyclomatic   13 cognitive   53 lines
+         156.0 CRAP
+  src/components/connections/server-connection-dialog.tsx
+    :38 <arrow> CRITICAL
+          12 cyclomatic    6 cognitive   17 lines
+         156.0 CRAP
+  src/components/tools/field-selector.tsx
+    :27 FieldSelector CRITICAL
+          12 cyclomatic   12 cognitive  131 lines
+         156.0 CRAP
+  src/components/servers/server-detail-page.tsx
+    :416 <arrow> CRITICAL
+          12 cyclomatic    7 cognitive   32 lines
+         156.0 CRAP
+  src/app/api/logs/[id]/route.ts
+    :6 GET CRITICAL
+          12 cyclomatic   12 cognitive   41 lines
+         156.0 CRAP
+  src/lib/ai/client.ts
+    :51 callAI CRITICAL
+          12 cyclomatic    7 cognitive   21 lines
+         156.0 CRAP
+  src/app/api/branches/[id]/merge/route.ts
+    :51 result CRITICAL
+          11 cyclomatic   16 cognitive   78 lines
+         132.0 CRAP
+  src/components/ai/ai-assistant-dialog.tsx
+    :83 AiAssistantDialog CRITICAL
+          11 cyclomatic    9 cognitive  414 lines
+         132.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :560 <arrow> CRITICAL
+          11 cyclomatic   14 cognitive   16 lines
+         132.0 CRAP
+  src/components/connections/schema-browser.tsx
+    :78 fetchSchema CRITICAL
+          11 cyclomatic   11 cognitive   42 lines
+         132.0 CRAP
+  src/components/servers/servers-page.tsx
+    :181 <arrow> CRITICAL
+          11 cyclomatic    5 cognitive   87 lines
+         132.0 CRAP
+  src/components/deployments/deployments-page.tsx
+    :86 DeploymentsPage CRITICAL
+          11 cyclomatic   10 cognitive  357 lines
+         132.0 CRAP
+  src/lib/filemaker/executor.ts
+    :120 handleUpdate CRITICAL
+          11 cyclomatic   14 cognitive   25 lines
+         132.0 CRAP
+  src/app/api/servers/[id]/tools/route.ts
+    :87 POST CRITICAL
+          11 cyclomatic   11 cognitive   66 lines
+         132.0 CRAP
+  src/lib/supabase/proxy.ts
+    :4 updateSession CRITICAL
+          11 cyclomatic    5 cognitive   52 lines
+         132.0 CRAP
+  src/components/connections/connection-dialog.tsx
+    :84 <arrow> CRITICAL
+          11 cyclomatic   10 cognitive   15 lines
+         132.0 CRAP
+  src/components/branches/branches-page.tsx
+    :568 <arrow> CRITICAL
+          11 cyclomatic    8 cognitive  126 lines
+         132.0 CRAP
+  src/lib/tools/executor-service.ts
+    :140 clientFiltered CRITICAL
+          10 cyclomatic   18 cognitive   27 lines
+         110.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :427 mutationFn CRITICAL
+          10 cyclomatic   12 cognitive   39 lines
+         110.0 CRAP
+  src/components/tools/tool-playground.tsx
+    :239 handleExecute CRITICAL
+          10 cyclomatic    9 cognitive   71 lines
+         110.0 CRAP
+  src/lib/utils/dto.ts
+    :180 toSafeTool CRITICAL
+          10 cyclomatic   14 cognitive   37 lines
+         110.0 CRAP
+  src/components/tools/multi-table-builder.tsx
+    :94 inferStrategy CRITICAL
+          10 cyclomatic    7 cognitive   10 lines
+         110.0 CRAP
+    :143 getAvailableLayouts CRITICAL
+          10 cyclomatic    8 cognitive   19 lines
+         110.0 CRAP
+  src/app/api/branches/[id]/route.ts
+    :44 PUT CRITICAL
+          10 cyclomatic   10 cognitive   59 lines
+         110.0 CRAP
+  src/components/deployments/deployments-page.tsx
+    :286 <arrow> CRITICAL
+          10 cyclomatic    7 cognitive   90 lines
+         110.0 CRAP
+  src/app/api/servers/[id]/route.ts
+    :80 PUT CRITICAL
+          10 cyclomatic   12 cognitive   72 lines
+         110.0 CRAP
+  src/app/api/server-connections/[id]/route.ts
+    :58 PUT CRITICAL
+          10 cyclomatic   10 cognitive   33 lines
+         110.0 CRAP
+  src/components/settings/settings-page.tsx
+    :332 handleSave CRITICAL
+          10 cyclomatic    9 cognitive   22 lines
+         110.0 CRAP
+  src/components/tools/tools-page.tsx
+    :231 <arrow> CRITICAL
+          10 cyclomatic    6 cognitive   17 lines
+         110.0 CRAP
+  src/components/connections/connection-dialog.tsx
+    :128 validate CRITICAL
+          10 cyclomatic   11 cognitive   14 lines
+         110.0 CRAP
+  src/app/api/servers/[id]/connection-status/route.ts
+    :5 GET CRITICAL
+          10 cyclomatic    7 cognitive   66 lines
+         110.0 CRAP
+  src/app/api/servers/[id]/tools/[toolId]/route.ts
+    :55 PUT CRITICAL
+          10 cyclomatic   11 cognitive   54 lines
+         110.0 CRAP
+  src/app/api/connections/[id]/browse-schema/route.ts
+    :14 fetchODataEntityNames HIGH
+           9 cyclomatic    9 cognitive   33 lines
+          90.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :237 <arrow> HIGH
+           9 cyclomatic   14 cognitive   70 lines
+          90.0 CRAP
+  src/components/tools/odata-filter-builder.tsx
+    :37 ODataFilterBuilder HIGH
+           9 cyclomatic    6 cognitive  234 lines
+          90.0 CRAP
+  src/lib/playground/session-runner.ts
+    :130 buildFinalResult HIGH
+           9 cyclomatic    8 cognitive   23 lines
+          90.0 CRAP
+  src/components/servers/server-detail-page.tsx
+    :586 <arrow> HIGH
+           9 cyclomatic    7 cognitive   90 lines
+          90.0 CRAP
+  src/components/connections/schema-explorer.tsx
+    :99 SchemaExplorerInline HIGH
+           9 cyclomatic    7 cognitive  236 lines
+          90.0 CRAP
+  src/components/servers/auto-generate-preview-dialog.tsx
+    :28 AutoGeneratePreviewDialog HIGH
+           9 cyclomatic    6 cognitive  230 lines
+          90.0 CRAP
+  src/components/tools/ai-suggest-dialog.tsx
+    :30 onSuccess HIGH
+           9 cyclomatic    8 cognitive   27 lines
+          90.0 CRAP
+  src/components/tools/response-table.tsx
+    :94 <arrow> HIGH
+           9 cyclomatic    7 cognitive   31 lines
+          90.0 CRAP
+  src/components/connections/connections-page.tsx
+    :69 ConnectionsPage HIGH
+           9 cyclomatic    6 cognitive  397 lines
+          90.0 CRAP
+  src/lib/logging/logger.ts
+    :72 logAwait HIGH
+           9 cyclomatic    8 cognitive   21 lines
+          90.0 CRAP
+  src/components/ai/ai-assistant-dialog.tsx
+    :499 SchemaCard HIGH
+           8 cyclomatic    5 cognitive   82 lines
+          72.0 CRAP
+  src/components/view-route-sync.tsx
+    :43 <arrow> HIGH
+           8 cyclomatic   10 cognitive   22 lines
+          72.0 CRAP
+  src/components/connections/database-picker.tsx
+    :95 handleTestAndCreate HIGH
+           8 cyclomatic    6 cognitive   35 lines
+          72.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :542 deriveSchema HIGH
+           8 cyclomatic    9 cognitive   11 lines
+          72.0 CRAP
+  src/components/ai/ai-prompt-tool-dialog.tsx
+    :337 <arrow> HIGH
+           8 cyclomatic    7 cognitive   49 lines
+          72.0 CRAP
+  src/components/connections/server-connection-dialog.tsx
+    :88 handleSave HIGH
+           8 cyclomatic    6 cognitive   23 lines
+          72.0 CRAP
+  src/components/tools/multi-table-builder.tsx
+    :475 MultiTableBuilder HIGH
+           8 cyclomatic    3 cognitive  117 lines
+          72.0 CRAP
+  src/components/tools/server-playground.tsx
+    :130 <arrow> HIGH
+           8 cyclomatic    6 cognitive   28 lines
+          72.0 CRAP
+    :232 <arrow> HIGH
+           8 cyclomatic    9 cognitive   22 lines
+          72.0 CRAP
+  src/app/api/deployments/[id]/rollback/route.ts
+    :6 POST HIGH
+           8 cyclomatic    5 cognitive   74 lines
+          72.0 CRAP
+  src/lib/filemaker/executor.ts
+    :18 executeTool HIGH
+           8 cyclomatic    6 cognitive   45 lines
+          72.0 CRAP
+  src/app/api/servers/[id]/deployments/route.ts
+    :58 POST HIGH
+           8 cyclomatic    6 cognitive   81 lines
+          72.0 CRAP
+  src/app/api/connections/[id]/schema/selections/route.ts
+    :49 compiledLayouts HIGH
+           8 cyclomatic    3 cognitive    6 lines
+          72.0 CRAP
+  src/lib/filemaker/odata-executor.ts
+    :245 executeODataTool HIGH
+           8 cyclomatic    4 cognitive   31 lines
+          72.0 CRAP
+  src/lib/ai/client.ts
+    :22 buildModel HIGH
+           8 cyclomatic    3 cognitive   15 lines
+          72.0 CRAP
+  src/app/api/connections/[id]/schema/compiled/route.ts
+    :7 GET HIGH
+           8 cyclomatic    5 cognitive   48 lines
+          72.0 CRAP
+  src/app/api/branches/[id]/revert/route.ts
+    :10 POST HIGH
+           8 cyclomatic    7 cognitive   92 lines
+          72.0 CRAP
+  src/components/tools/tools-page.tsx
+    :186 mutationFn HIGH
+           8 cyclomatic    7 cognitive   15 lines
+          72.0 CRAP
+    :516 ToolCard HIGH
+           8 cyclomatic    7 cognitive  132 lines
+          72.0 CRAP
+  src/app/api/connections/[id]/infer-relationships/route.ts
+    :58 selectedLayouts HIGH
+           8 cyclomatic    4 cognitive   12 lines
+          72.0 CRAP
+  src/app/api/tools/[id]/execute/route.ts
+    :15 POST HIGH
+           8 cyclomatic    9 cognitive   77 lines
+          72.0 CRAP
+  src/lib/logging/logger.ts
+    :50 log HIGH
+           8 cyclomatic    7 cognitive   20 lines
+          72.0 CRAP
+  src/app/api/connections/route.ts
+    :49 POST HIGH
+           8 cyclomatic    9 cognitive   64 lines
+          72.0 CRAP
+  src/app/api/branches/[id]/diff/route.ts
+    :5 GET HIGH
+           8 cyclomatic    9 cognitive   58 lines
+          72.0 CRAP
+  src/app/api/dashboard/route.ts
+    :6 GET HIGH
+           8 cyclomatic    5 cognitive  216 lines
+          72.0 CRAP
+  src/app/api/servers/[id]/logs/route.ts
+    :5 GET HIGH
+           7 cyclomatic    6 cognitive   38 lines
+          56.0 CRAP
+  src/components/ai/ai-assistant-dialog.tsx
+    :393 <arrow> HIGH
+           7 cyclomatic    5 cognitive   51 lines
+          56.0 CRAP
+  src/app/api/branches/[id]/merge/route.ts
+    :7 POST HIGH
+           7 cyclomatic    5 cognitive  151 lines
+          56.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :213 <arrow> HIGH
+           7 cyclomatic    3 cognitive   17 lines
+          56.0 CRAP
+    :205 layoutFields HIGH
+           7 cyclomatic    3 cognitive   27 lines
+          56.0 CRAP
+  src/components/tools/handler-preview.tsx
+    :11 HandlerPreview HIGH
+           7 cyclomatic    6 cognitive   51 lines
+          56.0 CRAP
+  src/components/global-dialogs.tsx
+    :32 GlobalDialogs HIGH
+           7 cyclomatic    6 cognitive   19 lines
+          56.0 CRAP
+  src/app/api/branches/[id]/tools/[toolId]/route.ts
+    :12 GET HIGH
+           7 cyclomatic    4 cognitive   36 lines
+          56.0 CRAP
+    :130 DELETE HIGH
+           7 cyclomatic    5 cognitive   44 lines
+          56.0 CRAP
+  src/lib/mcp/execute-tool.ts
+    :11 executeMcpTool HIGH
+           7 cyclomatic    4 cognitive   20 lines
+          56.0 CRAP
+  src/components/connections/server-connection-dialog.tsx
+    :61 handleTest HIGH
+           7 cyclomatic    5 cognitive   26 lines
+          56.0 CRAP
+  src/components/servers/servers-page.tsx
+    :86 ServersPage HIGH
+           7 cyclomatic    7 cognitive  211 lines
+          56.0 CRAP
+  src/app/api/tools/[id]/route.ts
+    :40 PUT HIGH
+           7 cyclomatic   10 cognitive   40 lines
+          56.0 CRAP
+  src/lib/utils/dto.ts
+    :111 toSafeServer HIGH
+           7 cyclomatic    6 cognitive   27 lines
+          56.0 CRAP
+    :260 toSafeDeployment HIGH
+           7 cyclomatic    7 cognitive   32 lines
+          56.0 CRAP
+  src/lib/filemaker/executor.ts
+    :44 <arrow> HIGH
+           7 cyclomatic    1 cognitive   18 lines
+          56.0 CRAP
+    :64 handleFind HIGH
+           7 cyclomatic   10 cognitive   33 lines
+          56.0 CRAP
+  src/app/api/connections/[id]/schema/route.ts
+    :8 GET HIGH
+           7 cyclomatic    7 cognitive  146 lines
+          56.0 CRAP
+  src/components/servers/server-detail-page.tsx
+    :753 <arrow> HIGH
+           7 cyclomatic    5 cognitive   32 lines
+          56.0 CRAP
+  src/app/api/servers/[id]/deployments/route.ts
+    :35 shaped HIGH
+           7 cyclomatic    2 cognitive   20 lines
+          56.0 CRAP
+  src/app/api/servers/[id]/tools/route.ts
+    :36 GET HIGH
+           7 cyclomatic   10 cognitive   51 lines
+          56.0 CRAP
+  src/app/api/tools/route.ts
+    :42 POST HIGH
+           7 cyclomatic    8 cognitive   47 lines
+          56.0 CRAP
+  src/app/api/connections/[id]/layout-fields/route.ts
+    :26 meta HIGH
+           7 cyclomatic    3 cognitive   14 lines
+          56.0 CRAP
+  scripts/import-rest-prisma.ts
+    :7 main HIGH
+           7 cyclomatic   13 cognitive   38 lines
+          56.0 CRAP
+  src/components/ai/ai-assistant-dialog.tsx
+    :182 handleSendMessage
+           6 cyclomatic    5 cognitive   36 lines
+          42.0 CRAP
+  src/components/tools/schema-builder.tsx
+    :46 SchemaBuilder
+           6 cyclomatic    6 cognitive  185 lines
+          42.0 CRAP
+    :241 PropertyRow
+           6 cyclomatic    4 cognitive   88 lines
+          42.0 CRAP
+  src/app/api/connections/[id]/browse-schema/route.ts
+    :59 <arrow>
+           6 cyclomatic    3 cognitive   18 lines
+          42.0 CRAP
+  src/components/connections/database-picker.tsx
+    :67 handleCreate
+           6 cyclomatic    4 cognitive   27 lines
+          42.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :218 <arrow>
+           6 cyclomatic    5 cognitive   10 lines
+          42.0 CRAP
+  src/components/tools/tool-playground.tsx
+    :597 <arrow>
+           6 cyclomatic    6 cognitive   33 lines
+          42.0 CRAP
+  src/components/connections/schema-browser.tsx
+    :357 <arrow>
+           6 cyclomatic    4 cognitive   66 lines
+          42.0 CRAP
+    :631 <arrow>
+           6 cyclomatic    3 cognitive   10 lines
+          42.0 CRAP
+  src/components/ai/ai-prompt-tool-dialog.tsx
+    :203 <arrow>
+           6 cyclomatic    5 cognitive   33 lines
+          42.0 CRAP
+  src/components/dashboard/dashboard-page.tsx
+    :64 logStatus
+           6 cyclomatic    4 cognitive    5 lines
+          42.0 CRAP
+    :71 logType
+           6 cyclomatic    5 cognitive    7 lines
+          42.0 CRAP
+  src/components/tools/multi-table-builder.tsx
+    :127 <arrow>
+           6 cyclomatic    5 cognitive    8 lines
+          42.0 CRAP
+  src/app/api/branches/[id]/route.ts
+    :104 DELETE
+           6 cyclomatic    5 cognitive   42 lines
+          42.0 CRAP
+  scripts/migrate-to-supabase.ts
+    :48 escBool
+           6 cyclomatic    4 cognitive    4 lines
+          42.0 CRAP
+  src/app/api/deployments/[id]/rollback/route.ts
+    :24 <arrow>
+           6 cyclomatic    7 cognitive   43 lines
+          42.0 CRAP
+  src/lib/filemaker/executor.ts
+    :160 handleList
+           6 cyclomatic    3 cognitive   19 lines
+          42.0 CRAP
+  src/app/api/connections/[id]/schema/route.ts
+    :46 schema
+           6 cyclomatic    7 cognitive   49 lines
+          42.0 CRAP
+  src/components/servers/server-detail-page.tsx
+    :802 <arrow>
+           6 cyclomatic    4 cognitive   46 lines
+          42.0 CRAP
+  src/app/api/deployments/[id]/route.ts
+    :7 GET
+           6 cyclomatic    4 cognitive   25 lines
+          42.0 CRAP
+  src/app/api/logs/stats/route.ts
+    :4 GET
+           6 cyclomatic    5 cognitive   47 lines
+          42.0 CRAP
+  src/components/servers/config-dialog.tsx
+    :41 CopyButton
+           6 cyclomatic    7 cognitive   25 lines
+          42.0 CRAP
+  src/components/tools/relationship-detector.tsx
+    :36 <arrow>
+           6 cyclomatic    5 cognitive   18 lines
+          42.0 CRAP
+    :28 RelationshipDetector
+           6 cyclomatic    5 cognitive   60 lines
+          42.0 CRAP
+  src/lib/filemaker/multi-executor.ts
+    :18 executeMultiStepTool
+           6 cyclomatic    5 cognitive   78 lines
+          42.0 CRAP
+  src/components/connections/connections-page.tsx
+    :318 <arrow>
+           6 cyclomatic    5 cognitive   65 lines
+          42.0 CRAP
+  src/components/settings/settings-page.tsx
+    :266 queryFn
+           6 cyclomatic    5 cognitive   18 lines
+          42.0 CRAP
+    :355 handleTestAi
+           6 cyclomatic    5 cognitive   12 lines
+          42.0 CRAP
+  src/components/tools/tools-page.tsx
+    :650 ToolListItem
+           6 cyclomatic    5 cognitive  100 lines
+          42.0 CRAP
+  src/app/api/servers/[id]/branches/route.ts
+    :30 POST
+           6 cyclomatic    5 cognitive   66 lines
+          42.0 CRAP
+  src/app/api/connections/[id]/route.ts
+    :57 PUT
+           6 cyclomatic    6 cognitive   39 lines
+          42.0 CRAP
+  src/app/api/connections/[id]/infer-relationships/route.ts
+    :176 PUT
+           6 cyclomatic    3 cognitive   45 lines
+          42.0 CRAP
+  src/lib/auth/api-guard.ts
+    :12 <arrow>
+           6 cyclomatic    4 cognitive   15 lines
+          42.0 CRAP
+  src/components/tools/schema-builder.tsx
+    :362 buildSchema
+           5 cyclomatic    6 cognitive   27 lines
+          30.0 CRAP
+  src/components/connections/database-picker.tsx
+    :173 <arrow>
+           5 cyclomatic    5 cognitive   21 lines
+          30.0 CRAP
+  src/components/tools/tool-dialog.tsx
+    :172 activeConnectionId
+           5 cyclomatic    2 cognitive    6 lines
+          30.0 CRAP
+  src/components/tools/tool-playground.tsx
+    :577 AutoGeneratedForm
+           5 cyclomatic    3 cognitive   56 lines
+          30.0 CRAP
+  src/components/connections/schema-browser.tsx
+    :138 <arrow>
+           5 cyclomatic    3 cognitive   12 lines
+          30.0 CRAP
+  src/lib/utils/dto.ts
+    :66 toSafeConnection
+           5 cyclomatic    4 cognitive   25 lines
+          30.0 CRAP
+  src/components/tools/server-playground.tsx
+    :71 handleSendMessage
+           5 cyclomatic    3 cognitive   33 lines
+          30.0 CRAP
+  scripts/migrate-to-supabase.ts
+    :12 tursoQuery
+           5 cyclomatic    2 cognitive   31 lines
+          30.0 CRAP
+  src/components/tools/field-selector.tsx
+    :122 <arrow>
+           5 cyclomatic    4 cognitive   29 lines
+          30.0 CRAP
+  src/components/tools/odata-filter-builder.tsx
+    :64 addClause
+           5 cyclomatic    2 cognitive   12 lines
+          30.0 CRAP
+  src/lib/filemaker/executor.ts
+    :98 handleCreate
+           5 cyclomatic    8 cognitive   21 lines
+          30.0 CRAP
+    :146 handleDelete
+           5 cyclomatic    4 cognitive   13 lines
+          30.0 CRAP
+    :180 handleScript
+           5 cyclomatic    4 cognitive   14 lines
+          30.0 CRAP
+  src/lib/playground/session-runner.ts
+    :121 <arrow>
+           5 cyclomatic    4 cognitive    7 lines
+          30.0 CRAP
+  src/components/servers/server-detail-page.tsx
+    :324 <arrow>
+           5 cyclomatic    4 cognitive    6 lines
+          30.0 CRAP
+  src/components/connections/schema-explorer.tsx
+    :267 <arrow>
+           5 cyclomatic    4 cognitive   22 lines
+          30.0 CRAP
+  src/lib/filemaker/client.ts
+    :136 find
+           5 cyclomatic    4 cognitive   10 lines
+          30.0 CRAP
+  src/components/servers/auto-generate-preview-dialog.tsx
+    :36 mutationFn
+           5 cyclomatic    6 cognitive   20 lines
+          30.0 CRAP
+    :188 <arrow>
+           5 cyclomatic    4 cognitive   36 lines
+          30.0 CRAP
+  src/app/api/connections/[id]/schema/selections/route.ts
+    :22 PUT
+           5 cyclomatic    5 cognitive   71 lines
+          30.0 CRAP
+  src/components/tools/relationship-detector.tsx
+    :95 <arrow>
+           5 cyclomatic    4 cognitive    4 lines
+          30.0 CRAP
+  src/app/api/servers/[id]/ai/generate-from-prompt/route.ts
+    :137 <arrow>
+           5 cyclomatic    4 cognitive   14 lines
+          30.0 CRAP
+  src/lib/filemaker/odata-executor.ts
+    :52 <arrow>
+           5 cyclomatic    4 cognitive    6 lines
+          30.0 CRAP
+  src/components/tools/response-table.tsx
+    :72 <arrow>
+           5 cyclomatic    4 cognitive   11 lines
+          30.0 CRAP
+  src/app/auth/confirm/route.ts
+    :5 GET
+           5 cyclomatic    5 cognitive   18 lines
+          30.0 CRAP
+  src/components/tools/tools-page.tsx
+    :140 <arrow>
+           5 cyclomatic    6 cognitive   11 lines
+          30.0 CRAP
+  src/app/api/tools/[id]/execute/route.ts
+    :38 result
+           5 cyclomatic    4 cognitive    7 lines
+          30.0 CRAP
+  src/lib/tools/executor-service.ts
+    :288 <arrow>
+           5 cyclomatic    3 cognitive    7 lines
+          30.0 CRAP
+  src/components/servers/server-dialog.tsx
+    :66 <arrow>
+           5 cyclomatic    4 cognitive   10 lines
+          30.0 CRAP
+  Functions exceeding cyclomatic, cognitive, or CRAP thresholds (https://docs.fallow.tools/explanations/health#complexity-metrics)
+  To suppress: // fallow-ignore-next-line complexity
+

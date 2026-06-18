@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/utils/api-client'
 import { useState } from 'react'
+import { useTheme } from 'next-themes'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -261,6 +262,7 @@ function ApiTokensCard() {
 
 export function SettingsPage() {
   const queryClient = useQueryClient()
+  const { theme: activeTheme, setTheme } = useTheme()
   const { data: settings, isLoading } = useQuery<SettingsData>({
     queryKey: ['settings'],
     queryFn: async () => { 
@@ -394,9 +396,19 @@ export function SettingsPage() {
           <CardContent className="space-y-5">
             <div className="flex items-center justify-between">
               <div><Label className="text-sm font-medium">Theme</Label><p className="text-xs text-muted-foreground">Interface color scheme</p></div>
-              <Select value={edited.general.theme} onValueChange={v => update('general', 'theme', v)}>
-                <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="dark">Dark</SelectItem><SelectItem value="light">Light</SelectItem><SelectItem value="system">System</SelectItem></SelectContent>
+              <Select
+                value={activeTheme ?? edited.general.theme}
+                onValueChange={v => {
+                  setTheme(v)
+                  update('general', 'theme', v)
+                }}
+              >
+                <SelectTrigger className="w-32" id="theme-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dark">🌙 Dark</SelectItem>
+                  <SelectItem value="light">☀️ Light</SelectItem>
+                  <SelectItem value="system">💻 System</SelectItem>
+                </SelectContent>
               </Select>
             </div>
             <div className="flex items-center justify-between">

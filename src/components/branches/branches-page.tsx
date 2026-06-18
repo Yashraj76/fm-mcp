@@ -125,7 +125,7 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
   if (log.entityType === 'server') Icon = Server
 
   return (
-    <Card className="border-white/5 hover:border-white/10 transition-colors bg-white/[0.01]">
+    <Card className="hover:border-foreground/10 transition-colors">
       <CardContent className="p-4">
         <div className="flex items-start gap-4">
           <div className={`p-2 rounded-lg border ${statusColor} shrink-0`}>
@@ -135,10 +135,10 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
           <div className="flex-1 min-w-0">
             <div className="flex items-start justify-between flex-wrap gap-2">
               <div>
-                <span className="text-sm font-semibold text-white">
+                <span className="text-sm font-semibold">
                   {log.entityName}
                 </span>
-                <span className="text-xs text-neutral-400 ml-2 bg-white/5 px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
+                <span className="text-xs text-muted-foreground ml-2 bg-muted px-2 py-0.5 rounded-full uppercase tracking-wider font-mono">
                   {log.action.replace(/_/g, ' ')}
                 </span>
               </div>
@@ -157,7 +157,7 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
                 variant="ghost"
                 size="sm"
                 onClick={onToggle}
-                className="mt-2 text-xs text-neutral-400 hover:text-white p-0 h-auto gap-1"
+                className="mt-2 text-xs text-muted-foreground hover:text-foreground p-0 h-auto gap-1"
               >
                 {isExpanded ? (
                   <>
@@ -172,7 +172,7 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
             )}
 
             {isExpanded && (
-              <div className="mt-3 pt-3 border-t border-white/5 space-y-3">
+              <div className="mt-3 pt-3 border-t space-y-3">
                 {isLoadingDetail ? (
                   <div className="space-y-2">
                     <Skeleton className="h-4 w-1/3" />
@@ -181,14 +181,14 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
                 ) : logDetail ? (
                   <>
                     {logDetail.meta && Object.keys(logDetail.meta).length > 0 && (
-                      <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-1.5">
+                      <div className="bg-muted/50 border rounded-lg p-3 space-y-1.5">
                         <div className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400 flex items-center gap-1">
                           <FileText className="size-3" />
                           Metadata Context
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                           {Object.entries(logDetail.meta).map(([key, val]) => (
-                            <div key={key} className="flex flex-col p-1.5 rounded bg-white/[0.01]">
+                            <div key={key} className="flex flex-col p-1.5 rounded bg-muted/30">
                               <span className="text-neutral-500 font-mono text-[10px]">{key}</span>
                               <span className="text-neutral-300 font-medium truncate">
                                 {typeof val === 'object' ? JSON.stringify(val) : String(val)}
@@ -207,19 +207,19 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
                         </div>
                         <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
                           {Object.entries(logDetail.diff).map(([field, values]: [string, any]) => (
-                            <div key={field} className="border border-white/5 rounded-lg overflow-hidden bg-black/20 text-xs">
-                              <div className="bg-white/5 px-2.5 py-1 text-[11px] font-semibold font-mono text-neutral-300 border-b border-white/5">
+                            <div key={field} className="border rounded-lg overflow-hidden bg-background text-xs">
+                              <div className="bg-muted px-2.5 py-1 text-[11px] font-semibold font-mono border-b">
                                 {field}
                               </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-white/5 font-mono">
-                                <div className="p-2 bg-red-950/20 text-red-400">
-                                  <div className="text-[9px] uppercase tracking-wider text-red-500/50 mb-1 font-sans font-bold">Before</div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border font-mono">
+                                <div className="p-2 bg-destructive/5 text-destructive">
+                                  <div className="text-[9px] uppercase tracking-wider opacity-70 mb-1 font-sans font-bold">Before</div>
                                   <pre className="whitespace-pre-wrap break-all text-[11px]">
                                     {typeof values.before === 'object' ? JSON.stringify(values.before, null, 2) : String(values.before)}
                                   </pre>
                                 </div>
-                                <div className="p-2 bg-emerald-950/20 text-emerald-400">
-                                  <div className="text-[9px] uppercase tracking-wider text-emerald-500/50 mb-1 font-sans font-bold">After</div>
+                                <div className="p-2 bg-emerald-500/5 text-emerald-600">
+                                  <div className="text-[9px] uppercase tracking-wider opacity-70 mb-1 font-sans font-bold">After</div>
                                   <pre className="whitespace-pre-wrap break-all text-[11px]">
                                     {typeof values.after === 'object' ? JSON.stringify(values.after, null, 2) : String(values.after)}
                                   </pre>
@@ -235,7 +235,7 @@ function LogTimelineItem({ log, isExpanded, onToggle, logDetail, isLoadingDetail
                           <FileText className="size-3" />
                           Snapshot Data
                         </div>
-                        <pre className="bg-black/35 border border-white/5 rounded-lg p-3 text-[11px] font-mono text-neutral-300 overflow-x-auto max-h-60">
+                        <pre className="bg-muted border rounded-lg p-3 text-[11px] font-mono overflow-x-auto max-h-60">
                           {JSON.stringify(logDetail.after, null, 2)}
                         </pre>
                       </div>
@@ -465,13 +465,13 @@ export function BranchesPage() {
       </div>
 
       {/* Tabs Selector */}
-      <div className="flex border-b border-white/5 pb-px">
+      <div className="flex border-b pb-px">
         <button
           onClick={() => setBranchTab('branches')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-all flex items-center gap-2 -mb-px ${
             branchTab === 'branches'
-              ? 'border-primary text-white bg-white/[0.02]'
-              : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              ? 'border-primary text-foreground bg-muted/30'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
           <GitBranch className="size-4" />
@@ -481,14 +481,14 @@ export function BranchesPage() {
           onClick={() => setBranchTab('activity')}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-all flex items-center gap-2 -mb-px ${
             branchTab === 'activity'
-              ? 'border-primary text-white bg-white/[0.02]'
-              : 'border-transparent text-neutral-400 hover:text-neutral-200'
+              ? 'border-primary text-foreground bg-muted/30'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
           <Activity className="size-4" />
           Activity & Logs
           {serverLogs.length > 0 && (
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-white/10 text-white border-transparent">
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
               {serverLogs.length}
             </Badge>
           )}
@@ -699,7 +699,7 @@ export function BranchesPage() {
           {isLoadingLogs ? (
             <div className="space-y-3">
               {Array.from({ length: 4 }).map((_, idx) => (
-                <Card key={idx} className="border-white/5 bg-white/[0.01]">
+                <Card key={idx}>
                   <CardContent className="p-4 flex gap-4">
                     <Skeleton className="size-10 rounded-lg shrink-0" />
                     <div className="space-y-2 flex-1">
@@ -712,7 +712,7 @@ export function BranchesPage() {
               ))}
             </div>
           ) : serverLogs.length === 0 ? (
-            <Card className="flex flex-col items-center justify-center py-16 border-white/5 bg-white/[0.01]">
+            <Card className="flex flex-col items-center justify-center py-16">
               <Activity className="size-12 text-muted-foreground/30 mb-4" />
               <h3 className="text-lg font-semibold mb-1">No Activity Logged</h3>
               <p className="text-muted-foreground text-sm max-w-md text-center">

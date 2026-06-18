@@ -130,31 +130,31 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-[#0f1117] border border-white/10 text-white">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-lg">
             <Database className="w-5 h-5 text-purple-400" />
             Pick a Database — {serverName}
           </DialogTitle>
-          <p className="text-sm text-white/50">{serverHost} · {databases.length} databases available</p>
+          <p className="text-sm text-muted-foreground">{serverHost} · {databases.length} databases available</p>
         </DialogHeader>
 
         <div className="space-y-4">
           {/* Search */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search databases..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 bg-white/5 border-white/10 text-white placeholder:text-white/30 h-9"
+              className="pl-9 h-9"
             />
           </div>
 
           {/* Database list */}
-          <div className="max-h-[50vh] min-h-[300px] overflow-y-auto space-y-1.5 rounded-lg border border-white/10 p-2">
+          <div className="max-h-[50vh] min-h-[300px] overflow-y-auto space-y-1.5 rounded-lg border p-2">
             {loading && (
-              <div className="flex items-center justify-center py-8 text-white/40">
+              <div className="flex items-center justify-center py-8 text-muted-foreground">
                 <Loader2 className="w-5 h-5 animate-spin mr-2" />
                 Loading databases...
               </div>
@@ -162,13 +162,13 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
             {error && (
               <div className="flex items-center gap-2 text-red-400 text-sm py-4 px-2">
                 <XCircle className="w-4 h-4" /> {error}
-                <Button size="sm" variant="ghost" onClick={loadDatabases} className="ml-auto text-white/40">
+                <Button size="sm" variant="ghost" onClick={loadDatabases} className="ml-auto">
                   <RefreshCw className="w-3 h-3" />
                 </Button>
               </div>
             )}
             {!loading && !error && filtered.length === 0 && (
-              <p className="text-white/30 text-sm text-center py-6">No databases found</p>
+              <p className="text-muted-foreground text-sm text-center py-6">No databases found</p>
             )}
             {filtered.map((db) => (
               <button
@@ -178,12 +178,12 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
                   selectedDb === db.name
                     ? 'bg-purple-500/20 border border-purple-500/40'
                     : db.hasConnection
-                    ? 'opacity-50 cursor-not-allowed bg-white/3'
-                    : 'bg-white/3 hover:bg-white/8 border border-transparent cursor-pointer'
+                    ? 'opacity-50 cursor-not-allowed bg-muted'
+                    : 'bg-muted/50 hover:bg-muted border border-transparent cursor-pointer'
                 }`}
               >
-                <Database className={`w-4 h-4 shrink-0 ${selectedDb === db.name ? 'text-purple-400' : 'text-white/40'}`} />
-                <span className="flex-1 font-medium text-white/90">{db.name}</span>
+                <Database className={`w-4 h-4 shrink-0 ${selectedDb === db.name ? 'text-purple-400' : 'text-muted-foreground'}`} />
+                <span className="flex-1 font-medium">{db.name}</span>
                 {db.hasConnection ? (
                   <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-xs">Connected</Badge>
                 ) : (
@@ -195,43 +195,43 @@ export function DatabasePicker({ isOpen, onClose, serverId, serverName, serverHo
 
           {/* File credentials form — shown when a DB is selected */}
           {selectedDb && (
-            <div className="border border-white/10 rounded-lg p-4 space-y-3 bg-white/3">
-              <p className="text-sm font-medium text-white/80 flex items-center gap-2">
+            <div className="border rounded-lg p-4 space-y-3 bg-muted/30">
+              <p className="text-sm font-medium flex items-center gap-2">
                 <ArrowRight className="w-4 h-4 text-purple-400" />
-                File credentials for <span className="text-purple-300">{selectedDb}</span>
+                File credentials for <span className="text-purple-500 dark:text-purple-300">{selectedDb}</span>
               </p>
               <div className="space-y-1.5">
-                <Label className="text-white/60 text-xs">Connection Name</Label>
+                <Label className="text-xs">Connection Name</Label>
                 <Input
                   value={connectionName}
                   onChange={(e) => setConnectionName(e.target.value)}
-                  className="bg-white/5 border-white/10 text-white h-9 text-sm"
+                  className="h-9 text-sm"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-white/60 text-xs">FM Username *</Label>
+                  <Label className="text-xs">FM Username *</Label>
                   <Input
                     value={fileUser}
                     onChange={(e) => setFileUser(e.target.value)}
                     placeholder="Admin"
-                    className="bg-white/5 border-white/10 text-white placeholder:text-white/30 h-9 text-sm"
+                    className="h-9 text-sm"
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-white/60 text-xs">FM Password *</Label>
+                  <Label className="text-xs">FM Password *</Label>
                   <div className="relative">
                     <Input
                       type={showPass ? 'text' : 'password'}
                       value={filePass}
                       onChange={(e) => setFilePass(e.target.value)}
                       placeholder="••••••••"
-                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30 h-9 text-sm pr-9"
+                      className="h-9 text-sm pr-9"
                     />
                     <button
                       type="button"
                       onClick={() => setShowPass(!showPass)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/30 hover:text-white/60"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
                       {showPass ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
