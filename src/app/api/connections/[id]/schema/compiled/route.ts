@@ -1,54 +1,52 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { withAuth } from "@/lib/auth/api-guard";
-import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { withAuth } from "@/lib/auth/api-guard"
+import { apiSuccess, apiNotFound, apiServerError } from '@/lib/utils/api-response'
+import { buildCompiledSchemaPayload, SchemaEndpointError } from '@/lib/schema/schema-endpoint-logic'
+import { logger } from '@/lib/logger'
 
-type Params = { params: Promise<{ id: string }> }
+/**
+ * GET /api/connections/[id]/schema/compiled
+ *
+ * Returns the user's saved schema selections for this connection — the subset of
+ * layouts/tables/scripts chosen in Schema Browser — plus the compiled schema object
+ * used by tool generation and AI features.
+ *
+ * Responsibility: read-only view of "what the user chose to expose".
+ *   - Never triggers a live FileMaker call.
+ *   - Injects connectionId into layouts/tables so multi-connection tools know
+ *     which FileMaker connection each layout belongs to.
+ *
+ * Error codes:
+ *   NOT_BROWSED_YET  — POST /browse-schema has not been called; nothing to select from.
+ *   SCHEMA_NOT_SAVED — Browse happened but no selections saved via PUT /schema/selections.
+ *   NOT_FOUND        — connection does not exist or belongs to another user.
+ *   SERVER_ERROR     — unexpected internal error.
+ *
+ * See also:
+ *   POST /browse-schema       — triggers a live fetch from FileMaker + OData.
+ *   GET  /schema              — returns all raw discovered resources, not just selections.
+ *   PUT  /schema/selections   — saves schema selections and rebuilds compiledSchema.
+ */
 export const GET = withAuth(async (_req, { params, userId }) => {
-    try {
+  try {
     const { id } = params
 
-    // Verify connection ownership
-    const conn = await db.fMConnection.findFirst({
-      where: { id, userId }
-    });
-    if (!conn) {
-      return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 });
-    }
+    const conn = await db.fMConnection.findFirst({ where: { id, userId } })
+    if (!conn) return apiNotFound('Connection not found')
 
-    const browsedSchema = await db.browsedSchema.findUnique({
-      where: { connectionId: id }
-    })
-    if (!browsedSchema) {
-      return NextResponse.json({
-        success: false,
-        error: 'Schema not browsed. Go to Connection → Browse Schema and save selections first.',
-        code: 'NOT_FOUND',
-      }, { status: 404 })
-    }
+    const bs = await db.browsedSchema.findUnique({ where: { connectionId: id } })
 
-    const compiledSchema = safeParseJSON(browsedSchema.compiledSchema, {})
-    if (!compiledSchema?.layouts?.length && !compiledSchema?.tables?.length) {
-      return NextResponse.json({
-        success: false,
-        error: 'No schema selections saved. Select layouts/tables and save first.',
-        code: 'NOT_FOUND',
-      }, { status: 404 })
+    const payload = buildCompiledSchemaPayload(bs, id)
+    return apiSuccess(payload)
+  } catch (e: any) {
+    if (e instanceof SchemaEndpointError) {
+      return NextResponse.json(
+        { success: false, error: e.message, code: e.code },
+        { status: e.httpStatus },
+      )
     }
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        compiledSchema,
-        selectedLayouts: safeParseJSON(browsedSchema.selectedLayouts, []),
-        selectedTables: safeParseJSON(browsedSchema.selectedTables, []),
-        selectedScripts: safeParseJSON(browsedSchema.selectedScripts, []),
-        fetchedAt: browsedSchema.fetchedAt,
-        updatedAt: browsedSchema.updatedAt,
-      },
-    })
-    } catch (e: any) {
-    console.error('[schema/compiled GET]', e)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-    }
-    });
+    logger.error({ err: e }, '[schema/compiled GET]')
+    return apiServerError('Internal server error')
+  }
+})

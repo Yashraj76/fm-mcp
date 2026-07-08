@@ -64,7 +64,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
       branchId: l.branchId,
       deploymentId: l.deploymentId,
       hasDiff: !!(l.before && l.after),
-      meta: safeParseJSON(l.meta, null),
+      meta: safeParseJSON<any>(l.meta, null),
       createdAt: l.createdAt,
     })),
     pagination: { hasMore, nextCursor, limit },

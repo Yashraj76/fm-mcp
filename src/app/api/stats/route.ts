@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server'
+import { apiSuccess, apiServerError } from '@/lib/utils/api-response'
 import { db } from '@/lib/db'
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 
 // GET /api/stats - Get dashboard statistics
 export const GET = withAuth(async (req, { params, userId }) => {
@@ -8,7 +9,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
     const [connections, servers, tools, deployments] = await Promise.all([
       db.fMConnection.count({ where: { userId } }),
       db.mcpServer.count({ where: { userId } }),
-      db.tool.count({ where: { server: { userId } } }),
+      db.tool.count({ where: { server: { userId }, deletedAt: null } }),
       db.deployment.count({ where: { server: { userId } } }),
     ])
 
@@ -30,25 +31,22 @@ export const GET = withAuth(async (req, { params, userId }) => {
       })
     ])
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        totalConnections: connections,
-        connectedConnections,
-        activeServers,
-        totalServers: servers,
-        totalTools: tools,
-        totalDeployments: deployments,
-        apiStats: {
-          total: totalExecutions,
-          passed: passedExecutions,
-          failed: failedExecutions,
-          avgDuration: Math.round(avgDurationResult._avg.duration || 0)
-        }
+    return apiSuccess({
+      totalConnections: connections,
+      connectedConnections,
+      activeServers,
+      totalServers: servers,
+      totalTools: tools,
+      totalDeployments: deployments,
+      apiStats: {
+        total: totalExecutions,
+        passed: passedExecutions,
+        failed: failedExecutions,
+        avgDuration: Math.round(avgDurationResult._avg.duration || 0)
       }
     })
-    } catch (error) {
-    console.error('Error fetching stats:', error)
-    return NextResponse.json({ success: false, error: 'Failed to fetch stats', code: 'SERVER_ERROR' }, { status: 500 })
-    }
-    });
+  } catch (error) {
+    logger.error({ err: error }, 'Error fetching stats:')
+    return apiServerError('Failed to fetch stats')
+  }
+})

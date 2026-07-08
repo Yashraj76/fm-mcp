@@ -105,6 +105,8 @@ model FMSchemaCache {
   cachedAt     DateTime @default(now())
 
   connection FMConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId])
 }
 
 // ============ MCP SERVERS ============
@@ -158,6 +160,9 @@ model FMConnectionServer {
 
   connection FMConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   server     McpServer   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, serverId])
+  @@index([serverId])
 }
 
 // ============ BRANCHES ============
@@ -195,6 +200,7 @@ model BranchTool {
   updatedAt     DateTime @updatedAt
 
   @@unique([branchId, toolId])
+  @@index([toolId])
 }
 
 // ============ TOOLS ============
@@ -211,17 +217,21 @@ model Tool {
   fmLayout      String?
   fmScript      String?
   fmMethod      String?
-  isEnabled     Boolean  @default(true)
-  version       Int      @default(1)
-  isAiGenerated Boolean  @default(false)
+  isEnabled     Boolean   @default(true)
+  version       Int       @default(1)
+  isAiGenerated Boolean   @default(false)
   testConfig    String?
-  sortOrder     Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  sortOrder     Int       @default(0)
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   server     McpServer     @relation(fields: [serverId], references: [id], onDelete: Cascade)
   executions ToolExecution[]
   branchTools BranchTool[]
+
+  @@index([serverId])
+  @@index([serverId, name])
 }
 
 // ============ TOOL EXECUTIONS ============
@@ -239,6 +249,8 @@ model ToolExecution {
   createdAt      DateTime @default(now())
 
   tool Tool @relation(fields: [toolId], references: [id], onDelete: Cascade)
+
+  @@index([toolId])
 }
 
 // ============ DEPLOYMENTS ============
@@ -258,6 +270,8 @@ model Deployment {
   createdAt     DateTime @default(now())
 
   logs          ActivityLog[]
+
+  @@index([branchId])
 }
 
 // ============ ACTIVITY LOGS ============
@@ -286,7 +300,8 @@ model ActivityLog {
   after         String?  // JSON snapshot of state after action
   meta          String?  // JSON: extra context (e.g. { mergedFrom: "feature/xyz", toolCount: 12 })
 
-  // Actor (no auth system yet — use session/IP)
+  // Actor identity
+  actorUserId   String?   // Supabase user UUID from the authenticated session
   actorIp       String?
   actorSession  String?
 
@@ -295,6 +310,7 @@ model ActivityLog {
   @@index([serverId, createdAt])
   @@index([entityType, entityId])
   @@index([action, createdAt])
+  @@index([branchId])
 }
 
 // ============ AI SUGGESTIONS ============
@@ -355,6 +371,8 @@ model ToolGenerationJob {
   startedAt   DateTime?
   completedAt DateTime?
   createdAt   DateTime @default(now())
+
+  @@index([serverId])
 }
 
 // ============ PLAYGROUND SESSION ============
@@ -363,6 +381,7 @@ model PlaygroundSession {
   id            String   @id @default(cuid())
   userId        String?
   serverId      String?
+  branchId      String?  // branch context under which this session ran; null = main branch raw tools
   userMessage   String
   agentPlan     String?  // JSON: steps the agent decided to take
   stepLog       String   @default("[]") // JSON array of step results

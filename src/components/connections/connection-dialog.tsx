@@ -24,7 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
-import { Loader2, Zap, Eye, EyeOff } from 'lucide-react'
+import { Loader2, Zap, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react'
 
 interface ConnectionFormData {
   name: string
@@ -66,6 +66,7 @@ export function ConnectionDialog() {
   const [seeded, setSeeded] = useState(false) // tracks if we've applied server data to form
   const [showPassword, setShowPassword] = useState(false)
   const [errors, setErrors] = useState<Partial<Record<keyof ConnectionFormData, string>>>({})
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   // Fetch connection data for editing
   const { data: existingConnection } = useQuery({
@@ -88,10 +89,13 @@ export function ConnectionDialog() {
           port: existingConnection.port ?? 443,
           database: existingConnection.database ?? '',
           username: existingConnection.username ?? '',
-          password: existingConnection.password ?? '',
+          // Never pre-fill credentials — the API never returns ciphertext, and
+          // even if it did, we must never render it in an input.
+          // An empty value means "leave current password unchanged" on save.
+          password: '',
           authType: existingConnection.authType ?? 'basic',
           clientId: existingConnection.clientId ?? '',
-          clientSecret: existingConnection.clientSecret ?? '',
+          clientSecret: '',
           sslVerify: existingConnection.sslVerify ?? true,
         })
         setSeeded(true)
@@ -107,6 +111,7 @@ export function ConnectionDialog() {
         setSeeded(false)
         setErrors({})
         setShowPassword(false)
+        setTestResult(null)
       })
     }
   }, [showConnectionDialog])
@@ -174,20 +179,20 @@ export function ConnectionDialog() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['connections'] })
       queryClient.invalidateQueries({ queryKey: ['stats'] })
-      toast({
-        title: 'Connection Successful',
-        description: 'Successfully connected to FileMaker Server.',
-        variant: 'default',
-      })
+      setTestResult({ ok: true, message: 'Connected successfully to FileMaker Data API.' })
     },
     onError: (err: any) => {
       queryClient.invalidateQueries({ queryKey: ['connections'] })
       queryClient.invalidateQueries({ queryKey: ['stats'] })
-      toast({
-        title: 'Connection Failed',
-        description: err.message || 'Could not connect to FileMaker Server.',
-        variant: 'destructive',
-      })
+      const raw = err.message || 'Could not connect.'
+      const hint = raw.includes('401') || raw.toLowerCase().includes('auth')
+        ? ' Check username and password.'
+        : raw.includes('ECONNREFUSED') || raw.includes('ENOTFOUND') || raw.includes('timeout')
+        ? ' Check host, port, and that FileMaker Server is reachable.'
+        : raw.includes('ssl') || raw.includes('certificate')
+        ? ' Try disabling SSL verification if using a self-signed certificate.'
+        : ''
+      setTestResult({ ok: false, message: raw + hint })
     },
   })
 
@@ -399,11 +404,14 @@ export function ConnectionDialog() {
               <div className="space-y-2">
                 <Label htmlFor="conn-client-secret">
                   Client Secret <span className="text-destructive">*</span>
+                  {isEditing && (
+                    <span className="text-muted-foreground font-normal"> (leave blank to keep current)</span>
+                  )}
                 </Label>
                 <Input
                   id="conn-client-secret"
                   type="password"
-                  placeholder="your-client-secret"
+                  placeholder={isEditing ? '••••••••' : 'your-client-secret'}
                   value={form.clientSecret}
                   onChange={(e) => updateField('clientSecret', e.target.value)}
                   className={errors.clientSecret ? 'border-destructive' : ''}
@@ -431,6 +439,19 @@ export function ConnectionDialog() {
               onCheckedChange={(checked) => updateField('sslVerify', checked)}
             />
           </div>
+
+          {testResult && (
+            <div className={`rounded-lg border px-3 py-2.5 text-xs flex items-start gap-2 ${
+              testResult.ok
+                ? 'bg-green-500/10 border-green-500/20 text-green-400'
+                : 'bg-red-500/10 border-red-500/20 text-red-400'
+            }`}>
+              {testResult.ok
+                ? <CheckCircle2 className="size-3.5 shrink-0 mt-0.5" />
+                : <XCircle className="size-3.5 shrink-0 mt-0.5" />}
+              <span>{testResult.message}</span>
+            </div>
+          )}
 
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button

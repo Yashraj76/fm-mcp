@@ -3,9 +3,11 @@ import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
 import { toSafeServer } from '@/lib/utils/dto'
-import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError } from '@/lib/utils/api-response'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { getMcpServer } from '@/lib/db/user-scoped';
+import { replaceServerConnections } from '@/lib/db/replace-server-connections';
+import { logger } from '@/lib/logger'
 
 const updateServerSchema = z.object({
   name: z.string().min(1).optional(),
@@ -29,30 +31,20 @@ export const GET = withAuth(async (_request, { params, userId }) => {
         include: {
           connection: {
             include: {
+              // Fetch only the lightweight selection arrays — not the full compiledSchema blob
               browsedSchema: {
-                select: {
-                  compiledSchema: true,
-                },
+                select: { selectedLayouts: true, selectedTables: true },
               },
-              relationshipGraph: true,
             },
           },
         },
       },
       branches: {
         orderBy: { isDefault: 'desc' },
-        include: {
-          tools: {
-            include: { tool: true }
-          },
-        },
       },
       deployments: {
         orderBy: { createdAt: 'desc' },
         take: 10,
-      },
-      tools: {
-        orderBy: { sortOrder: 'asc' },
       },
       apiKey: true,
       _count: {
@@ -71,7 +63,7 @@ export const GET = withAuth(async (_request, { params, userId }) => {
 
     return apiSuccess(toSafeServer(server))
   } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to fetch server')
   }
 });
@@ -104,48 +96,37 @@ export const PUT = withAuth(async (request, { params, userId }) => {
       }
     }
 
-    // If connection IDs are provided, update junction records
+    // If connection IDs are provided, replace junction records and update the
+    // server atomically. All three operations (deleteMany, createMany, update)
+    // share a single transaction so a createMany failure cannot leave the server
+    // with zero connections.
+    let server: Awaited<ReturnType<typeof db.mcpServer.update>>
+
     if (connectionIds !== undefined) {
-      // Delete existing connections
-      await db.fMConnectionServer.deleteMany({
-        where: { serverId: id },
-      })
-
-      // Create new junction records
-      if (connectionIds.length > 0) {
-        await db.fMConnectionServer.createMany({
-          data: connectionIds.map((connId, index) => ({
-            connectionId: connId,
-            serverId: id,
-            fileNames: JSON.stringify(
-              (fileNamesPerConnection?.[index] || '')
-                .split(',')
-                .map(f => f.trim())
-                .filter(Boolean)
-            ),
-          })),
-        })
-      }
-
-      // Update config
-      const currentConfig = safeParseJSON(existing.config, {})
+      // Pre-compute config change — pure computation, no DB needed
+      const currentConfig = safeParseJSON<Record<string, unknown>>(existing.config, {})
       currentConfig.connections = connectionIds
       currentConfig.fileNames = fileNamesPerConnection || []
       currentConfig.updatedAt = new Date().toISOString()
       updateData.config = JSON.stringify(currentConfig)
+
+      server = await db.$transaction(async (tx) => {
+        await replaceServerConnections(tx, id, connectionIds, fileNamesPerConnection)
+        return tx.mcpServer.update({ where: { id }, data: updateData })
+      })
+    } else {
+      server = await db.mcpServer.update({ where: { id }, data: updateData })
     }
 
-    const server = await db.mcpServer.update({
-      where: { id },
-      data: updateData,
-    })
-
     return apiSuccess(toSafeServer(server))
-  } catch (error) {
+  } catch (error: any) {
     if (error instanceof ZodError) {
       return apiValidationFailed(error.issues)
     }
-    console.error('[API Error]', error)
+    if (error?.code === 'P2002') {
+      return apiError('One or more connections are already linked to this server', 'CONFLICT', 409)
+    }
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to update server')
   }
 });
@@ -163,7 +144,7 @@ export const DELETE = withAuth(async (_request, { params, userId }) => {
 
     return apiSuccess(null)
   } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to delete server')
   }
 });

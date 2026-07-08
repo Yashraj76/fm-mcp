@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
-import { prisma as db } from '@/lib/prisma'
+import { db } from '@/lib/db'
 import { withAuth } from "@/lib/auth/api-guard";
-import { apiNotFound, apiError } from '@/lib/utils/api-response'
+import { apiNotFound, apiError, apiServerError } from '@/lib/utils/api-response'
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { executeToolWithParams } from '@/lib/tools/executor-service'
+import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -14,7 +15,7 @@ export const POST = withAuth(async (req, { params, userId }) => {
   try {
     const { id: serverId } = params
     const rawBody = await req.text()
-    const bodyObj = safeParseJSON(rawBody, null)
+    const bodyObj = safeParseJSON<{ toolData: Record<string, unknown>; body: Record<string, unknown> }>(rawBody, null)
     if (!bodyObj || typeof bodyObj !== 'object') {
       return apiError('Invalid JSON request body', 'VALIDATION_ERROR', 400)
     }
@@ -27,25 +28,33 @@ export const POST = withAuth(async (req, { params, userId }) => {
 
     if (!server) return apiNotFound('Server not found')
 
-    const handlerConfig = toolData.handlerConfig || {}
+    const handlerConfig = (toolData.handlerConfig as Record<string, any>) || {}
 
     // System tools are not supported in dry-run for now
     if (toolData.category === 'system') {
       return apiError('System tools cannot be dry-run.', 'VALIDATION_ERROR', 400)
     }
 
-    let connectionId = handlerConfig.connectionId
-    let connection = server.connections.find((c: any) => c.connectionId === connectionId)?.connection
+    const connectionId = handlerConfig.connectionId as string | undefined
+    let connection = connectionId
+      ? server.connections.find((c: any) => c.connectionId === connectionId)?.connection
+      : undefined
 
     if (connectionId && !connection) {
       return apiError('The specified connection is not attached to this server', 'VALIDATION_ERROR', 400)
     }
 
-    if (!connection && server.connections.length > 0) {
-      connection = server.connections[0].connection
-    }
     if (!connection) {
-      return apiError('No FileMaker connection available for this server', 'VALIDATION_ERROR', 400)
+      if (server.connections.length === 0) {
+        return apiError('No FileMaker connection available for this server', 'VALIDATION_ERROR', 400)
+      }
+      if (server.connections.length > 1) {
+        return apiError(
+          'This tool has no connectionId. Specify a connectionId when the server has multiple connections.',
+          'VALIDATION_ERROR', 400
+        )
+      }
+      connection = server.connections[0].connection
     }
 
     const result = await executeToolWithParams(toolData, body, connection)
@@ -61,14 +70,8 @@ export const POST = withAuth(async (req, { params, userId }) => {
 
   } catch (error: any) {
     const duration = Date.now() - startTime
-    console.error('[Tool Dry-Run Failed]', error)
+    logger.error({ err: error }, '[Tool Dry-Run Failed]')
 
-    return NextResponse.json({ 
-      success: false,
-      status: 500, 
-      duration, 
-      error: error.message || 'Execution failed',
-      code: 'FM_EXECUTION_ERROR'
-    }, { status: 500 })
+    return apiError('Execution failed', 'FM_EXECUTION_ERROR', 500, { duration });
   }
 })

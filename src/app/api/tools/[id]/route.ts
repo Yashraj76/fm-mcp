@@ -6,6 +6,8 @@ import { toSafeTool } from '@/lib/utils/dto'
 import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
 import { getTool } from '@/lib/db/user-scoped'
+import { checkDuplicateToolName, duplicateToolNameMessage, DUPLICATE_TOOL_NAME_CODE } from '@/lib/tools/duplicate-tool-name'
+import { logger } from '@/lib/logger'
 
 const updateToolSchema = z.object({
   name: z.string().regex(/^[a-z][a-z0-9_]*$/, 'Must be snake_case').optional(),
@@ -31,25 +33,36 @@ export const GET = withAuth(async (request, { params, userId }) => {
 
     return apiSuccess(toSafeTool(tool))
   } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Internal server error')
   }
 });
 
 // PUT /api/tools/[id] - Update a tool
 export const PUT = withAuth(async (request, { params, userId }) => {
+  let newName = ''
   try {
     const { id } = await params
     const body = await request.json()
     const parsed = updateToolSchema.parse(body)
+    newName = parsed.name ?? ''
 
     const existing = await getTool(id, userId, { include: { server: true } })
     if (!existing) {
       return apiNotFound('Tool not found')
     }
 
+    // If the name is being changed, check for a duplicate among active tools on
+    // this server (excluding the tool being updated from the check).
+    if (parsed.name && parsed.name !== existing.name) {
+      const dupCheck = await checkDuplicateToolName(db, existing.serverId, parsed.name, id)
+      if (dupCheck.isDuplicate) {
+        return apiError(duplicateToolNameMessage(parsed.name), DUPLICATE_TOOL_NAME_CODE, 409)
+      }
+    }
+
     if (parsed.handlerConfig) {
-      let handlerConfigObj: any = safeParseJSON(parsed.handlerConfig, {})
+      let handlerConfigObj: any = safeParseJSON<Record<string, any>>(parsed.handlerConfig, {})
       if (handlerConfigObj.connectionId) {
         const isLinked = await db.fMConnectionServer.findFirst({
           where: {
@@ -69,11 +82,14 @@ export const PUT = withAuth(async (request, { params, userId }) => {
     })
 
     return apiSuccess(toSafeTool(updated))
-  } catch (error) {
+  } catch (error: any) {
     if (error instanceof ZodError) {
       return apiValidationFailed(error.issues)
     }
-    console.error('[API Error]', error)
+    if (error?.code === 'P2002') {
+      return apiError(duplicateToolNameMessage(newName), DUPLICATE_TOOL_NAME_CODE, 409)
+    }
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Internal server error')
   }
 });
@@ -87,12 +103,13 @@ export const DELETE = withAuth(async (request, { params, userId }) => {
       return apiNotFound('Tool not found')
     }
 
-    await db.tool.delete({
-      where: { id }
+    await db.tool.update({
+      where: { id },
+      data: { deletedAt: new Date() },
     })
     return apiSuccess(null)
   } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Internal server error')
   }
 });

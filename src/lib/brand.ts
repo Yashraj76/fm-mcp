@@ -1,0 +1,5 @@
+export const PRODUCT_NAME = 'kilink'
+export const COMPANY_NAME = 'kibizsystems'
+export const PRODUCT_FULL_NAME = 'kilink by kibizsystems'
+export const PRODUCT_DESCRIPTION = 'Build, manage, and test FileMaker MCP servers and tools.'
+export const PRODUCT_TAGLINE = 'FileMaker MCP server builder and tool orchestration platform'

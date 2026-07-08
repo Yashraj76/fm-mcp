@@ -43,6 +43,7 @@ import {
   Info,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 interface SettingsData {
   general: { theme: string; autoSave: boolean; connectionTimeout: number }
@@ -95,6 +96,7 @@ function ApiTokensCard() {
   const [newKey, setNewKey] = useState<string | null>(null)
   const [shown, setShown] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [revokeOpen, setRevokeOpen] = useState(false)
   const queryClient = useQueryClient()
 
   const { data: servers, isLoading: serversLoading } = useQuery<ServerListItem[]>({
@@ -210,11 +212,7 @@ function ApiTokensCard() {
                     variant="ghost"
                     size="sm"
                     className="text-destructive hover:text-destructive hover:bg-destructive/10 gap-1.5 text-xs"
-                    onClick={() => {
-                      if (confirm('Revoke this token? All clients using it will lose access immediately.')) {
-                        revokeMutation.mutate()
-                      }
-                    }}
+                    onClick={() => setRevokeOpen(true)}
                     disabled={revokeMutation.isPending}
                   >
                     {revokeMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
@@ -256,6 +254,14 @@ function ApiTokensCard() {
           </>
         )}
       </CardContent>
+      <ConfirmDialog
+        open={revokeOpen}
+        onOpenChange={setRevokeOpen}
+        title="Revoke API token?"
+        description="All clients using this token will lose access immediately. This cannot be undone."
+        confirmLabel="Revoke"
+        onConfirm={() => revokeMutation.mutate()}
+      />
     </Card>
   )
 }

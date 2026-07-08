@@ -11,6 +11,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Plus, Server, ExternalLink, Pencil, Rocket, FileJson, Trash2, Link2, Wrench, MoreHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { useState } from 'react'
+import { deriveServerHealthFlags, SERVER_HEALTH_BADGE } from '@/lib/status/connection-status'
+import { StatusBadge } from '@/components/ui/status-badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,16 +46,6 @@ interface ServerFromAPI {
   updatedAt: string
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; className: string }> = {
-    draft: { label: 'Draft', className: 'bg-blue-500/15 text-blue-500 border-blue-500/20' },
-    staging: { label: 'Staging', className: 'bg-yellow-500/15 text-yellow-500 border-yellow-500/20' },
-    deployed: { label: 'Deployed', className: 'bg-green-500/15 text-green-500 border-green-500/20' },
-    error: { label: 'Error', className: 'bg-red-500/15 text-red-500 border-red-500/20' },
-  }
-  const { label, className } = config[status] || config.draft
-  return <Badge variant="outline" className={className}>{label}</Badge>
-}
 
 function ServerCardSkeleton() {
   return (
@@ -89,11 +81,11 @@ export function ServersPage() {
   const setCurrentServer = useAppStore((s) => s.setCurrentServer)
   const setShowServerDialog = useAppStore((s) => s.setShowServerDialog)
   const setShowConfigDialog = useAppStore((s) => s.setShowConfigDialog)
-  const refreshServers = useAppStore((s) => s.refreshServers)
+
   const [serverToDelete, setServerToDelete] = useState<ServerFromAPI | null>(null)
 
   const { data: servers = [], isLoading, isError, error } = useQuery<ServerFromAPI[]>({
-    queryKey: ['servers', refreshServers],
+    queryKey: ['servers'],
     queryFn: () => api.get<ServerFromAPI[]>('/api/servers'),
     retry: 1,
   })
@@ -181,6 +173,11 @@ export function ServersPage() {
           {servers.map((server) => {
             const connCount = server.connections?.length ?? server._count?.connections ?? 0
             const toolCount = server.tools?.filter(t => t.isEnabled).length ?? server._count?.tools ?? 0
+            const healthFlags = deriveServerHealthFlags({
+              connections: server.connections ?? [],
+              tools: server.tools ?? [],
+              deployments: server.deployments ?? [],
+            })
             return (
               <Card
                 key={server.id}
@@ -201,6 +198,19 @@ export function ServersPage() {
                     </div>
                     <StatusBadge status={server.status} />
                   </div>
+                  {healthFlags.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {healthFlags.map((flag) => (
+                        <Badge
+                          key={flag}
+                          variant="outline"
+                          className={`text-[10px] py-0 px-1.5 ${SERVER_HEALTH_BADGE[flag].className}`}
+                        >
+                          {SERVER_HEALTH_BADGE[flag].label}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </CardHeader>
 
                 <CardContent>
@@ -278,7 +288,7 @@ export function ServersPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 if (serverToDelete) deleteMutation.mutate(serverToDelete.id)

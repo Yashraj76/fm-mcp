@@ -1,8 +1,15 @@
 import { prisma } from '../prisma';
-import { callAI } from '../ai/client';
+import { callAI as _callAI } from '../ai/client';
 import { CREATE_TOOLS_PROMPT } from '../ai/prompts/create-tools';
 import { seedDefaultTools } from './default-tools';
 import { safeParseJSON } from '../utils/safe-parse';
+import { sanitizeText } from '../utils/sanitizer';
+import { logger } from '../logger';
+
+/** Injectable dependencies — override in tests to avoid live AI calls. */
+export interface JobRunnerDeps {
+  callAI?: typeof _callAI
+}
 
 type LogEntry = { time: string; message: string; level: 'info' | 'error' | 'success' };
 
@@ -16,7 +23,14 @@ async function appendLog(jobId: string, message: string, level: LogEntry['level'
   });
 }
 
-export async function runToolGenerationJob(jobId: string, serverId: string, userId: string) {
+export async function runToolGenerationJob(
+  jobId: string,
+  serverId: string,
+  userId: string,
+  connectionId: string,
+  deps: JobRunnerDeps = {}
+) {
+  const callAI = deps.callAI ?? _callAI;
   await prisma.toolGenerationJob.update({
     where: { id: jobId },
     data: { status: 'running', startedAt: new Date(), progress: 5 },
@@ -30,16 +44,28 @@ export async function runToolGenerationJob(jobId: string, serverId: string, user
     });
     if (!server) throw new Error('Server not found or unauthorized');
 
-    const connServer = server.connections[0];
-    if (!connServer || !connServer.connection) throw new Error('No connection linked to this server');
-    
+    const connServer = server.connections.find((c: any) => c.connectionId === connectionId);
+    if (!connServer?.connection) {
+      throw new Error(`Connection "${connectionId}" is not linked to this server or was removed.`);
+    }
+
     const conn = connServer.connection;
 
     if (!conn.browsedSchema?.compiledSchema) {
       throw new Error('Connection has no compiled schema. Browse schema and save selections first.');
     }
 
-    const compiledSchema = safeParseJSON(conn.browsedSchema.compiledSchema, {});
+    const compiledSchema = safeParseJSON<Record<string, any>>(conn.browsedSchema.compiledSchema, {});
+
+    // Pre-flight: schema must have at least one layout or table selected
+    const schemaLayouts: any[] = Array.isArray(compiledSchema.layouts) ? compiledSchema.layouts : [];
+    const schemaTables: any[] = Array.isArray(compiledSchema.tables) ? compiledSchema.tables : [];
+    if (schemaLayouts.length === 0 && schemaTables.length === 0) {
+      throw new Error(
+        'No layouts selected in schema. Open Schema Browser for this connection, select at least one layout, then try again.'
+      );
+    }
+    await appendLog(jobId, `Schema ready: ${schemaLayouts.length} layout(s), ${schemaTables.length} table(s).`);
 
     // Seed default system tools first
     await appendLog(jobId, 'Creating default system tools (add, subtract, average, percentage)...');
@@ -58,12 +84,21 @@ export async function runToolGenerationJob(jobId: string, serverId: string, user
 
     // Call AI
     await appendLog(jobId, 'Calling AI to generate tools (this may take 15-30 seconds)...');
-    const aiText = await callAI({
-      systemPrompt: CREATE_TOOLS_PROMPT,
-      userMessage: JSON.stringify(inputPayload, null, 2),
-      maxOutputTokens: 8000,
-      userId,
-    });
+    let aiText: string;
+    try {
+      aiText = await callAI({
+        systemPrompt: CREATE_TOOLS_PROMPT,
+        userMessage: JSON.stringify(inputPayload, null, 2),
+        maxOutputTokens: 8000,
+        userId,
+      });
+    } catch (aiErr: any) {
+      const msg: string = aiErr.message ?? '';
+      if (msg.toLowerCase().includes('api key') || msg.toLowerCase().includes('not configured')) {
+        throw new Error('AI provider not configured. Go to Settings → AI to add your API key, then try again.');
+      }
+      throw new Error(`AI generation failed: ${msg}`);
+    }
     await prisma.toolGenerationJob.update({ where: { id: jobId }, data: { progress: 70 } });
 
     // Parse
@@ -84,7 +119,7 @@ export async function runToolGenerationJob(jobId: string, serverId: string, user
       toolDefs = safeParseJSON(clean);
       if (!Array.isArray(toolDefs)) throw new Error('Expected an array');
     } catch (parseErr: any) {
-      console.error('[AI Parse Error] Raw output:', aiText.substring(0, 500));
+      logger.error({ output: sanitizeText(aiText.substring(0, 500)) }, '[AI Parse Error]')
       throw new Error(`Failed to parse AI output as JSON: ${parseErr.message}`);
     }
 
@@ -112,6 +147,21 @@ export async function runToolGenerationJob(jobId: string, serverId: string, user
     });
     await appendLog(jobId, `✗ Failed: ${err.message}`, 'error');
   }
+}
+
+/**
+ * A job is stale if it has been in 'running' state longer than `thresholdMs`.
+ * This happens when a Vercel function timed out after the runner was started
+ * but before it could mark itself 'done' or 'failed'.
+ */
+export const JOB_STALE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes
+
+export function isJobStale(
+  job: { status: string; startedAt: Date | null },
+  thresholdMs = JOB_STALE_THRESHOLD_MS
+): boolean {
+  if (job.status !== 'running' || !job.startedAt) return false
+  return Date.now() - job.startedAt.getTime() > thresholdMs
 }
 
 export function mapStrategy(strategy: string): string {

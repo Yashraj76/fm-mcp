@@ -170,7 +170,10 @@ export function ToolPlayground() {
           <ToolPlaygroundContent tools={tools} isLoadingTools={isLoadingTools} branchId={currentBranchId} />
         </TabsContent>
         <TabsContent value="agent" className="flex-1 min-h-0 m-0 data-[state=inactive]:hidden flex flex-col">
-          <ServerPlayground />
+          <ServerPlayground
+            branchId={currentBranchId || undefined}
+            branchName={branches.find((b: any) => b.id === currentBranchId)?.name}
+          />
         </TabsContent>
       </Tabs>
     </div>

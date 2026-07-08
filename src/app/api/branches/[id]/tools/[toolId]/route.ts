@@ -4,7 +4,10 @@ import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { withAuth } from "@/lib/auth/api-guard";
 import { toSafeTool } from '@/lib/utils/dto';
+import { z, ZodError } from 'zod';
 import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response';
+import { mergeToolOverrideFields } from '@/lib/branches/merge-override-fields';
+import { logger } from '@/lib/logger'
 
 // GET: get a specific tool for this branch with its overrides
 // PUT: override a tool on this branch (non-destructive — doesn't touch main)
@@ -28,7 +31,7 @@ export const GET = withAuth(async (_, { params, userId }) => {
       where: { branchId_toolId: { branchId, toolId } },
     });
 
-    const override = branchTool ? safeParseJSON(branchTool.overrideData, {}) : {};
+    const override = branchTool ? safeParseJSON<Record<string, any>>(branchTool.overrideData, {}) : {};
     const merged = {
       ...tool,
       ...override,
@@ -41,10 +44,19 @@ export const GET = withAuth(async (_, { params, userId }) => {
       _branchToolId: branchTool?.id,
     });
     } catch (error) {
-    console.error('[API GET Branch Tool Detail Error]', error);
+    logger.error({ err: error }, '[API GET Branch Tool Detail Error]');
     return apiServerError('Internal server error');
     }
   });
+
+const updateSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().optional(),
+  inputSchema: z.any().optional(),
+  handlerConfig: z.any().optional(),
+  isEnabled: z.boolean().optional(),
+  enabled: z.boolean().optional(),
+});
 
 export const PUT = withAuth(async (req, { params, userId }) => {
     try {
@@ -56,7 +68,8 @@ export const PUT = withAuth(async (req, { params, userId }) => {
     });
     if (!branch) return apiNotFound('Not found');
 
-    const body = await req.json();
+    const bodyObj = await req.json().catch(() => ({}));
+    const body = updateSchema.parse(bodyObj);
     const tool = await prisma.tool.findFirst({
       where: {
         id: params.toolId,
@@ -68,7 +81,7 @@ export const PUT = withAuth(async (req, { params, userId }) => {
     let handlerConfigObj: any = {}
     if (body.handlerConfig) {
       handlerConfigObj = typeof body.handlerConfig === 'string' 
-        ? safeParseJSON(body.handlerConfig, {}) 
+        ? safeParseJSON<Record<string, any>>(body.handlerConfig, {}) 
         : body.handlerConfig;
     }
     if (handlerConfigObj.connectionId) {
@@ -88,14 +101,29 @@ export const PUT = withAuth(async (req, { params, userId }) => {
       fmMethod: tool.fmMethod ?? '', enabled: tool.isEnabled,
     };
 
-    // Store override as JSON — doesn't mutate the base tool
-    const overrideData = {
+    // Read the existing override so we can deep-merge rather than replace.
+    // Without this, a second PUT that changes only `description` would erase
+    // any `handlerConfig` saved by the first PUT.
+    const existingBranchTool = await prisma.branchTool.findUnique({
+      where: { branchId_toolId: { branchId: params.id, toolId: params.toolId } },
+      select: { overrideData: true },
+    });
+    const existingOverride = safeParseJSON<Record<string, unknown>>(
+      existingBranchTool?.overrideData,
+      {},
+    );
+
+    // Build incoming fields from the validated request body only.
+    const incomingOverride: Record<string, unknown> = {
       ...(body.name && { name: body.name }),
       ...(body.description && { description: body.description }),
       ...(body.inputSchema && { inputSchema: typeof body.inputSchema === 'string' ? body.inputSchema : JSON.stringify(body.inputSchema) }),
       ...(body.handlerConfig && { handlerConfig: typeof body.handlerConfig === 'string' ? body.handlerConfig : JSON.stringify(body.handlerConfig) }),
-      ...(body.isEnabled !== undefined ? { isEnabled: body.isEnabled } : (body.enabled !== undefined && { isEnabled: body.enabled })),
+      ...(body.isEnabled !== undefined ? { isEnabled: body.isEnabled } : (body.enabled !== undefined ? { isEnabled: body.enabled } : {})),
     };
+
+    // Merge: existing fields are preserved; incoming fields win on collision.
+    const overrideData = mergeToolOverrideFields(existingOverride, incomingOverride);
 
     await prisma.branchTool.upsert({
       where: { branchId_toolId: { branchId: params.id, toolId: params.toolId } },
@@ -118,11 +146,15 @@ export const PUT = withAuth(async (req, { params, userId }) => {
       before: JSON.stringify(beforeData),
       after: JSON.stringify(overrideData),
       meta: { branch: branch.name, overrideOnly: true },
+      actorUserId: userId,
     });
 
     return apiSuccess({ toolId: params.toolId, branch: branch.name });
-    } catch (error) {
-    console.error('[API PUT Branch Tool Error]', error);
+    } catch (error: any) {
+    if (error instanceof ZodError) {
+      return apiValidationFailed(error.issues);
+    }
+    logger.error({ err: error }, '[API PUT Branch Tool Error]');
     return apiServerError('Internal server error');
     }
   });
@@ -163,11 +195,12 @@ export const DELETE = withAuth(async (_, { params, userId }) => {
       entityType: 'tool', entityId: params.toolId, entityName: tool?.name ?? params.toolId,
       serverId: branch.serverId, branchId: params.id,
       meta: { branch: branch.name, softDeleteOnBranch: true },
+      actorUserId: userId,
     });
 
     return apiSuccess({ deleted: true, fromBranchOnly: true });
     } catch (error) {
-    console.error('[API DELETE Branch Tool Error]', error);
+    logger.error({ err: error }, '[API DELETE Branch Tool Error]');
     return apiServerError('Internal server error');
     }
   });

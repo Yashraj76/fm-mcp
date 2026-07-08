@@ -19,76 +19,28 @@ import {
   Layout,
   FileCode,
   Table2,
-  Columns3,
   GitFork,
-  ChevronRight,
-  Hash,
-  Type,
-  Calendar,
-  ToggleLeft,
+  Database,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
-interface SchemaData {
-  databaseName: string
-  cachedAt: string
-  layouts: LayoutItem[]
-  scripts: ScriptItem[]
-  tables: TableItem[]
-  fields: FieldItem[]
-  relationships: RelationshipItem[]
-}
+/**
+ * Read-only panel showing the last browse result for a connection.
+ *
+ * Reads from GET /api/connections/[id]/schema, which returns the data persisted
+ * by POST /browse-schema — never makes a live FileMaker call itself.
+ *
+ * For the interactive Schema Browser (selection + save), use SchemaBrowser instead.
+ */
 
-interface LayoutItem {
-  name: string
-  recordCount: number
-  fields: number
-  modifiable: boolean
-}
-
-interface ScriptItem {
-  name: string
-  type: string
-  description: string
-}
-
-interface TableItem {
-  name: string
-  fieldCount: number
-  primaryKey: string
-}
-
-interface FieldItem {
-  name: string
-  table: string
-  type: string
-  global: boolean
-  autoEnter: boolean
-}
-
-interface RelationshipItem {
-  name: string
-  table: string
-  relatedTable: string
-  type: string
-  keyMatch: string
-}
-
-const fieldTypeIcons: Record<string, typeof Type> = {
-  text: Type,
-  number: Hash,
-  date: Calendar,
-  timestamp: Calendar,
-  container: ToggleLeft,
-}
-
-const fieldTypeColors: Record<string, string> = {
-  text: 'text-sky-500',
-  number: 'text-amber-500',
-  date: 'text-emerald-500',
-  timestamp: 'text-emerald-600',
-  container: 'text-purple-500',
-  boolean: 'text-rose-500',
+interface BrowsedSchemaData {
+  layouts: string[]
+  scripts: string[]
+  odataTables: string[]
+  layoutMeta: Record<string, { fields: string[]; portals: string[] }>
+  odataMeta: Record<string, { fields: { name: string; type: string }[] }>
+  fetchedAt: string
+  updatedAt: string
 }
 
 interface SchemaExplorerInlineProps {
@@ -101,13 +53,17 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
     data: schema,
     isLoading,
     isError,
+    error,
     refetch,
     isFetching,
-  } = useQuery<SchemaData>({
-    queryKey: ['schema', connectionId],
-    queryFn: () => api.get<SchemaData>(`/api/connections/${connectionId}/schema`),
+  } = useQuery<BrowsedSchemaData>({
+    queryKey: ['browse-schema-snapshot', connectionId],
+    queryFn: () => api.get<BrowsedSchemaData>(`/api/connections/${connectionId}/schema`),
     enabled: !!connectionId,
+    retry: false, // NOT_BROWSED_YET is not retryable
   })
+
+  const errorCode = (error as any)?.code
 
   return (
     <Sheet open={!!connectionId} onOpenChange={(open) => !open && onClose()}>
@@ -117,10 +73,9 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
             <div>
               <SheetTitle className="text-base">Schema Explorer</SheetTitle>
               <SheetDescription>
-                {schema?.databaseName && `Database: ${schema.databaseName}`}
-                {schema?.cachedAt && (
+                {schema?.fetchedAt && (
                   <span className="block text-[11px] mt-0.5" suppressHydrationWarning>
-                    Cached {formatDistanceToNow(new Date(schema.cachedAt), { addSuffix: true })}
+                    Last browsed {formatDistanceToNow(new Date(schema.fetchedAt), { addSuffix: true })}
                   </span>
                 )}
               </SheetDescription>
@@ -131,7 +86,7 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
               className="size-8"
               onClick={() => refetch()}
               disabled={isFetching}
-              aria-label="Refresh Schema"
+              aria-label="Refresh"
             >
               <RefreshCw className={`size-3.5 ${isFetching ? 'animate-spin' : ''}`} />
             </Button>
@@ -139,194 +94,161 @@ export function SchemaExplorerInline({ connectionId, onClose }: SchemaExplorerIn
         </SheetHeader>
 
         <div className="mt-2 px-4">
-          <Tabs defaultValue="layouts" className="w-full">
-            <TabsList className="w-full grid grid-cols-5">
-              <TabsTrigger value="layouts" className="text-xs gap-1">
-                <Layout className="size-3" />
-                <span className="hidden sm:inline">Layouts</span>
-              </TabsTrigger>
-              <TabsTrigger value="scripts" className="text-xs gap-1">
-                <FileCode className="size-3" />
-                <span className="hidden sm:inline">Scripts</span>
-              </TabsTrigger>
-              <TabsTrigger value="tables" className="text-xs gap-1">
-                <Table2 className="size-3" />
-                <span className="hidden sm:inline">Tables</span>
-              </TabsTrigger>
-              <TabsTrigger value="fields" className="text-xs gap-1">
-                <Columns3 className="size-3" />
-                <span className="hidden sm:inline">Fields</span>
-              </TabsTrigger>
-              <TabsTrigger value="relationships" className="text-xs gap-1">
-                <GitFork className="size-3" />
-                <span className="hidden sm:inline">Relations</span>
-              </TabsTrigger>
-            </TabsList>
+          {isLoading ? (
+            <SchemaLoading />
+          ) : errorCode === 'NOT_BROWSED_YET' ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+              <Database className="size-8 text-muted-foreground/40" />
+              <p className="text-sm font-medium text-muted-foreground">Schema not browsed yet</p>
+              <p className="text-xs text-muted-foreground/70">
+                Open Schema Browser on this connection to fetch layouts and tables from FileMaker.
+              </p>
+            </div>
+          ) : isError ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center gap-3">
+              <p className="text-sm text-muted-foreground">Failed to load schema</p>
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                <RefreshCw className="size-3.5 mr-1" /> Retry
+              </Button>
+            </div>
+          ) : schema ? (
+            <Tabs defaultValue="layouts" className="w-full">
+              <TabsList className="w-full grid grid-cols-4">
+                <TabsTrigger value="layouts" className="text-xs gap-1">
+                  <Layout className="size-3" />
+                  <span className="hidden sm:inline">Layouts</span>
+                  <Badge variant="secondary" className="text-[10px] ml-0.5">{schema.layouts.length}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="scripts" className="text-xs gap-1">
+                  <FileCode className="size-3" />
+                  <span className="hidden sm:inline">Scripts</span>
+                  <Badge variant="secondary" className="text-[10px] ml-0.5">{schema.scripts.length}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="tables" className="text-xs gap-1">
+                  <Table2 className="size-3" />
+                  <span className="hidden sm:inline">OData</span>
+                  <Badge variant="secondary" className="text-[10px] ml-0.5">{schema.odataTables.length}</Badge>
+                </TabsTrigger>
+                <TabsTrigger value="portals" className="text-xs gap-1">
+                  <GitFork className="size-3" />
+                  <span className="hidden sm:inline">Portals</span>
+                </TabsTrigger>
+              </TabsList>
 
-            <div className="mt-3">
-              {isLoading ? (
-                <SchemaLoading />
-              ) : isError || !schema ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <p className="text-sm text-muted-foreground">Failed to load schema</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-2"
-                    onClick={() => refetch()}
-                  >
-                    <RefreshCw className="size-3.5 mr-1" />
-                    Retry
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <TabsContent value="layouts" className="mt-0">
-                    <ScrollArea className="h-[calc(100vh-220px)]">
-                      <div className="space-y-1">
-                        {schema.layouts.map((layout) => (
+              <div className="mt-3">
+                <TabsContent value="layouts" className="mt-0">
+                  <ScrollArea className="h-[calc(100vh-240px)]">
+                    <div className="space-y-1">
+                      {schema.layouts.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-8">No layouts found</p>
+                      )}
+                      {schema.layouts.map((name) => {
+                        const meta = schema.layoutMeta[name]
+                        return (
                           <div
-                            key={layout.name}
+                            key={name}
                             className="flex items-center justify-between p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
                               <Layout className="size-4 text-muted-foreground shrink-0" />
                               <div className="min-w-0">
-                                <p className="text-sm font-medium truncate">{layout.name}</p>
-                                <p className="text-[11px] text-muted-foreground">
-                                  {layout.recordCount.toLocaleString()} records &middot; {layout.fields} fields
-                                </p>
-                              </div>
-                            </div>
-                            <Badge
-                              variant="outline"
-                              className={`text-[10px] shrink-0 ${
-                                layout.modifiable
-                                  ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20'
-                                  : 'bg-muted text-muted-foreground border-border'
-                              }`}
-                            >
-                              {layout.modifiable ? 'R/W' : 'Read'}
-                            </Badge>
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  </TabsContent>
-
-                  <TabsContent value="scripts" className="mt-0">
-                    <ScrollArea className="h-[calc(100vh-220px)]">
-                      <div className="space-y-1">
-                        {schema.scripts.map((script) => (
-                          <div
-                            key={script.name}
-                            className="p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <FileCode className="size-4 text-amber-500 shrink-0" />
-                              <div className="min-w-0">
-                                <p className="text-sm font-medium truncate">{script.name}</p>
-                                <p className="text-[11px] text-muted-foreground truncate">
-                                  {script.description}
-                                </p>
+                                <p className="text-sm font-medium truncate">{name}</p>
+                                {meta && (
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {meta.fields.length} fields
+                                    {meta.portals.length > 0 && ` · ${meta.portals.length} portals`}
+                                  </p>
+                                )}
                               </div>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  </TabsContent>
+                        )
+                      })}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
 
-                  <TabsContent value="tables" className="mt-0">
-                    <ScrollArea className="h-[calc(100vh-220px)]">
-                      <div className="space-y-1">
-                        {schema.tables.map((table) => (
+                <TabsContent value="scripts" className="mt-0">
+                  <ScrollArea className="h-[calc(100vh-240px)]">
+                    <div className="space-y-1">
+                      {schema.scripts.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-8">No scripts found</p>
+                      )}
+                      {schema.scripts.map((name) => (
+                        <div
+                          key={name}
+                          className="flex items-center gap-2.5 p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
+                        >
+                          <FileCode className="size-4 text-amber-500 shrink-0" />
+                          <p className="text-sm font-medium truncate">{name}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value="tables" className="mt-0">
+                  <ScrollArea className="h-[calc(100vh-240px)]">
+                    <div className="space-y-1">
+                      {schema.odataTables.length === 0 && (
+                        <p className="text-sm text-muted-foreground text-center py-8">No OData tables found</p>
+                      )}
+                      {schema.odataTables.map((name) => {
+                        const meta = schema.odataMeta[name]
+                        return (
                           <div
-                            key={table.name}
+                            key={name}
                             className="flex items-center justify-between p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
                               <Table2 className="size-4 text-sky-500 shrink-0" />
                               <div className="min-w-0">
-                                <p className="text-sm font-medium truncate">{table.name}</p>
-                                <p className="text-[11px] text-muted-foreground">
-                                  {table.fieldCount} fields &middot; PK: {table.primaryKey}
-                                </p>
-                              </div>
-                            </div>
-                            <ChevronRight className="size-3.5 text-muted-foreground shrink-0" />
-                          </div>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  </TabsContent>
-
-                  <TabsContent value="fields" className="mt-0">
-                    <ScrollArea className="h-[calc(100vh-220px)]">
-                      <div className="space-y-1">
-                        {schema.fields.map((field, idx) => {
-                          const Icon = fieldTypeIcons[field.type] || Type
-                          const color = fieldTypeColors[field.type] || 'text-muted-foreground'
-                          return (
-                            <div
-                              key={`${field.table}-${field.name}-${idx}`}
-                              className="flex items-center justify-between p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
-                            >
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <Icon className={`size-4 ${color} shrink-0`} />
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium truncate">{field.name}</p>
+                                <p className="text-sm font-medium truncate">{name}</p>
+                                {meta?.fields && (
                                   <p className="text-[11px] text-muted-foreground">
-                                    {field.table} &middot; {field.type}
-                                    {field.global && ' (global)'}
-                                    {field.autoEnter && ' (auto)'}
+                                    {meta.fields.length} fields
                                   </p>
-                                </div>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </ScrollArea>
-                  </TabsContent>
-
-                  <TabsContent value="relationships" className="mt-0">
-                    <ScrollArea className="h-[calc(100vh-220px)]">
-                      <div className="space-y-1">
-                        {schema.relationships.map((rel) => (
-                          <div
-                            key={rel.name}
-                            className="p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex items-center gap-2.5">
-                              <GitFork className="size-4 text-purple-500 shrink-0" />
-                              <div className="min-w-0">
-                                <p className="text-sm font-medium truncate">{rel.name}</p>
-                                <p className="text-[11px] text-muted-foreground">
-                                  {rel.table} → {rel.relatedTable}
-                                </p>
-                                <div className="flex items-center gap-2 mt-0.5">
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[9px] bg-purple-500/10 text-purple-500 border-purple-500/20"
-                                  >
-                                    {rel.type}
-                                  </Badge>
-                                  <span className="text-[10px] text-muted-foreground font-mono truncate">
-                                    {rel.keyMatch}
-                                  </span>
-                                </div>
+                                )}
                               </div>
                             </div>
                           </div>
+                        )
+                      })}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value="portals" className="mt-0">
+                  <ScrollArea className="h-[calc(100vh-240px)]">
+                    <div className="space-y-1">
+                      {Object.entries(schema.layoutMeta)
+                        .filter(([, meta]) => meta.portals.length > 0)
+                        .flatMap(([layoutName, meta]) =>
+                          meta.portals.map((portal) => ({ layoutName, portal }))
+                        )
+                        .map(({ layoutName, portal }, i) => (
+                          <div
+                            key={`${layoutName}-${portal}-${i}`}
+                            className="flex items-center gap-2.5 p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
+                          >
+                            <GitFork className="size-4 text-purple-500 shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{portal}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                via {layoutName}
+                              </p>
+                            </div>
+                          </div>
                         ))}
-                      </div>
-                    </ScrollArea>
-                  </TabsContent>
-                </>
-              )}
-            </div>
-          </Tabs>
+                      {Object.values(schema.layoutMeta).every((m) => m.portals.length === 0) && (
+                        <p className="text-sm text-muted-foreground text-center py-8">No portals found</p>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+              </div>
+            </Tabs>
+          ) : null}
         </div>
       </SheetContent>
     </Sheet>

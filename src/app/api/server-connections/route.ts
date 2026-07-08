@@ -1,8 +1,10 @@
+import { apiSuccess, apiServerError, apiValidationFailed } from '@/lib/utils/api-response'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { encrypt } from '@/lib/crypto'
 import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -24,12 +26,12 @@ export const GET = withAuth(async (req, { params, userId }) => {
         _count: { select: { connections: true } },
       },
     })
-    return NextResponse.json({ success: true, data: servers })
-    } catch (e) {
-    console.error('[server-connections GET]', e)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-    }
-    });
+    return apiSuccess(servers)
+  } catch (e) {
+    logger.error({ err: e }, '[server-connections GET]')
+    return apiServerError('Internal server error')
+  }
+})
 export const POST = withAuth(async (req, { params, userId }) => {
     try {
     const body = await req.json()
@@ -50,12 +52,12 @@ export const POST = withAuth(async (req, { params, userId }) => {
         lastTestedAt: true, lastError: true, createdAt: true, updatedAt: true,
       },
     })
-    return NextResponse.json({ success: true, data: server }, { status: 201 })
-    } catch (e) {
+    return apiSuccess(server, 201)
+  } catch (e) {
     if (e instanceof ZodError) {
-      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
+      return apiValidationFailed(e.issues)
     }
-    console.error('[server-connections POST]', e)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-    }
-    });
+    logger.error({ err: e }, '[server-connections POST]')
+    return apiServerError('Internal server error')
+  }
+})

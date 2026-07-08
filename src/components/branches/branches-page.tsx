@@ -38,6 +38,7 @@ import {
 } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import { toast } from 'sonner'
+import { StatusBadge } from '@/components/ui/status-badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -77,16 +78,6 @@ interface ServerItem {
   _count: { tools: number; branches: number }
 }
 
-function BranchStatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; className: string }> = {
-    active: { label: 'Active', className: 'bg-green-500/15 text-green-500 border-green-500/20' },
-    merged: { label: 'Merged', className: 'bg-muted text-muted-foreground' },
-    archived: { label: 'Archived', className: 'bg-orange-500/15 text-orange-500 border-orange-500/20' },
-    deleted: { label: 'Deleted', className: 'bg-red-500/15 text-red-500 border-red-500/20' },
-  }
-  const { label, className } = config[status] || { label: status, className: '' }
-  return <Badge variant="outline" className={className}>{label}</Badge>
-}
 
 interface LogItem {
   id: string
@@ -258,8 +249,7 @@ export function BranchesPage() {
   const currentServerId = useAppStore((s) => s.currentServerId)
   const setCurrentServer = useAppStore((s) => s.setCurrentServer)
   const setShowBranchDialog = useAppStore((s) => s.setShowBranchDialog)
-  const triggerRefreshBranches = useAppStore((s) => s.triggerRefreshBranches)
-  const refreshBranches = useAppStore((s) => s.refreshBranches)
+
 
   const { data: servers = [] } = useQuery<ServerItem[]>({
     queryKey: ['servers'],
@@ -267,7 +257,7 @@ export function BranchesPage() {
   })
 
   const { data: branches = [], isLoading, isError, error } = useQuery<BranchItem[]>({
-    queryKey: ['branches', currentServerId, refreshBranches],
+    queryKey: ['branches', currentServerId],
     queryFn: async () => {
       try {
         return await api.get<BranchItem[]>(`/api/servers/${currentServerId}/branches`)
@@ -290,7 +280,7 @@ export function BranchesPage() {
   // Fetch activity logs for this server
   const { data: serverLogs = [], isLoading: isLoadingLogs } = useQuery({
     queryKey: ['server-logs', currentServerId],
-    queryFn: () => api.get<any[]>(`/api/servers/${currentServerId}/logs?limit=100`),
+    queryFn: () => api.get<{data: any[], pagination: any}>(`/api/servers/${currentServerId}/logs?limit=100`).then(res => res.data),
     enabled: !!currentServerId && branchTab === 'activity',
   })
 
@@ -309,9 +299,8 @@ export function BranchesPage() {
         changelog: `Merged branch ${branchId}`,
       }),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['branches'] })
-      queryClient.invalidateQueries({ queryKey: ['servers'] })
-      triggerRefreshBranches()
+      queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
+      queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       toast.success(data.message || 'Branch merged successfully')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to merge branch'),
@@ -321,8 +310,7 @@ export function BranchesPage() {
     mutationFn: (branchId: string) =>
       api.post<any>(`/api/branches/${branchId}/revert`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['branches'] })
-      triggerRefreshBranches()
+      queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
       toast.success('Branch reverted successfully')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to revert branch'),
@@ -332,8 +320,7 @@ export function BranchesPage() {
     mutationFn: (branchId: string) =>
       api.put<any>(`/api/branches/${branchId}`, { status: 'archived' }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['branches'] })
-      triggerRefreshBranches()
+      queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
       toast.success('Branch archived')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to archive branch'),
@@ -343,8 +330,7 @@ export function BranchesPage() {
     mutationFn: (branchId: string) =>
       api.delete<any>(`/api/branches/${branchId}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['branches'] })
-      triggerRefreshBranches()
+      queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
       toast.success('Branch deleted')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to delete branch'),
@@ -535,7 +521,7 @@ export function BranchesPage() {
                       </div>
                     </div>
                   </div>
-                  <BranchStatusBadge status={defaultBranch.status} />
+                  <StatusBadge status={defaultBranch.status} />
                 </div>
               </CardContent>
             </Card>
@@ -574,7 +560,7 @@ export function BranchesPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-sm font-semibold">{branch.name}</span>
-                            <BranchStatusBadge status={branch.status} />
+                            <StatusBadge status={branch.status} />
                             {branch.children?.length > 0 && (
                               <Badge variant="secondary" className="text-xs">
                                 {branch.children.length} {branch.children.length === 1 ? 'child' : 'children'}
@@ -652,7 +638,7 @@ export function BranchesPage() {
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
                                   <AlertDialogAction
                                     onClick={() => deleteMutation.mutate(branch.id)}
                                     className="bg-destructive text-white hover:bg-destructive/90"
@@ -674,8 +660,7 @@ export function BranchesPage() {
                             onClick={() => {
                               api.put(`/api/branches/${branch.id}`, { status: 'active' })
                                 .then(() => {
-                                  queryClient.invalidateQueries({ queryKey: ['branches'] })
-                                  triggerRefreshBranches()
+                                  queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
                                   toast.success('Branch restored')
                                 })
                                 .catch((err: any) => {

@@ -11,14 +11,15 @@ export const GET = withAuth(async (_, { params, userId }) => {
       id } });
     if (!session) return apiNotFound('Session not found');
 
-    const agentPlan = safeParseJSON(session.agentPlan);
+    const agentPlan = safeParseJSON<Record<string, any>>(session.agentPlan);
 
     return apiSuccess({
       sessionId: session.id,
       status: session.status,
+      branchId: session.branchId ?? null,
       userMessage: session.userMessage,
       intent: agentPlan ? agentPlan.intent : null,
-      stepLog: safeParseJSON(session.stepLog, []),
+      stepLog: safeParseJSON<any[]>(session.stepLog, []),
       finalResult: safeParseJSON(session.finalResult),
       createdAt: session.createdAt,
     });

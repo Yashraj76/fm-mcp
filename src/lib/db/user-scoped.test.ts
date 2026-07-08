@@ -156,6 +156,19 @@ async function runTests() {
       console.log('  ✓ listTools passed')
     }
 
+    // 6. Testing Ownership Validation Failures
+    console.log('\nTesting Ownership Validation Failures...')
+    {
+      mockPrismaMethod('mcpServer', 'findFirst', (options: any) => {
+        // Mock a scenario where user tries to access another user's server
+        return Promise.resolve(null)
+      })
+
+      const server = await getMcpServer('server-999', 'user-abc')
+      assert.strictEqual(server, null, 'Should return null for ownership mismatch')
+      console.log('  ✓ getMcpServer correctly returned null for ownership mismatch')
+    }
+
     console.log('\n🎉 ALL DATABASE OWNERSHIP SMOKE TESTS PASSED! 🎉')
   } finally {
     restorePrismaMocks()

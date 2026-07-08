@@ -6,6 +6,7 @@ import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { getTool } from '@/lib/db/user-scoped'
+import { logger } from '@/lib/logger'
 
 const executeSchema = z.object({
   params: z.record(z.string(), z.any()).optional().default({}),
@@ -37,7 +38,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
 
     const result = await (() => {
       // Detect OData tools by fmMethod or handlerConfig type
-      const handlerType = safeParseJSON(tool.handlerConfig, {}).type ?? '';
+      const handlerType = (safeParseJSON<Record<string, unknown>>(tool.handlerConfig, {}).type as string) ?? '';
       const method = tool.fmMethod || ''
       const isOData = method.startsWith('odata-') || handlerType.startsWith('odata-')
       return isOData ? executeODataTool(id, inputParams, userId) : executeTool(id, inputParams, userId)
@@ -54,14 +55,14 @@ export const POST = withAuth(async (request, { params, userId }) => {
         status: 'success',
         duration,
       },
-    }).catch((err: Error) => console.error('[execute] Failed to save execution record:', err.message))
+    }).catch((err: Error) => logger.error({ errMsg: err.message }, '[execute] Failed to save execution record:'))
 
     return NextResponse.json({ success: true, status: 200, data: result, duration })
   } catch (error: any) {
     const duration = Date.now() - startTime
     const { id: toolId } = await params.catch(() => ({ id: 'unknown' }))
 
-    console.error('[API Error] /api/tools/[id]/execute', error)
+    logger.error({ err: error }, '[API Error] /api/tools/[id]/execute')
 
     // Best-effort: save failed execution
     if (toolId !== 'unknown') {

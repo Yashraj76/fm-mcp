@@ -1,20 +1,22 @@
-import { NextResponse } from 'next/server';
+import { z, ZodError } from 'zod';
+import { apiSuccess, apiNotFound, apiError, apiServerError, apiValidationFailed } from '@/lib/utils/api-response';
 import { prisma } from '@/lib/prisma';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
-import { z } from 'zod';
 import { getEffectiveTools } from '@/lib/branching';
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 const CreateBranchSchema = z.object({
   name: z.string().min(1).regex(/^[a-z0-9\-\/]+$/, 'Lowercase letters, numbers, hyphens, slashes only'),
   description: z.string().optional(),
   fromBranchId: z.string().optional(), // fork from this branch; defaults to main
 });
 export const GET = withAuth(async (_, { params, userId }) => {
+  try {
     const server = await prisma.mcpServer.findFirst({
       where: { id: params.id, userId }
     });
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 });
+      return apiNotFound('Server not found');
     }
 
     const branches = await prisma.branch.findMany({
@@ -24,18 +26,24 @@ export const GET = withAuth(async (_, { params, userId }) => {
       },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
     });
-    return NextResponse.json({ success: true, data: branches });
-  });
+    return apiSuccess(branches);
+  } catch (error) {
+    logger.error({ err: error }, '[API Error]');
+    return apiServerError('Failed to list branches');
+  }
+});
 
 export const POST = withAuth(async (req, { params, userId }) => {
+  try {
     const server = await prisma.mcpServer.findFirst({
       where: { id: params.id, userId }
     });
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 });
+      return apiNotFound('Server not found');
     }
 
-    const body = CreateBranchSchema.parse(await req.json());
+    const bodyObj = await req.json().catch(() => ({}));
+    const body = CreateBranchSchema.parse(bodyObj);
 
     // Find source branch (default: main)
     const sourceBranch = body.fromBranchId
@@ -47,7 +55,7 @@ export const POST = withAuth(async (req, { params, userId }) => {
       });
 
     if (!sourceBranch) {
-      return NextResponse.json({ success: false, error: 'Source branch not found' }, { status: 404 });
+      return apiNotFound('Source branch not found');
     }
 
     // Prevent duplicate branch names on same server
@@ -57,39 +65,53 @@ export const POST = withAuth(async (req, { params, userId }) => {
       },
     });
     if (existing) {
-      return NextResponse.json({ success: false, error: `Branch "${body.name}" already exists` }, { status: 409 });
+      return apiError(`Branch "${body.name}" already exists`, 'CONFLICT', 409);
     }
 
-    // Create branch
-    const branch = await prisma.branch.create({
-      data: {
-        name: body.name,
-        serverId: params.id,
-        description: body.description,
-        isDefault: false,
-        isProtected: false,
-        status: 'active',
-      },
-    });
-
-    // Fork all tools from source branch as "inherited"
+    // Read source tools before the transaction (read-only, outside is fine)
     const sourceTools = await getEffectiveTools(sourceBranch.id);
-    if (sourceTools.length > 0) {
-      await prisma.branchTool.createMany({
-        data: sourceTools.map(tool => ({
-          branchId: branch.id,
-          toolId: tool.id,
-          action: 'inherited',
-        })),
+
+    // Create branch + fork its tools atomically so we never have a branch
+    // that exists but has no tool links (partial fork).
+    const branch = await prisma.$transaction(async (tx) => {
+      const newBranch = await tx.branch.create({
+        data: {
+          name: body.name,
+          serverId: params.id,
+          description: body.description,
+          isDefault: false,
+          isProtected: false,
+          status: 'active',
+        },
       });
-    }
+
+      if (sourceTools.length > 0) {
+        await tx.branchTool.createMany({
+          data: sourceTools.map(tool => ({
+            branchId: newBranch.id,
+            toolId: tool.id as string,
+            action: 'inherited',
+          })),
+        });
+      }
+
+      return newBranch;
+    });
 
     await log({
       action: LOG_ACTIONS.BRANCH_CREATED,
       entityType: 'branch', entityId: branch.id, entityName: branch.name,
       serverId: params.id,
       meta: { forkedFrom: sourceBranch.name, toolCount: sourceTools.length },
+      actorUserId: userId,
     });
 
-    return NextResponse.json({ success: true, data: branch }, { status: 201 });
-  });
+    return apiSuccess(branch, 201);
+  } catch (error: any) {
+    if (error instanceof ZodError) {
+      return apiValidationFailed(error.issues);
+    }
+    logger.error({ err: error }, '[API Error]');
+    return apiServerError('Failed to create branch');
+  }
+});

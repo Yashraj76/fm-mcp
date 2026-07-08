@@ -71,6 +71,9 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
   const [tableSearch, setTableSearch] = useState('')
   const [scriptSearch, setScriptSearch] = useState('')
 
+  // Per-layout field fetch loading state
+  const [loadingLayoutFields, setLoadingLayoutFields] = useState<Set<string>>(new Set())
+
   // Save state
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -105,7 +108,13 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
           setSelectedTables(new Set())
           setSelectedScripts(new Set())
         }
-      } catch (e) {
+      } catch (e: any) {
+        // NOT_BROWSED_YET and SCHEMA_NOT_SAVED are expected on first use — clear
+        // selections silently.  Any other code is an unexpected server error.
+        const expectedCode = e?.code === 'NOT_BROWSED_YET' || e?.code === 'SCHEMA_NOT_SAVED'
+        if (!expectedCode) {
+          console.warn('[SchemaBrowser] Unexpected error loading compiled schema:', e?.message || e)
+        }
         setSelectedLayouts(new Set())
         setSelectedTables(new Set())
         setSelectedScripts(new Set())
@@ -135,9 +144,14 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
       setRelationships(prev => {
         const next = [...prev]
         const rels = data.relationships || [];
+        // Dedup using sorted table names so A↔B::key and B↔A::key aren't
+        // added twice, while A↔C::key and B↔C::key (different tables, same
+        // field name) remain distinct.
+        const relKey = (from: string, to: string, key: string) =>
+          `${[from, to].sort().join('↔')}::${key}`
         rels.forEach((s: any) => {
-          // AI now outputs from/to/key/confidence/reason directly — no remapping needed
-          if (!next.some(r => r.from === s.from && r.to === s.to && r.key === s.key)) {
+          if (!s.from || !s.to || !s.key) return
+          if (!next.some(r => relKey(r.from, r.to, r.key) === relKey(s.from, s.to, s.key))) {
             next.push({
               from: s.from,
               to: s.to,
@@ -219,6 +233,7 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
         next.add(name)
         // Fetch fields lazily if not present
         if (!result?.layoutMeta[name]) {
+          setLoadingLayoutFields(prevL => new Set([...prevL, name]))
           api.post<any>(`/api/connections/${connectionId}/layout-fields`, { layout: name })
             .then(data => {
               if (data) {
@@ -229,7 +244,6 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                     layoutMeta: { ...prevRes.layoutMeta, [name]: data }
                   }
                 })
-                // Auto-select all fields on first load if layout is selected
                 if (selectedLayouts.has(name)) {
                    setSelectedFields(prevF => ({
                      ...prevF,
@@ -237,7 +251,15 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                    }))
                 }
               }
-            }).catch(console.error)
+            })
+            .catch(console.error)
+            .finally(() => {
+              setLoadingLayoutFields(prevL => {
+                const next = new Set(prevL)
+                next.delete(name)
+                return next
+              })
+            })
         }
       }
       return next
@@ -261,7 +283,8 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               Schema Browser
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Select layouts, tables, and scripts to include in your compiled schema
+              <span className="text-blue-400">Layouts</span> come from the FileMaker Data API.{' '}
+              <span className="text-purple-400">OData Tables</span> come from the OData 4.0 endpoint and are optional.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -290,7 +313,8 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
             <Button
               size="sm"
               onClick={handleSave}
-              disabled={saving || isWorking || !result}
+              disabled={saving || isWorking || !result || (selectedLayouts.size === 0 && selectedTables.size === 0)}
+              title={selectedLayouts.size === 0 && selectedTables.size === 0 ? 'Select at least one layout or OData table before saving' : undefined}
               className="bg-blue-600 hover:bg-blue-700 h-8"
             >
               {saving
@@ -334,7 +358,8 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               <div className="px-4 py-3 border-b shrink-0">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <Layout className="w-4 h-4" /> Layouts
+                    <Layout className="w-4 h-4 text-blue-400" /> Layouts
+                    <span className="text-[9px] text-blue-400/60 font-normal normal-case tracking-normal">Data API</span>
                     <Badge className="ml-1 bg-muted text-muted-foreground border-none text-xs">{selectedLayouts.size}/{result.layouts.length}</Badge>
                   </span>
                   <div className="flex gap-1.5">
@@ -354,10 +379,24 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+                {result.layouts.length === 0 ? (
+                  <div className="flex flex-col items-center text-center px-4 py-8 gap-2">
+                    <Layout className="w-6 h-6 text-muted-foreground/30 mb-1" />
+                    <p className="text-[11px] text-muted-foreground font-medium">No layouts found</p>
+                    <p className="text-[10px] text-muted-foreground/60 leading-relaxed">
+                      Check that the FileMaker file is open, the Data API is enabled in FileMaker Server Admin Console, and this account has access to at least one layout.
+                    </p>
+                  </div>
+                ) : filteredLayouts.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground text-center pt-6 px-2">
+                    No layouts match &ldquo;{layoutSearch}&rdquo;
+                  </p>
+                ) : null}
                 {filteredLayouts.map((layout) => {
                   const meta = result.layoutMeta[layout]
                   const isExpanded = expandedLayouts.has(layout)
                   const isSelected = selectedLayouts.has(layout)
+                  const isLoadingFields = loadingLayoutFields.has(layout)
                   return (
                     <div key={layout}>
                       <div className={`flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer group transition-colors ${isSelected ? 'bg-blue-500/10' : 'hover:bg-muted'}`}>
@@ -380,8 +419,10 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                       {isExpanded && (
                         <div className="ml-7 mb-1 space-y-0.5">
                           {!meta ? (
-                            <p className="text-[10px] text-muted-foreground/50 px-2 py-0.5 flex items-center gap-1.5 animate-pulse">
-                              <Loader2 className="w-3 h-3 animate-spin" /> Loading fields...
+                            <p className="text-[10px] text-muted-foreground/50 px-2 py-1 flex items-center gap-1.5">
+                              {isLoadingFields
+                                ? <><Loader2 className="w-3 h-3 animate-spin shrink-0" /> Loading fields…</>
+                                : <span className="text-muted-foreground/40">Expand to load fields</span>}
                             </p>
                           ) : (
                             <>
@@ -428,7 +469,8 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               <div className="px-4 py-3 border-b shrink-0">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                    <Table2 className="w-4 h-4" /> OData Tables
+                    <Table2 className="w-4 h-4 text-purple-400" /> OData Tables
+                    <span className="text-[9px] text-purple-400/60 font-normal normal-case tracking-normal">OData 4.0</span>
                     <Badge className="ml-1 bg-muted text-muted-foreground border-none text-xs">{selectedTables.size}/{result.odataTables.length}</Badge>
                   </span>
                 </div>
@@ -443,9 +485,19 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
-                {filteredTables.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground text-center pt-6 px-2">No OData tables available</p>
-                )}
+                {result.odataTables.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center px-3">
+                    <Table2 className="w-5 h-5 text-muted-foreground/30 mb-2" />
+                    <p className="text-[11px] text-muted-foreground font-medium mb-1">OData not available</p>
+                    <p className="text-[10px] text-muted-foreground/60">
+                      No OData tables were found for this connection. OData is optional — layouts are sufficient for tool generation.
+                    </p>
+                  </div>
+                ) : filteredTables.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground text-center pt-6 px-2">
+                    No tables match &ldquo;{tableSearch}&rdquo;
+                  </p>
+                ) : null}
                 {filteredTables.map((table) => (
                   <div
                     key={table}
@@ -656,6 +708,12 @@ export function SchemaBrowser({ connectionId, onClose }: SchemaBrowserProps) {
               {selectedLayouts.size} layouts · {selectedTables.size} tables · {selectedScripts.size} scripts · {relationships.length} relationships
             </span>
             {error && <span className="text-red-400 flex items-center gap-1"><XCircle className="w-3.5 h-3.5" />{error}</span>}
+            {!error && selectedLayouts.size === 0 && selectedTables.size === 0 && (
+              <span className="text-amber-400 flex items-center gap-1">
+                <XCircle className="w-3.5 h-3.5" />
+                Select at least one layout or OData table to enable saving
+              </span>
+            )}
             {saved && <span className="text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" />Compiled schema saved — ready for tool generation</span>}
           </div>
         )}

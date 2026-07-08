@@ -5,6 +5,9 @@ import { withAuth } from "@/lib/auth/api-guard";
 import { toSafeTool } from '@/lib/utils/dto'
 import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
+import { validateToolForSave } from '@/lib/tools/validate-tool'
+import { fmMethodSchema } from '@/lib/tools/fm-methods'
+import { logger } from '@/lib/logger'
 
 const updateToolSchema = z.object({
   name: z.string().min(1).optional(),
@@ -15,7 +18,7 @@ const updateToolSchema = z.object({
   handlerConfig: z.string().optional(),
   fmLayout: z.string().nullable().optional(),
   fmScript: z.string().nullable().optional(),
-  fmMethod: z.enum(['create', 'read', 'update', 'delete', 'find', 'script', 'custom']).nullable().optional(),
+  fmMethod: fmMethodSchema.nullable().optional(),
   isEnabled: z.boolean().optional(),
   testConfig: z.string().nullable().optional(),
   sortOrder: z.number().int().optional(),
@@ -31,6 +34,7 @@ export const GET = withAuth(async (_request, { params, userId }) => {
       where: {
         id: toolId,
         serverId: id,
+        deletedAt: null,
         server: { userId }
       },
       include: {
@@ -47,7 +51,7 @@ export const GET = withAuth(async (_request, { params, userId }) => {
 
     return apiSuccess(toSafeTool(tool))
     } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to fetch tool')
     }
     });
@@ -59,6 +63,7 @@ export const PUT = withAuth(async (request, { params, userId }) => {
       where: {
         id: toolId,
         serverId: id,
+        deletedAt: null,
         server: { userId }
       }
     })
@@ -73,8 +78,29 @@ export const PUT = withAuth(async (request, { params, userId }) => {
       return apiValidationFailed(parsed.error.flatten())
     }
 
+    // Run semantic validation when shape-changing fields are included in the update.
+    // We merge the incoming partial update over the existing tool so validation has
+    // full context (e.g. confirming recordId is present in inputSchema for update/delete).
+    const SHAPE_FIELDS = ['name', 'description', 'fmMethod', 'category', 'handlerConfig', 'inputSchema', 'fmLayout'] as const
+    const hasShapeChange = SHAPE_FIELDS.some(f => parsed.data[f] !== undefined)
+    if (hasShapeChange) {
+      const merged = {
+        name: parsed.data.name ?? tool.name,
+        description: parsed.data.description ?? tool.description,
+        fmMethod: parsed.data.fmMethod ?? tool.fmMethod,
+        category: parsed.data.category ?? tool.category,
+        handlerConfig: parsed.data.handlerConfig ?? tool.handlerConfig,
+        inputSchema: parsed.data.inputSchema ?? tool.inputSchema,
+        fmLayout: parsed.data.fmLayout ?? tool.fmLayout,
+      }
+      const toolValidationErrors = validateToolForSave(merged)
+      if (toolValidationErrors.length > 0) {
+        return apiValidationFailed(toolValidationErrors)
+      }
+    }
+
     if (parsed.data.handlerConfig) {
-      let handlerConfigObj: any = safeParseJSON(parsed.data.handlerConfig, {})
+      let handlerConfigObj: any = safeParseJSON<Record<string, any>>(parsed.data.handlerConfig, {})
       if (handlerConfigObj.connectionId) {
         const isLinked = await db.fMConnectionServer.findFirst({
           where: {
@@ -102,7 +128,7 @@ export const PUT = withAuth(async (request, { params, userId }) => {
 
     return apiSuccess(toSafeTool(updatedTool))
     } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to update tool')
     }
     });
@@ -114,6 +140,7 @@ export const DELETE = withAuth(async (_request, { params, userId }) => {
       where: {
         id: toolId,
         serverId: id,
+        deletedAt: null,
         server: { userId }
       }
     })
@@ -121,13 +148,13 @@ export const DELETE = withAuth(async (_request, { params, userId }) => {
       return apiNotFound('Tool not found')
     }
 
-    await db.tool.delete({
-      where: {
-        id: toolId }
+    await db.tool.update({
+      where: { id: toolId },
+      data: { deletedAt: new Date() },
     })
     return apiSuccess(null)
     } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to delete tool')
     }
     });

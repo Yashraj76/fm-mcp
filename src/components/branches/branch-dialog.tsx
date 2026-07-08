@@ -26,7 +26,7 @@ export function BranchDialog() {
   const showBranchDialog = useAppStore((s) => s.showBranchDialog)
   const setShowBranchDialog = useAppStore((s) => s.setShowBranchDialog)
   const currentServerId = useAppStore((s) => s.currentServerId)
-  const triggerRefreshBranches = useAppStore((s) => s.triggerRefreshBranches)
+
 
   const [name, setName] = useState('')
   const [commitMessage, setCommitMessage] = useState('')
@@ -69,7 +69,7 @@ export function BranchDialog() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches'] })
-      triggerRefreshBranches()
+      queryClient.invalidateQueries({ queryKey: ['branches'] })
       toast.success('Branch created successfully')
       setShowBranchDialog(false)
       setIsSubmitting(false)

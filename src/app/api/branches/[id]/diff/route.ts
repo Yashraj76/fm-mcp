@@ -1,8 +1,10 @@
-import { NextResponse } from 'next/server';
+import { apiSuccess, apiError, apiServerError } from '@/lib/utils/api-response';
 import { prisma } from '@/lib/prisma';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 export const GET = withAuth(async (_, { params, userId }) => {
+  try {
     const branch = await prisma.branch.findFirst({
       where: {
         id: params.id,
@@ -11,7 +13,7 @@ export const GET = withAuth(async (_, { params, userId }) => {
       include: { server: true },
     });
     if (!branch || branch.isDefault) {
-      return NextResponse.json({ success: false, error: 'Cannot diff main against itself' }, { status: 400 });
+      return apiError('Cannot diff main against itself', 'VALIDATION_ERROR', 400);
     }
 
     // Get main branch tools
@@ -43,7 +45,7 @@ export const GET = withAuth(async (_, { params, userId }) => {
     };
 
     for (const change of branchChanges) {
-    const override = safeParseJSON(change.overrideData, {});
+    const override = safeParseJSON<Record<string, any>>(change.overrideData, {});
     const entry = {
       toolId: change.toolId,
       name: override.name ?? change.tool.name,
@@ -58,5 +60,9 @@ export const GET = withAuth(async (_, { params, userId }) => {
     else { diff.inherited.push(entry); diff.summary.unchanged++; }
     }
 
-    return NextResponse.json({ success: true, data: diff });
-    });
+    return apiSuccess(diff);
+  } catch (error) {
+    logger.error({ err: error }, '[API Error]');
+    return apiServerError('Failed to fetch branch diff');
+  }
+});

@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { apiSuccess, apiNotFound, apiError, apiServerError } from '@/lib/utils/api-response'
 import { withAuth } from "@/lib/auth/api-guard"
 import { getMcpServer } from '@/lib/db/user-scoped'
+import { logger } from '@/lib/logger'
 
 export const POST = withAuth(async (request, { params, userId }) => {
   try {
@@ -8,7 +9,29 @@ export const POST = withAuth(async (request, { params, userId }) => {
     const server = await getMcpServer(id, userId)
 
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Server not found')
+    }
+
+    // Self-test uses INTERNAL_TEST_SECRET to call the MCP endpoint without an
+    // API key. This bypass is only available in non-production environments.
+    // In production the bypass path in the MCP endpoint is unconditionally
+    // disabled, so this route returns 503 rather than silently calling an
+    // endpoint that would reject it with 401.
+    if (process.env.NODE_ENV === 'production') {
+      return apiError(
+        'MCP self-test is not available in production. Use a provisioned API key instead.',
+        'NOT_AVAILABLE_IN_PRODUCTION',
+        503,
+      )
+    }
+
+    const internalTestSecret = process.env.INTERNAL_TEST_SECRET
+    if (!internalTestSecret) {
+      return apiError(
+        'INTERNAL_TEST_SECRET is not configured. Set this env var to enable the MCP self-test.',
+        'INTERNAL_SECRET_NOT_CONFIGURED',
+        503,
+      )
     }
 
     // Determine the base url to call the local endpoint
@@ -17,8 +40,6 @@ export const POST = withAuth(async (request, { params, userId }) => {
     const baseUrl = `${protocol}://${host}`
 
     const testUrl = `${baseUrl}/api/mcp/${id}/mcp`
-    const secret = process.env.INTERNAL_TEST_SECRET || 'mcp-self-test-secret'
-
     const testStartTime = Date.now()
 
     // Call the endpoint using standard fetch
@@ -26,7 +47,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-internal-test-secret': secret
+        'x-internal-test-secret': internalTestSecret,
       },
       body: JSON.stringify({
         jsonrpc: '2.0',
@@ -41,37 +62,24 @@ export const POST = withAuth(async (request, { params, userId }) => {
 
     if (!response.ok) {
       const errorText = await response.text()
-      return NextResponse.json({
-        success: false,
-        error: `MCP endpoint returned status ${status}: ${errorText}`,
-        code: 'MCP_TEST_FAILED',
-        data: { status, duration }
-      }, { status: 400 })
+      return apiError(`MCP endpoint returned status ${status}: ${errorText}`, 'MCP_TEST_FAILED', 400, { status, duration })
     }
 
     const responseBody = await response.json()
     
     // Verify it is a valid JSON-RPC response
     if (responseBody?.jsonrpc !== '2.0' || (!responseBody.result && !responseBody.error)) {
-      return NextResponse.json({
-        success: false,
-        error: 'Invalid JSON-RPC response from MCP endpoint',
-        code: 'INVALID_JSON_RPC',
-        data: { status, duration, responseBody }
-      }, { status: 400 })
+      return apiError('Invalid JSON-RPC response from MCP endpoint', 'INVALID_JSON_RPC', 400, { status, duration, responseBody })
     }
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        status,
-        duration,
-        toolsCount: responseBody.result?.tools?.length || 0,
-        response: responseBody
-      }
+    return apiSuccess({
+      status,
+      duration,
+      toolsCount: responseBody.result?.tools?.length || 0,
+      response: responseBody
     })
   } catch (error: any) {
-    console.error('[MCP Self-Test API Error]', error)
-    return NextResponse.json({ success: false, error: error.message || 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+    logger.error({ err: error }, '[MCP Self-Test API Error]')
+    return apiServerError('Internal server error')
   }
 })

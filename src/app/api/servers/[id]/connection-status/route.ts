@@ -1,6 +1,8 @@
-import { NextResponse } from 'next/server'
+import { apiSuccess, apiNotFound, apiServerError, apiError } from '@/lib/utils/api-response'
 import { withAuth } from "@/lib/auth/api-guard"
 import { db } from '@/lib/db'
+import { getPublicAppUrl, AppUrlConfigError } from '@/lib/utils/app-url'
+import { logger } from '@/lib/logger'
 
 export const GET = withAuth(async (request, { params, userId }) => {
   try {
@@ -18,7 +20,7 @@ export const GET = withAuth(async (request, { params, userId }) => {
     })
 
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Server not found')
     }
 
     const connectionStatuses = server.connections.map(c => ({
@@ -33,7 +35,7 @@ export const GET = withAuth(async (request, { params, userId }) => {
 
     const serverReady = connectionStatuses.length > 0 && connectionStatuses.some(c => c.isActive && c.status === 'connected')
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const baseUrl = getPublicAppUrl()
     const mcpBase = `${baseUrl}/api/mcp/${server.id}`
 
     const redisConfigured = !!process.env.REDIS_URL
@@ -62,9 +64,12 @@ export const GET = withAuth(async (request, { params, userId }) => {
       connections: connectionStatuses
     }
 
-    return NextResponse.json({ success: true, data: responseData })
+    return apiSuccess(responseData)
   } catch (error: any) {
-    console.error('[Connection Status API Error]', error)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+    if (error instanceof AppUrlConfigError) {
+      return apiError(error.message, 'CONFIG_ERROR', 500)
+    }
+    logger.error({ err: error }, '[Connection Status API Error]')
+    return apiServerError('Internal server error')
   }
 })

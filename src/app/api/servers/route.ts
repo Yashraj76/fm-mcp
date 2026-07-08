@@ -3,7 +3,8 @@ import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
 import { toSafeServer } from '@/lib/utils/dto'
-import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError } from '@/lib/utils/api-response'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
+import { logger } from '@/lib/logger'
 
 const createServerSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -34,6 +35,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
         },
         tools: {
           where: { isEnabled: true },
+          select: { id: true, name: true, isEnabled: true, category: true, sortOrder: true },
         },
         deployments: {
           orderBy: { createdAt: 'desc' },
@@ -52,7 +54,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
 
     return apiSuccess(servers.map(toSafeServer))
     } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to fetch servers')
     }
     });
@@ -128,6 +130,7 @@ log({
   entityType: 'branch', entityId: mainBranch.id, entityName: 'main',
   serverId: server.id,
   meta: { isDefault: true, isProtected: true },
+  actorUserId: userId,
 });
 
 // Start background job to generate tools if there are connections
@@ -146,19 +149,22 @@ if (connectionIds && connectionIds.length > 0) {
   setImmediate(async () => {
     try {
       const { runToolGenerationJob } = await import('@/lib/tools/job-runner');
-      await runToolGenerationJob(job.id, server.id, userId);
+      await runToolGenerationJob(job.id, server.id, userId, connectionIds[0]);
     } catch (e) {
-      console.error('[ServerCreation] Tool generation error:', e);
+      logger.error({ err: e }, '[ServerCreation] Tool generation error:');
     }
   });
 }
 
 return apiSuccess(toSafeServer(server), 201)
-} catch (error) {
+} catch (error: any) {
 if (error instanceof ZodError) {
   return apiValidationFailed(error.issues)
 }
-console.error('[API Error]', error)
+if (error?.code === 'P2002') {
+  return apiError('One or more connections are already linked to this server', 'CONFLICT', 409)
+}
+logger.error({ err: error }, '[API Error]')
 return apiServerError('Failed to create server')
 }
 });

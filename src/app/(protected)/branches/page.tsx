@@ -1,11 +1,6 @@
-import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 import { Loader2 } from 'lucide-react'
 
-export const metadata: Metadata = {
-  title: 'Feature Branches - FileMaker MCP',
-  description: 'Manage development and staging branches for FileMaker database schemas and tool overrides.',
-}
 
 const BranchesPage = dynamic(
   () => import('@/components/branches/branches-page').then((mod) => mod.BranchesPage),

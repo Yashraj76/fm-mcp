@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { apiSuccess, apiNotFound, apiServerError, apiValidationFailed } from '@/lib/utils/api-response'
 import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
 import { safeParseJSON } from '@/lib/utils/safe-parse';
-
-type Params = { params: Promise<{ id: string }> }
+import { validateSchemaSelections } from '@/lib/schema/validate-schema-selections';
+import { logger } from '@/lib/logger'
 
 const selectionsSchema = z.object({
   selectedLayouts: z.array(z.string()),
@@ -19,8 +19,9 @@ const selectionsSchema = z.object({
     reason: z.string()
   })).optional().default([]),
 })
+
 export const PUT = withAuth(async (req, { params, userId }) => {
-    try {
+  try {
     const { id } = params
 
     // Verify connection ownership
@@ -28,22 +29,39 @@ export const PUT = withAuth(async (req, { params, userId }) => {
       where: { id, userId }
     });
     if (!conn) {
-      return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 });
+      return apiNotFound('Connection not found')
     }
 
     const browsedSchema = await db.browsedSchema.findUnique({
       where: { connectionId: id }
     })
     if (!browsedSchema) {
-      return NextResponse.json({ success: false, error: 'Schema not browsed yet', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Schema not browsed yet')
     }
 
     const body = await req.json()
     const parsed = selectionsSchema.parse(body)
 
-    const layoutMeta = safeParseJSON(browsedSchema.rawLayoutMeta, {})
-    const odataMeta = safeParseJSON(browsedSchema.rawODataMeta, {})
-    const suggestedRels = safeParseJSON(browsedSchema.suggestedRelationships, [])
+    // Validate: at least one layout or table, and all selected tables exist in fetched metadata
+    const availableODataTables = safeParseJSON<string[]>(browsedSchema.rawODataTables, [])
+    const selectionValidation = validateSchemaSelections(
+      parsed.selectedLayouts,
+      parsed.selectedTables,
+      availableODataTables,
+    )
+    if (!selectionValidation.valid) {
+      return apiValidationFailed(
+        selectionValidation.errors.map(e => ({
+          code: e.code,
+          message: e.message,
+          path: [e.field],
+          ...(e.invalidNames ? { invalidNames: e.invalidNames } : {}),
+        })),
+      )
+    }
+
+    const layoutMeta = safeParseJSON<Record<string, any>>(browsedSchema.rawLayoutMeta, {})
+    const odataMeta = safeParseJSON<Record<string, any>>(browsedSchema.rawODataMeta, {})
 
     // Build compiledSchema from selections
     const compiledLayouts = parsed.selectedLayouts.map((name) => ({
@@ -81,12 +99,12 @@ export const PUT = withAuth(async (req, { params, userId }) => {
       },
     })
 
-    return NextResponse.json({ success: true, data: { compiledSchema, updatedAt: updated.updatedAt } })
-    } catch (e: any) {
+    return apiSuccess({ compiledSchema, updatedAt: updated.updatedAt })
+  } catch (e: any) {
     if (e instanceof ZodError) {
-      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
+      return apiValidationFailed(e.issues)
     }
-    console.error('[schema/selections PUT]', e)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-    }
-    });
+    logger.error({ err: e }, '[schema/selections PUT]')
+    return apiServerError('Internal server error')
+  }
+})

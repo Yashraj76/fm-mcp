@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 
 // GET /api/dashboard - Get platform dashboard statistics
 export const GET = withAuth(async (req, { params, userId }) => {
@@ -42,11 +43,11 @@ export const GET = withAuth(async (req, { params, userId }) => {
       // Total branches
       db.branch.count({ where: { server: { userId }, status: 'active' } }),
 
-      // Total tools
-      db.tool.count({ where: { server: { userId } } }),
+      // Total tools (active only — soft-deleted tools are excluded)
+      db.tool.count({ where: { server: { userId }, deletedAt: null } }),
 
       // Enabled tools
-      db.tool.count({ where: { server: { userId }, isEnabled: true } }),
+      db.tool.count({ where: { server: { userId }, isEnabled: true, deletedAt: null } }),
 
       // Total deployments
       db.deployment.count({ where: { server: { userId } } }),
@@ -81,11 +82,11 @@ export const GET = withAuth(async (req, { params, userId }) => {
       where: { userId },
     })
 
-    // Get tools by category
+    // Get tools by category (active only)
     const toolsByCategory = await db.tool.groupBy({
       by: ['category'],
       _count: true,
-      where: { server: { userId }, category: { not: null } },
+      where: { server: { userId }, category: { not: null }, deletedAt: null },
     })
 
     // Get execution success rate (last 100 executions)
@@ -129,9 +130,9 @@ export const GET = withAuth(async (req, { params, userId }) => {
       },
     })
 
-    // Get top tools by execution count
+    // Get top tools by execution count (active only)
     const topTools = await db.tool.findMany({
-      where: { server: { userId } },
+      where: { server: { userId }, deletedAt: null },
       orderBy: { executions: { _count: 'desc' } },
       take: 5,
       include: {
@@ -212,7 +213,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
       })),
     })
     } catch (error) {
-    console.error('Error fetching dashboard stats:', error)
+    logger.error({ err: error }, 'Error fetching dashboard stats:')
     return NextResponse.json(
       { error: 'Failed to fetch dashboard statistics' },
       { status: 500 }

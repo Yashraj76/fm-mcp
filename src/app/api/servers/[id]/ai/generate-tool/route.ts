@@ -1,14 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { apiNotFound, apiServerError, apiValidationFailed } from '@/lib/utils/api-response'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
+import { fmMethodSchema } from '@/lib/tools/fm-methods';
+import { normalizeTool } from '@/lib/tools/normalize-tool';
+import { logger } from '@/lib/logger'
 
 const generateToolSchema = z.object({
   description: z.string().min(10, 'Please provide a more detailed description (at least 10 characters)'),
   branchId: z.string().min(1, 'Branch ID is required'),
   category: z.string().optional(),
   connectionId: z.string().optional(),
-  fmMethod: z.enum(['create', 'read', 'update', 'delete', 'find', 'script', 'custom']).optional(),
+  fmMethod: fmMethodSchema.optional(),
   additionalInstructions: z.string().optional(),
 })
 
@@ -20,17 +24,14 @@ export const POST = withAuth(async (request, { params, userId }) => {
       where: { id, userId }
     })
     if (!server) {
-      return NextResponse.json({ error: 'Server not found' }, { status: 404 })
+      return apiNotFound('Server not found')
     }
 
     const body = await request.json()
     const parsed = generateToolSchema.safeParse(body)
 
     if (!parsed.success) {
-      return NextResponse.json(
-        { error: 'Validation failed', details: parsed.error.flatten() },
-        { status: 400 }
-      )
+      return apiValidationFailed(parsed.error.issues)
     }
 
     // Verify branch exists
@@ -38,7 +39,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
       where: { id: parsed.data.branchId, serverId: id },
     })
     if (!branch) {
-      return NextResponse.json({ error: 'Branch not found' }, { status: 404 })
+      return apiNotFound('Branch not found')
     }
 
     // Simulate AI processing time
@@ -65,7 +66,6 @@ export const POST = withAuth(async (request, { params, userId }) => {
       .join('_')
 
     const toolName = `fm_${method}_${nameBase || 'tool'}`
-    const camelName = toolName.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 
     // Generate input schema based on method
     let inputSchema: Record<string, unknown>
@@ -182,22 +182,28 @@ export const POST = withAuth(async (request, { params, userId }) => {
       },
     }
 
-    // Build the generated tool
-    const generatedTool = {
+    // Inject connectionId if the caller provided one
+    if (parsed.data.connectionId) {
+      (handlerConfig as Record<string, unknown>).connectionId = parsed.data.connectionId
+    }
+
+    // Normalize: fills correct category, outputSchema, handlerConfig.method, etc.
+    // Also fixes the category precedence bug that existed in the old inline expression.
+    const normalized = normalizeTool({
       name: toolName,
       description: parsed.data.description,
-      category: parsed.data.category || method === 'script' ? 'Script' : method === 'find' ? 'Find' : 'CRUD',
-      inputSchema: JSON.stringify(inputSchema),
-      outputSchema: JSON.stringify(outputSchema),
-      handlerConfig: JSON.stringify(handlerConfig),
       fmMethod: method,
       fmLayout: method !== 'script' ? 'Contacts' : undefined,
       fmScript: method === 'script' ? 'ProcessData' : undefined,
+      category: parsed.data.category,
+      inputSchema,
+      outputSchema,
+      handlerConfig,
       isEnabled: true,
       isAiGenerated: true,
-    }
+    })
 
-    // Save suggestion record
+    // Save suggestion record using the normalized shape
     const suggestion = await db.aiSuggestion.create({
       data: {
         serverId: id,
@@ -206,14 +212,22 @@ export const POST = withAuth(async (request, { params, userId }) => {
         suggestionType: 'tool_suggestion',
         title: `AI Generated: ${toolName}`,
         description: parsed.data.description,
-        proposedConfig: JSON.stringify(generatedTool),
+        proposedConfig: JSON.stringify(normalized),
         status: 'pending',
       },
     })
 
+    // Return inputSchema/handlerConfig/outputSchema as objects for the UI
+    const toolForResponse = {
+      ...normalized,
+      inputSchema: JSON.parse(normalized.inputSchema),
+      handlerConfig: JSON.parse(normalized.handlerConfig),
+      outputSchema: JSON.parse(normalized.outputSchema),
+    }
+
     return NextResponse.json({
       suggestionId: suggestion.id,
-      tool: generatedTool,
+      tool: toolForResponse,
       metadata: {
         generatedFrom: parsed.data.description,
         inferredMethod: method,
@@ -230,7 +244,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
       ],
     })
     } catch (error) {
-    console.error('Error generating tool:', error)
-    return NextResponse.json({ error: 'Failed to generate tool' }, { status: 500 })
+    logger.error({ err: error }, 'Error generating tool:')
+    return apiServerError('Failed to generate tool')
     }
     });

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -84,6 +85,7 @@ export const POST = withAuth(async (_, { params, userId }) => {
       entityName: branch.name,
       serverId: branch.serverId,
       meta: { revertedTo: mainBranch.name, toolCount: mainTools.length },
+      actorUserId: userId,
     });
 
     return NextResponse.json({
@@ -92,7 +94,7 @@ export const POST = withAuth(async (_, { params, userId }) => {
       data: { toolCount: mainTools.length },
     });
     } catch (error) {
-    console.error('[API POST Revert Branch Error]', error);
+    logger.error({ err: error }, '[API POST Revert Branch Error]');
     return NextResponse.json(
       { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
       { status: 500 }

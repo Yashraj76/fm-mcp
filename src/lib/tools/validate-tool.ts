@@ -1,5 +1,10 @@
 import { safeParseJSON } from '../utils/safe-parse'
 
+const KNOWN_FM_METHODS = new Set([
+  'find', 'create', 'update', 'delete', 'list', 'get', 'script', 'custom',
+  'sequential-multi-table', 'odata-filter', 'odata-expand', 'odata-batch', 'system',
+])
+
 export interface ToolValidationError {
   field: string
   message: string
@@ -14,12 +19,16 @@ export function validateToolForSave(tool: any): ToolValidationError[] {
 
   if (!tool.name?.trim()) {
     errors.push({ field: 'name', message: 'Tool name is required' })
+  } else if (tool.name.trim() === 'unnamed_tool') {
+    errors.push({ field: 'name', message: 'Tool name is required (placeholder "unnamed_tool" is not allowed)' })
   }
   if (!tool.description?.trim()) {
     errors.push({ field: 'description', message: 'Description is required' })
   }
   if (!tool.fmMethod?.trim()) {
     errors.push({ field: 'fmMethod', message: 'FileMaker method is required' })
+  } else if (!KNOWN_FM_METHODS.has(tool.fmMethod.trim())) {
+    errors.push({ field: 'fmMethod', message: `"${tool.fmMethod}" is not a recognised FileMaker method` })
   }
   if (!tool.category?.trim()) {
     errors.push({ field: 'category', message: 'Category is required' })

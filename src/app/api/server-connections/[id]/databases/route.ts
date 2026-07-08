@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withAdminSession } from '@/lib/admin/client'
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 
 type Params = { params: Promise<{ id: string }> }
 export const GET = withAuth(async (_req, { params, userId }) => {
@@ -32,7 +33,7 @@ export const GET = withAuth(async (_req, { params, userId }) => {
 
     return NextResponse.json({ success: true, data: enriched })
     } catch (e: any) {
-    console.error('[server-connections/databases]', e)
+    logger.error({ err: e }, '[server-connections/databases]')
     return NextResponse.json({
       success: false,
       error: e.message || 'Failed to list databases',

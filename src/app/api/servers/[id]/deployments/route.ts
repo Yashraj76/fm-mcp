@@ -1,13 +1,21 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { z, ZodError } from 'zod';
+import { apiSuccess, apiNotFound, apiServerError, apiValidationFailed } from '@/lib/utils/api-response';
 import { prisma } from '@/lib/prisma';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { incrementVersion } from '@/lib/utils/version';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 
 // GET /api/servers/[id]/deployments — list deployments with all fields needed by UI
 // POST /api/servers/[id]/deployments — manually create a deployment snapshot
+
+const createDeploymentSchema = z.object({
+  changelog: z.string().optional(),
+});
+
 export const GET = withAuth(async (req, { params, userId }) => {
+  try {
     const { searchParams } = new URL(req.url);
     const limit = parseInt(searchParams.get('limit') ?? '20');
     const { id: serverId } = params;
@@ -16,7 +24,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
       where: { id: serverId, userId }
     });
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 });
+      return apiNotFound('Server not found');
     }
 
     const deployments = await prisma.deployment.findMany({
@@ -33,7 +41,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
 
     // Shape response to match what DeploymentsPage expects
     const shaped = deployments.map((d) => {
-      const snap = safeParseJSON(d.snapshot, {} as any);
+      const snap = safeParseJSON<{ stats?: { totalTools?: number }, tools?: any[] }>(d.snapshot, {});
       const toolCount: number = snap?.stats?.totalTools ?? snap?.tools?.length ?? 0;
       return {
         id: d.id,
@@ -48,31 +56,34 @@ export const GET = withAuth(async (req, { params, userId }) => {
         rollbackFrom: null,
         toolCount,
         createdAt: d.createdAt,
-        configSnapshot: d.snapshot,  // alias snapshot → configSnapshot for UI
-        branchSnapshot: d.snapshot,
+        snapshot: d.snapshot,
       };
     });
 
-    return NextResponse.json({ success: true, data: shaped });
-  });
+    return apiSuccess(shaped);
+  } catch (error) {
+    logger.error({ err: error }, '[API Error]');
+    return apiServerError('Failed to list deployments');
+  }
+});
 export const POST = withAuth(async (req, { params, userId }) => {
     try {
     const { id: serverId } = params;
     const body = await req.json().catch(() => ({}));
-    const changelog: string = body.changelog || 'Manual deployment';
+    const { changelog = 'Manual deployment' } = createDeploymentSchema.parse(body);
 
     const server = await prisma.mcpServer.findFirst({
       where: { id: serverId, userId }
     });
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found', code: 'NOT_FOUND' }, { status: 404 });
+      return apiNotFound('Server not found');
     }
 
     const mainBranch = await prisma.branch.findFirst({
       where: { serverId, isDefault: true },
     });
     if (!mainBranch) {
-      return NextResponse.json({ success: false, error: 'Main branch not found', code: 'NOT_FOUND' }, { status: 404 });
+      return apiNotFound('Main branch not found');
     }
 
     const lastDeployment = await prisma.deployment.findFirst({
@@ -82,7 +93,7 @@ export const POST = withAuth(async (req, { params, userId }) => {
     const nextVersion = incrementVersion(lastDeployment?.version ?? server.version);
 
     const allTools = await prisma.tool.findMany({
-      where: { serverId }
+      where: { serverId, deletedAt: null }
     });
     const snapshot = {
       version: nextVersion,
@@ -121,18 +132,16 @@ export const POST = withAuth(async (req, { params, userId }) => {
       entityType: 'deployment', entityId: deployment.id, entityName: `v${nextVersion}`,
       serverId, deploymentId: deployment.id,
       meta: { version: nextVersion, changelog, toolCount: allTools.length },
+      actorUserId: userId,
     });
 
-    return NextResponse.json({
-      success: true,
-      data: { id: deployment.id, version: nextVersion, toolCount: allTools.length },
-    }, { status: 201 });
+    return apiSuccess({ id: deployment.id, version: nextVersion, toolCount: allTools.length }, 201);
 
-    } catch (error: any) {
-    console.error('[API Error] POST /api/servers/[id]/deployments', error);
-    return NextResponse.json(
-      { success: false, error: error.message || 'Failed to create deployment', code: 'SERVER_ERROR' },
-      { status: 500 }
-    );
+  } catch (error: any) {
+    if (error instanceof ZodError) {
+      return apiValidationFailed(error.issues);
     }
-    });
+    logger.error({ err: error }, '[API Error] POST /api/servers/[id]/deployments');
+    return apiServerError('Failed to create deployment');
+  }
+});

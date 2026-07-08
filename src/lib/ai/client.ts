@@ -1,5 +1,6 @@
 import { decrypt } from '@/lib/crypto'
 import { getAppSettings } from '@/lib/settings'
+import { sanitizeText } from '@/lib/utils/sanitizer'
 import { generateText } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
@@ -68,31 +69,4 @@ export async function callAI(options: AICallOptions): Promise<string> {
     maxOutputTokens: options.maxOutputTokens || settings.maxTokens,
   })
   return result.text
-}
-
-import { SUGGEST_RELATIONSHIPS_PROMPT } from './prompts/suggest-relationships'
-
-// Suggest relationships between layouts/tables based on field name analysis
-export async function suggestRelationships(payload: {
-  layouts: { name: string; fields: string[] }[]
-  tables: { name: string; fields: string[] }[]
-}, userId?: string): Promise<{ from: string; to: string; key: string; confidence: 'high' | 'medium' | 'low'; reason: string }[]> {
-  const schemaStr = JSON.stringify(payload, null, 2)
-
-  const text = await callAI({
-    systemPrompt: SUGGEST_RELATIONSHIPS_PROMPT,
-    userMessage: `Analyze this FileMaker schema and return relationship suggestions:\n\n${schemaStr}`,
-    maxOutputTokens: 2048,
-    userId,
-  })
-
-  // Extract JSON from response
-  const jsonMatch = text.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) return []
-  try {
-    return JSON.parse(jsonMatch[0])
-  } catch {
-    console.error('[AI] Failed to parse relationship suggestions:', text.slice(0, 200))
-    return []
-  }
 }

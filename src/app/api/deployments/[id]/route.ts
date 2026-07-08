@@ -14,7 +14,7 @@ export const GET = withAuth(async (_, { params, userId }) => {
     });
     if (!dep || dep.server.userId !== userId) return apiNotFound();
 
-    const snapshot = safeParseJSON(dep.snapshot, {});
+    const snapshot = safeParseJSON<Record<string, any>>(dep.snapshot, {});
     return apiSuccess({
       id: dep.id, version: dep.version, changelog: dep.changelog,
       status: dep.status, isLive: dep.isLive, deployedAt: dep.deployedAt,

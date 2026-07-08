@@ -1,153 +1,56 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { withFMSession } from '@/lib/filemaker/session'
-import { withAuth } from "@/lib/auth/api-guard";
-import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { withAuth } from "@/lib/auth/api-guard"
+import { buildBrowsedSchemaPayload, SchemaEndpointError } from '@/lib/schema/schema-endpoint-logic'
+import { logger } from '@/lib/logger'
 
-// GET /api/connections/[id]/schema - Get schema for a connection
-export const GET = withAuth(async (request, { params, userId }) => {
-    try {
+/**
+ * GET /api/connections/[id]/schema
+ *
+ * Returns the raw result of the last browse for this connection — layouts,
+ * scripts, OData tables, and per-layout field metadata — as persisted by
+ * POST /api/connections/[id]/browse-schema.
+ *
+ * Responsibility: read-only snapshot of "what FileMaker has".
+ *   - Never triggers a live FileMaker call.
+ *   - Use this to display browse results without paying the live round-trip cost.
+ *
+ * Error codes:
+ *   NOT_BROWSED_YET — POST /browse-schema has not been called for this connection.
+ *   NOT_FOUND       — connection does not exist or belongs to another user.
+ *   SERVER_ERROR    — unexpected internal error.
+ *
+ * See also:
+ *   POST /browse-schema   — triggers a live fetch from FileMaker + OData.
+ *   GET  /schema/compiled — returns the user's saved selections, not all discovered items.
+ */
+export const GET = withAuth(async (_req, { params, userId }) => {
+  try {
     const { id } = params
-    const connection = await db.fMConnection.findFirst({
-      where: { id, userId }
-    })
 
-    if (!connection) {
-      return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
+    const conn = await db.fMConnection.findFirst({ where: { id, userId } })
+    if (!conn) {
+      return NextResponse.json(
+        { success: false, error: 'Connection not found', code: 'NOT_FOUND' },
+        { status: 404 },
+      )
     }
 
-    // Check for cached schema (< 5 mins old)
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
-    const cached = await db.fMSchemaCache.findFirst({
-      where: {
-        connectionId: id, 
-        databaseName: connection.database,
-        cachedAt: { gte: fiveMinutesAgo }
-      },
-    })
+    const bs = await db.browsedSchema.findUnique({ where: { connectionId: id } })
 
-    if (cached) {
-      return NextResponse.json({
-        success: true,
-        data: {
-          databaseName: connection.database,
-          cachedAt: cached.cachedAt,
-          layouts: safeParseJSON(cached.layouts, []),
-          scripts: safeParseJSON(cached.scripts, []),
-          tables: safeParseJSON(cached.tables, []),
-          fields: safeParseJSON(cached.fields, []),
-          relationships: safeParseJSON(cached.relationships, []),
-        }
-      })
+    const payload = buildBrowsedSchemaPayload(bs)
+    return NextResponse.json({ success: true, data: payload })
+  } catch (e: any) {
+    if (e instanceof SchemaEndpointError) {
+      return NextResponse.json(
+        { success: false, error: e.message, code: e.code },
+        { status: e.httpStatus },
+      )
     }
-
-    try {
-      // Fetch live schema
-      const schema = await withFMSession(connection, async (client) => {
-        const layoutsRes = await client.getLayouts()
-        const scriptsRes = await client.getScripts()
-        
-        // Extract layout names
-        const layouts = layoutsRes.response.layouts || []
-        const layoutsList: any[] = []
-        
-        // Extract flat layout list
-        const extractLayouts = (folder: any) => {
-          if (folder.folderLayoutNames) {
-            folder.folderLayoutNames.forEach((l: any) => extractLayouts(l))
-          } else {
-            layoutsList.push(folder)
-          }
-        }
-        layouts.forEach((l: any) => extractLayouts(l))
-        
-        // Fetch fields for each layout (limit to 10 for performance if too many)
-        const fields: any[] = []
-        for (const layout of layoutsList.slice(0, 50)) {
-          try {
-            const meta = await client.getLayoutMetadata(layout.name)
-            if (meta.response.fieldMetaData) {
-              meta.response.fieldMetaData.forEach((f: any) => {
-                fields.push({
-                  name: f.name,
-                  table: layout.name, // using layout name as proxy for table
-                  type: f.result || 'text',
-                  global: f.global,
-                  autoEnter: f.autoEnter
-                })
-              })
-            }
-          } catch (e) {
-            console.warn(`[Schema] Failed to get metadata for layout ${layout.name}`)
-          }
-        }
-
-        const scripts = scriptsRes.response.scripts || []
-
-        return {
-          layouts: layoutsList,
-          scripts,
-          tables: layoutsList.map(l => ({ name: l.name, fieldCount: 0, primaryKey: 'id' })), // Proxy tables
-          fields,
-          relationships: [] // Relationships not directly exposed by Data API
-        }
-      })
-
-      // Update or Create cache
-      const cachedAt = new Date()
-      
-      const existingCache = await db.fMSchemaCache.findFirst({
-        where: {
-          connectionId: id,
-          databaseName: connection.database
-        }
-      })
-      
-      if (existingCache) {
-        await db.fMSchemaCache.update({
-          where: { id: existingCache.id },
-          data: {
-            layouts: JSON.stringify(schema.layouts),
-            scripts: JSON.stringify(schema.scripts),
-            tables: JSON.stringify(schema.tables),
-            fields: JSON.stringify(schema.fields),
-            relationships: JSON.stringify(schema.relationships),
-            cachedAt
-          }
-        })
-      } else {
-        await db.fMSchemaCache.create({
-          data: {
-            connectionId: id,
-            databaseName: connection.database,
-            layouts: JSON.stringify(schema.layouts),
-            scripts: JSON.stringify(schema.scripts),
-            tables: JSON.stringify(schema.tables),
-            fields: JSON.stringify(schema.fields),
-            relationships: JSON.stringify(schema.relationships),
-            cachedAt
-          },
-        })
-      }
-
-      return NextResponse.json({
-        success: true,
-        data: {
-          databaseName: connection.database,
-          cachedAt,
-          ...schema,
-        }
-      })
-    } catch (fmError: any) {
-      console.error('[Schema Fetch Error]', fmError)
-      return NextResponse.json({ 
-        success: false, 
-        error: fmError.message || 'Failed to fetch schema from FileMaker', 
-        code: 'SCHEMA_FETCH_ERROR' 
-      }, { status: 500 })
-    }
-    } catch (error: any) {
-    console.error('[API Error]', error)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
-    }
-    });
+    logger.error({ err: e }, '[schema GET]')
+    return NextResponse.json(
+      { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
+      { status: 500 },
+    )
+  }
+})

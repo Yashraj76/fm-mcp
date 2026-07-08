@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { withAuth } from "@/lib/auth/api-guard";
 import { toSafeBranch } from '@/lib/utils/dto'
 import { apiSuccess, apiNotFound, apiValidationFailed, apiForbidden, apiServerError } from '@/lib/utils/api-response'
+import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -36,7 +37,7 @@ export const GET = withAuth(async (_, { params, userId }) => {
 
     return apiSuccess(toSafeBranch(branch));
     } catch (error) {
-    console.error('[API GET Branch Error]', error);
+    logger.error({ err: error }, '[API GET Branch Error]');
     return apiServerError('Internal server error');
     }
     });
@@ -89,6 +90,7 @@ export const PUT = withAuth(async (req, { params, userId }) => {
         description: updated.description,
         status: updated.status,
       }),
+      actorUserId: userId,
     });
 
     return apiSuccess(toSafeBranch(updated));
@@ -96,7 +98,7 @@ export const PUT = withAuth(async (req, { params, userId }) => {
     if (error instanceof z.ZodError) {
       return apiValidationFailed(error.issues);
     }
-    console.error('[API PUT Branch Error]', error);
+    logger.error({ err: error }, '[API PUT Branch Error]');
     return apiServerError('Internal server error');
     }
     });
@@ -135,11 +137,12 @@ export const DELETE = withAuth(async (_, { params, userId }) => {
       entityName: branch.name,
       serverId: branch.serverId,
       before,
+      actorUserId: userId,
     });
 
     return apiSuccess({ deleted: true });
     } catch (error) {
-    console.error('[API DELETE Branch Error]', error);
+    logger.error({ err: error }, '[API DELETE Branch Error]');
     return apiServerError('Internal server error');
     }
     });

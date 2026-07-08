@@ -1,11 +1,6 @@
-import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 import { Loader2 } from 'lucide-react'
 
-export const metadata: Metadata = {
-  title: 'Server Console - FileMaker MCP',
-  description: 'Monitor detailed MCP server tools, staging features, and release configurations.',
-}
 
 const ServerDetailPage = dynamic(
   () => import('@/components/servers/server-detail-page').then((mod) => mod.ServerDetailPage),

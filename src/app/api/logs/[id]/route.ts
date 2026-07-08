@@ -18,8 +18,8 @@ export const GET = withAuth(async (_, { params, userId }) => {
       return apiNotFound();
     }
 
-    const before = safeParseJSON(entry.before, null);
-    const after = safeParseJSON(entry.after, null);
+    const before = safeParseJSON<any>(entry.before, null);
+    const after = safeParseJSON<any>(entry.after, null);
 
     // Build a field-level diff when both before and after exist
     let diff: Record<string, { before: any; after: any }> | null = null;
@@ -46,7 +46,7 @@ export const GET = withAuth(async (_, { params, userId }) => {
       before,
       after,
       diff,
-      meta: safeParseJSON(entry.meta, null),
+      meta: safeParseJSON<any>(entry.meta, null),
       createdAt: entry.createdAt,
     });
     });

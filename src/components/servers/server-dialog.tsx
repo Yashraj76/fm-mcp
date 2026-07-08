@@ -16,6 +16,7 @@ import { Link2 } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 interface ConnectionItem {
   id: string
@@ -35,10 +36,11 @@ interface FormValues {
 
 export function ServerDialog() {
   const queryClient = useQueryClient()
+  const router = useRouter()
   const showServerDialog = useAppStore((s) => s.showServerDialog)
   const editingServerId = useAppStore((s) => s.editingServerId)
   const setShowServerDialog = useAppStore((s) => s.setShowServerDialog)
-  const triggerRefreshServers = useAppStore((s) => s.triggerRefreshServers)
+
   const [selectedConnectionIds, setSelectedConnectionIds] = useState<string[]>([])
 
   const isEditing = !!editingServerId
@@ -46,6 +48,7 @@ export function ServerDialog() {
   const { data: connections = [], isLoading: loadingConnections } = useQuery<ConnectionItem[]>({
     queryKey: ['connections'],
     queryFn: () => api.get<ConnectionItem[]>('/api/connections'),
+    enabled: showServerDialog,
   })
 
   const { data: existingServer, isLoading: loadingServer } = useQuery({
@@ -90,11 +93,11 @@ export function ServerDialog() {
         ...data,
         connectionIds: selectedConnectionIds,
       }),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
-      triggerRefreshServers()
-      toast.success('Server created successfully')
+      toast.success('Server created')
       setShowServerDialog(false)
+      if (data?.id) router.push(`/servers/${data.id}`)
     },
     onError: (err: any) => toast.error(err.message || 'Failed to create server'),
   })
@@ -108,8 +111,7 @@ export function ServerDialog() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] })
       queryClient.invalidateQueries({ queryKey: ['server', editingServerId] })
-      triggerRefreshServers()
-      toast.success('Server updated successfully')
+      toast.success('Server updated')
       setShowServerDialog(false)
     },
     onError: (err: any) => toast.error(err.message || 'Failed to update server'),

@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { logger as structuredLogger } from '../logger';
 
 export const LOG_ACTIONS = {
   SERVER_CREATED: 'server.created',
@@ -32,7 +33,7 @@ export const LOG_ACTIONS = {
 
 export type LogAction = typeof LOG_ACTIONS[keyof typeof LOG_ACTIONS];
 
-interface LogOptions {
+export interface LogOptions {
   action: LogAction;
   entityType: string;
   entityId: string;
@@ -43,28 +44,40 @@ interface LogOptions {
   before?: string;
   after?: string;
   meta?: Record<string, any>;
+  /** Supabase user UUID from the authenticated session. Null for API-key/MCP requests. */
+  actorUserId?: string;
   actorIp?: string;
+  actorSession?: string;
+}
+
+/**
+ * Build the ActivityLog row data from a LogOptions object.
+ * Exported as a pure function so it can be tested without a database connection.
+ */
+export function buildActivityLogData(options: LogOptions) {
+  return {
+    action: options.action,
+    entityType: options.entityType,
+    entityId: options.entityId,
+    entityName: options.entityName,
+    serverId: options.serverId ?? null,
+    branchId: options.branchId ?? null,
+    deploymentId: options.deploymentId ?? null,
+    before: options.before ?? null,
+    after: options.after ?? null,
+    meta: options.meta ? JSON.stringify(options.meta) : null,
+    actorUserId: options.actorUserId ?? null,
+    actorIp: options.actorIp ?? null,
+    actorSession: options.actorSession ?? null,
+  };
 }
 
 // Fire-and-forget — never awaited in main request path
 export function log(options: LogOptions): void {
   prisma.activityLog.create({
-    data: {
-      action: options.action,
-      entityType: options.entityType,
-      entityId: options.entityId,
-      entityName: options.entityName,
-      serverId: options.serverId ?? null,
-      branchId: options.branchId ?? null,
-      deploymentId: options.deploymentId ?? null,
-      before: options.before ?? null,
-      after: options.after ?? null,
-      meta: options.meta ? JSON.stringify(options.meta) : null,
-      actorIp: options.actorIp ?? null,
-    },
+    data: buildActivityLogData(options),
   }).catch(err => {
-    // Log errors to console only — never re-throw
-    console.error('[Logger] Failed to write activity log:', err.message);
+    structuredLogger.error({ errMsg: err?.message }, '[ActivityLog] failed to write')
   });
 }
 
@@ -72,21 +85,9 @@ export function log(options: LogOptions): void {
 export async function logAwait(options: LogOptions): Promise<void> {
   try {
     await prisma.activityLog.create({
-      data: {
-        action: options.action,
-        entityType: options.entityType,
-        entityId: options.entityId,
-        entityName: options.entityName,
-        serverId: options.serverId ?? null,
-        branchId: options.branchId ?? null,
-        deploymentId: options.deploymentId ?? null,
-        before: options.before ?? null,
-        after: options.after ?? null,
-        meta: options.meta ? JSON.stringify(options.meta) : null,
-        actorIp: options.actorIp ?? null,
-      },
+      data: buildActivityLogData(options),
     });
   } catch (err: any) {
-    console.error('[Logger] Failed:', err.message);
+    structuredLogger.error({ errMsg: err?.message }, '[ActivityLog] failed to write')
   }
 }

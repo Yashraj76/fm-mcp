@@ -53,11 +53,11 @@ export default function SignupPage() {
         
         {/* Logo / Brand */}
         <div className="text-center space-y-2">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center mx-auto">
-            <span className="text-primary-foreground font-bold text-lg">M</span>
+          <div className="w-10 h-10 rounded-lg overflow-hidden mx-auto">
+            <img src="/logo.svg" alt="kilink" className="w-10 h-10" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Create your account</h1>
-          <p className="text-sm text-muted-foreground">FileMaker MCP Platform</p>
+          <h1 className="text-2xl font-bold text-foreground">Create your kilink account</h1>
+          <p className="text-sm text-muted-foreground">FileMaker MCP server builder by kibizsystems</p>
         </div>
 
 

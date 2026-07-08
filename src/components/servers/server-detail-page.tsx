@@ -31,12 +31,16 @@ import {
   Brain,
   Loader2,
   RotateCcw,
+  CheckCircle2,
+  Circle,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { useState } from 'react'
 import { AutoGeneratePreviewDialog } from './auto-generate-preview-dialog'
 import { AiPromptToolDialog } from '@/components/ai/ai-prompt-tool-dialog'
+import { StatusBadge } from '@/components/ui/status-badge'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 interface ToolItem {
   id: string
@@ -63,26 +67,13 @@ interface ServerDetail {
   description: string | null
   version: string
   status: string
-  connections: { connection: { id: string; name: string; status: string; host: string; database: string; browsedSchema?: { compiledSchema: string } }; fileNames: string; isActive: boolean }[]
+  connections: { connection: { id: string; name: string; status: string; host: string; database: string; browsedSchema?: { selectedLayouts: string; selectedTables: string } }; fileNames: string; isActive: boolean }[]
   branches: BranchItem[]
-  tools: ToolItem[]
-  deployments: { id: string; version: string; status: string; toolCount: number; changelog: string | null; deployedAt: string | null; createdAt: string; snapshot?: string; configSnapshot?: string }[]
+  deployments: { id: string; version: string; status: string; toolCount: number; changelog: string | null; deployedAt: string | null; createdAt: string; snapshot?: string }[]
   createdAt: string
   updatedAt: string
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; className: string }> = {
-    draft: { label: 'Draft', className: 'bg-blue-500/15 text-blue-500 border-blue-500/20' },
-    staging: { label: 'Staging', className: 'bg-yellow-500/15 text-yellow-500 border-yellow-500/20' },
-    deployed: { label: 'Deployed', className: 'bg-green-500/15 text-green-500 border-green-500/20' },
-    active: { label: 'Active', className: 'bg-green-500/15 text-green-500 border-green-500/20' },
-    merged: { label: 'Merged', className: 'bg-muted text-muted-foreground' },
-    archived: { label: 'Archived', className: 'bg-orange-500/15 text-orange-500 border-orange-500/20' },
-  }
-  const { label, className } = config[status] || { label: status, className: '' }
-  return <Badge variant="outline" className={className}>{label}</Badge>
-}
 
 function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolItem; onToggle?: () => void; onEdit?: () => void; onDelete?: () => void; readOnly?: boolean }) {
   return (
@@ -174,7 +165,7 @@ interface ServerDetailPageProps {
 export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
   const currentServerId = useAppStore((s) => s.currentServerId)
   const serverMode = useAppStore((s) => s.serverMode)
-  const refreshServers = useAppStore((s) => s.refreshServers)
+
   const setServerMode = useAppStore((s) => s.setServerMode)
   const setCurrentServer = useAppStore((s) => s.setCurrentServer)
   const setCurrentBranch = useAppStore((s) => s.setCurrentBranch)
@@ -183,7 +174,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
   const setShowBranchDialog = useAppStore((s) => s.setShowBranchDialog)
   const setShowConfigDialog = useAppStore((s) => s.setShowConfigDialog)
   const setShowServerDialog = useAppStore((s) => s.setShowServerDialog)
-  const triggerRefreshTools = useAppStore((s) => s.triggerRefreshTools)
+
 
   useEffect(() => {
     if (serverId) {
@@ -200,6 +191,19 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
 
   // AI Prompt Tool dialog state
   const [showAiPromptDialog, setShowAiPromptDialog] = useState(false)
+
+  // Generic confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean
+    title: string
+    description: string
+    confirmLabel: string
+    onConfirm: () => void
+  } | null>(null)
+
+  const openConfirm = (cfg: Omit<NonNullable<typeof confirmDialog>, 'open'>) =>
+    setConfirmDialog({ open: true, ...cfg })
+  const closeConfirm = () => setConfirmDialog(null)
 
   // Toggle tool enabled mutation (Branch-aware)
   const toggleMutation = useMutation({
@@ -243,7 +247,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
       toast.success('Tool deleted')
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
-      triggerRefreshTools()
+      queryClient.invalidateQueries({ queryKey: ['tools'] })
     },
     onError: () => {
       toast.error('Failed to delete tool')
@@ -302,7 +306,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
 
   // Server detailed schema fetch
   const { data: server, isLoading, isError } = useQuery<ServerDetail>({
-    queryKey: ['server', currentServerId, refreshServers, localRefreshKey],
+    queryKey: ['server', currentServerId, localRefreshKey],
     queryFn: () => api.get<ServerDetail>(`/api/servers/${currentServerId}`),
     enabled: !!currentServerId,
   })
@@ -353,6 +357,9 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
 
   const activeTools = branchTools.filter(t => t.isEnabled)
   const lastDeployment = server.deployments?.[0]
+  const hasConnections = server.connections.some(c => c.isActive)
+  const hasTools = branchTools.length > 0
+  const isNewServer = !hasConnections && !hasTools && !lastDeployment
 
   return (
     <div className="p-6 space-y-6">
@@ -414,17 +421,13 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
             <span className="text-xs text-muted-foreground font-medium">Linked Connections</span>
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {(server.connections ?? []).filter(c => c.isActive).map((conn) => {
-                let stats = { layouts: 0, tables: 0, scripts: 0, relationships: 0 }
-                if (conn.connection.browsedSchema?.compiledSchema) {
-                  try {
-                    const schema = JSON.parse(conn.connection.browsedSchema.compiledSchema)
-                    stats.layouts = schema.layouts?.length || 0
-                    stats.tables = schema.odataTables?.length || 0
-                    stats.scripts = schema.scripts?.length || 0
-                    stats.relationships = schema.relationships?.length || 0
-                  } catch {}
+                let layouts = 0, tables = 0
+                const bs = conn.connection.browsedSchema
+                if (bs) {
+                  try { layouts = JSON.parse(bs.selectedLayouts || '[]').length } catch {}
+                  try { tables = JSON.parse(bs.selectedTables || '[]').length } catch {}
                 }
-                
+
                 return (
                   <div key={conn.connection.id} className="flex flex-col gap-2.5 bg-muted/30 border hover:border-foreground/10 transition-colors rounded-lg p-3">
                     <div className="flex items-center justify-between">
@@ -435,10 +438,8 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                       <Badge variant="outline" className="text-[10px] py-0 font-mono">{conn.connection.database}</Badge>
                     </div>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                      <span title="Layouts">{stats.layouts} L</span>
-                      <span title="OData Tables">{stats.tables} T</span>
-                      <span title="Scripts">{stats.scripts} S</span>
-                      <span title="Relationships">{stats.relationships} R</span>
+                      <span title="Selected Layouts">{layouts} layouts</span>
+                      <span title="Selected OData Tables">{tables} tables</span>
                     </div>
                   </div>
                 )
@@ -447,6 +448,31 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
           </div>
         )}
       </Card>
+
+      {/* Getting Started guidance for new servers */}
+      {isNewServer && (
+        <Card className="border-blue-500/20 bg-blue-500/5">
+          <CardContent className="p-5">
+            <p className="text-sm font-semibold mb-3">Get started in 4 steps</p>
+            <ol className="space-y-2.5">
+              {[
+                { done: hasConnections, label: 'Configure a FileMaker connection', action: <Link href="/connections" className="text-xs text-blue-400 hover:underline ml-auto shrink-0">Go to Connections →</Link> },
+                { done: false, label: 'Load layouts and schema from FileMaker', action: null },
+                { done: hasTools, label: 'Create or AI-generate tools', action: null },
+                { done: !!lastDeployment, label: 'Test your MCP endpoint', action: <Button size="sm" variant="ghost" className="text-xs h-6 px-2 ml-auto" onClick={() => setShowConfigDialog(true)}>View Config →</Button> },
+              ].map((step, i) => (
+                <li key={i} className="flex items-center gap-2.5 text-sm">
+                  {step.done
+                    ? <CheckCircle2 className="size-4 text-green-500 shrink-0" />
+                    : <Circle className="size-4 text-muted-foreground/40 shrink-0" />}
+                  <span className={step.done ? 'line-through text-muted-foreground' : ''}>{step.label}</span>
+                  {step.action}
+                </li>
+              ))}
+            </ol>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Mode Tabs */}
       <Tabs value={serverMode} onValueChange={(v) => setServerMode(v as typeof serverMode)}>
@@ -549,11 +575,14 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                           tool={tool} 
                           onToggle={() => toggleMutation.mutate({ id: tool.id, isEnabled: tool.isEnabled })}
                           onEdit={() => setShowToolDialog(true, tool.id)}
-                          onDelete={() => {
-                            if (confirm('Are you sure you want to delete this tool?')) {
-                              deleteMutation.mutate(tool.id)
-                            }
-                          }}
+                          onDelete={() =>
+                            openConfirm({
+                              title: 'Delete Tool',
+                              description: 'Remove this tool from the server? Execution history is preserved.',
+                              confirmLabel: 'Delete',
+                              onConfirm: () => deleteMutation.mutate(tool.id),
+                            })
+                          }
                         />
                       ))}
                     </div>
@@ -628,9 +657,12 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                                   className="size-6 rounded hover:bg-blue-500/10 hover:text-blue-400 text-muted-foreground"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    if (confirm(`Merge branch "${branch.name}" into production?`)) {
-                                      mergeMutation.mutate(branch.id)
-                                    }
+                                    openConfirm({
+                                      title: `Merge "${branch.name}"`,
+                                      description: `Merge this branch into the default branch? Tool changes will become the new production state.`,
+                                      confirmLabel: 'Merge',
+                                      onConfirm: () => mergeMutation.mutate(branch.id),
+                                    })
                                   }}
                                   title="Merge into default branch"
                                   aria-label={`Merge branch ${branch.name} into default branch`}
@@ -656,9 +688,12 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                                   className="size-6 rounded hover:bg-red-500/10 hover:text-red-400 text-muted-foreground"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    if (confirm(`Are you sure you want to delete branch "${branch.name}"?`)) {
-                                      deleteMutationBranch.mutate(branch.id)
-                                    }
+                                    openConfirm({
+                                      title: `Delete "${branch.name}"`,
+                                      description: 'This branch and its tool overrides will be permanently deleted.',
+                                      confirmLabel: 'Delete',
+                                      onConfirm: () => deleteMutationBranch.mutate(branch.id),
+                                    })
                                   }}
                                   title="Delete branch"
                                   aria-label={`Delete branch ${branch.name}`}
@@ -751,7 +786,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                 {lastDeployment ? (() => {
                   let snapshotTools: ToolItem[] = [];
                   try {
-                    const snap = JSON.parse(lastDeployment.snapshot || lastDeployment.configSnapshot || '{}');
+                    const snap = JSON.parse(lastDeployment.snapshot || '{}');
                     snapshotTools = snap.tools || [];
                   } catch (e) {
                     console.error('Failed to parse snapshot', e);
@@ -829,11 +864,14 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                               variant="ghost"
                               size="icon"
                               className="size-7 rounded-md border hover:border-orange-500/30 hover:bg-orange-500/10 text-muted-foreground hover:text-orange-400 transition-all"
-                              onClick={() => {
-                                if (confirm(`Are you sure you want to roll back to version v${deployment.version}?`)) {
-                                  rollbackMutation.mutate(deployment.id)
-                                }
-                              }}
+                              onClick={() =>
+                                openConfirm({
+                                  title: `Roll back to v${deployment.version}`,
+                                  description: 'The server will revert to this deployment snapshot. The current live state will be replaced.',
+                                  confirmLabel: 'Roll Back',
+                                  onConfirm: () => rollbackMutation.mutate(deployment.id),
+                                })
+                              }
                               title="Rollback to this version"
                               aria-label={`Rollback to version ${deployment.version}`}
                             >
@@ -867,6 +905,17 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
           onOpenChange={setShowAiPromptDialog}
           serverId={currentServerId}
           branchId={currentBranchId}
+        />
+      )}
+
+      {confirmDialog && (
+        <ConfirmDialog
+          open={confirmDialog.open}
+          onOpenChange={(open) => { if (!open) closeConfirm() }}
+          title={confirmDialog.title}
+          description={confirmDialog.description}
+          confirmLabel={confirmDialog.confirmLabel}
+          onConfirm={() => { confirmDialog.onConfirm(); closeConfirm() }}
         />
       )}
     </div>

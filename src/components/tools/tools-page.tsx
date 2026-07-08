@@ -93,8 +93,7 @@ export function ToolsPage() {
   const setCurrentBranch = useAppStore((s) => s.setCurrentBranch)
   const setShowToolDialog = useAppStore((s) => s.setShowToolDialog)
   const setShowAiDialog = useAppStore((s) => s.setShowAiDialog)
-  const triggerRefreshTools = useAppStore((s) => s.triggerRefreshTools)
-  const refreshTools = useAppStore((s) => s.refreshTools)
+
   
   const queryClient = useQueryClient()
 
@@ -150,8 +149,8 @@ export function ToolsPage() {
   }, [selectedServer, currentBranchId, setCurrentBranch])
 
   // Fetch tools
-  const { data: tools = [], isLoading } = useQuery({
-    queryKey: ['tools', currentServerId, currentBranchId, refreshTools],
+  const { data: tools = [], isLoading, isError, error } = useQuery({
+    queryKey: ['tools', currentServerId, currentBranchId],
     queryFn: async () => {
       if (!currentServerId) return []
       const url = currentBranchId
@@ -173,11 +172,21 @@ export function ToolsPage() {
         : { isEnabled: !isEnabled }
       return api.put(url, body)
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId] })
+    onMutate: async ({ id, isEnabled }) => {
+      const queryKey = ['tools', currentServerId, currentBranchId]
+      await queryClient.cancelQueries({ queryKey })
+      const previous = queryClient.getQueryData(queryKey)
+      queryClient.setQueryData(queryKey, (old: any[]) =>
+        old?.map(t => t.id === id ? { ...t, isEnabled: !isEnabled } : t) ?? old
+      )
+      return { previous, queryKey }
     },
-    onError: () => {
+    onError: (_err, _vars, ctx: any) => {
+      if (ctx?.previous !== undefined) queryClient.setQueryData(ctx.queryKey, ctx.previous)
       toast.error('Failed to toggle tool')
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId, currentBranchId] })
     },
   })
 
@@ -200,8 +209,7 @@ export function ToolsPage() {
     },
     onSuccess: () => {
       toast.success('Tool duplicated')
-      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId] })
-      triggerRefreshTools()
+      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId, currentBranchId] })
     },
     onError: () => {
       toast.error('Failed to duplicate tool')
@@ -218,8 +226,7 @@ export function ToolsPage() {
     },
     onSuccess: () => {
       toast.success('Tool deleted')
-      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId] })
-      triggerRefreshTools()
+      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId, currentBranchId] })
     },
     onError: () => {
       toast.error('Failed to delete tool')
@@ -357,7 +364,7 @@ export function ToolsPage() {
             <div className="space-y-2">
               <h2 className="text-xl font-bold tracking-tight">No Server Selected</h2>
               <p className="text-sm text-muted-foreground">
-                To view, test, and manage FileMaker MCP tools, you need to select an active MCP server first.
+                To view, test, and manage tools, select an active MCP server first.
               </p>
             </div>
             <div className="flex flex-col gap-3 items-center justify-center pt-2">
@@ -423,6 +430,7 @@ export function ToolsPage() {
               size="sm"
               onClick={() => setViewMode('grid')}
               className="h-8 w-8 p-0 rounded-r-none"
+              aria-label="Grid view"
             >
               <LayoutGrid className="size-3.5" />
             </Button>
@@ -431,6 +439,7 @@ export function ToolsPage() {
               size="sm"
               onClick={() => setViewMode('list')}
               className="h-8 w-8 p-0 rounded-l-none"
+              aria-label="List view"
             >
               <List className="size-3.5" />
             </Button>
@@ -439,7 +448,24 @@ export function ToolsPage() {
       </div>
 
       {/* Tools Content */}
-      {isLoading ? (
+      {isError ? (
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardContent className="p-6 text-center">
+            <p className="text-sm text-destructive font-medium">Failed to load tools</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {(error as any)?.message || 'An unexpected error occurred'}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['tools', currentServerId, currentBranchId] })}
+            >
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      ) : isLoading ? (
         <div className={cn('grid gap-3 flex-1', viewMode === 'grid' ? 'grid-cols-1 md:grid-cols-2 xl:grid-cols-3' : 'grid-cols-1')}>
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-40 rounded-lg" />
@@ -565,6 +591,7 @@ function ToolCard({
                   variant="ghost"
                   size="sm"
                   className="h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                  aria-label="More options"
                 >
                   <MoreHorizontal className="size-4" />
                 </Button>
@@ -632,11 +659,11 @@ function ToolCard({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete Tool</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete &quot;{tool.name as string}&quot;? This action cannot be undone.
+            Delete &quot;{tool.name as string}&quot;? It will be removed from this server. Execution history is preserved.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
             Delete
           </AlertDialogAction>
@@ -699,7 +726,7 @@ function ToolListItem({
               <Switch checked={tool.isEnabled as boolean} onCheckedChange={onToggle} className="scale-75" />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="More options">
                     <MoreHorizontal className="size-4" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -734,11 +761,11 @@ function ToolListItem({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete Tool</AlertDialogTitle>
           <AlertDialogDescription>
-            Are you sure you want to delete &quot;{tool.name as string}&quot;?
+            Delete &quot;{tool.name as string}&quot;? It will be removed from this server. Execution history is preserved.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
           <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
             Delete
           </AlertDialogAction>

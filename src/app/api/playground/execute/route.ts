@@ -4,6 +4,7 @@ import { withFMSession } from '@/lib/filemaker/session'
 import { z } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
 import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { logger } from '@/lib/logger'
 
 const executeSchema = z.object({
   connectionId: z.string(),
@@ -18,7 +19,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
     const startTime = Date.now()
     try {
     const bodyText = await request.text()
-    const requestBody = safeParseJSON(bodyText, {})
+    const requestBody = safeParseJSON<Record<string, any>>(bodyText, {})
     const parsed = executeSchema.parse(requestBody)
 
     const connection = await db.fMConnection.findFirst({ where: {
@@ -65,7 +66,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
     })
 
     } catch (error: any) {
-    console.error('[Playground Execution Failed]', error)
+    logger.error({ err: error }, '[Playground Execution Failed]')
     return NextResponse.json({ 
       success: false,
       status: 500, 

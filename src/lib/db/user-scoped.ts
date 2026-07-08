@@ -86,13 +86,14 @@ export async function listBranches(serverId: string, userId: string, options?: a
  */
 
 export async function getTool(id: string, userId: string, options?: any) {
-  return prisma.tool.findFirst(buildQueryOptions({ id, server: { userId } }, options))
+  return prisma.tool.findFirst(buildQueryOptions({ id, deletedAt: null, server: { userId } }, options))
 }
 
 export async function listTools(serverId: string, userId: string, options?: any) {
   return prisma.tool.findMany({
     where: {
       serverId,
+      deletedAt: null,
       server: { userId },
     },
     ...options,

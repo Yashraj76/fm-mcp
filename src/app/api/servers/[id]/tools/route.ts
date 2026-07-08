@@ -6,6 +6,11 @@ import { withAuth } from "@/lib/auth/api-guard";
 import { toSafeTool } from '@/lib/utils/dto'
 import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
+import { validateToolForSave } from '@/lib/tools/validate-tool'
+import { createToolWithBranch } from '@/lib/tools/create-tool-with-branch'
+import { fmMethodSchema } from '@/lib/tools/fm-methods'
+import { checkDuplicateToolName, duplicateToolNameMessage, DUPLICATE_TOOL_NAME_CODE } from '@/lib/tools/duplicate-tool-name'
+import { logger } from '@/lib/logger'
 
 const createToolSchema = z.object({
   name: z.string().min(1, 'Tool name is required'),
@@ -23,7 +28,7 @@ const createToolSchema = z.object({
   ),
   fmLayout: z.string().optional(),
   fmScript: z.string().optional(),
-  fmMethod: z.enum(['create', 'read', 'update', 'delete', 'find', 'script', 'custom']).optional(),
+  fmMethod: fmMethodSchema.optional(),
   // Accept both `isEnabled` and `enabled` (UI uses `enabled` in duplicate flow)
   isEnabled: z.boolean().optional(),
   enabled: z.boolean().optional(),
@@ -62,7 +67,7 @@ export const GET = withAuth(async (request, { params, userId }) => {
       // Assuming getEffectiveTools already includes executions count? Actually no, getEffectiveTools only returns tools.
       // But we can just return the tools array as is. The UI might not strictly need executions count here, or we fetch it if needed.
     } else {
-      const whereClause: Record<string, unknown> = { serverId: id }
+      const whereClause: Record<string, unknown> = { serverId: id, deletedAt: null }
       if (category) {
         whereClause.category = category
       }
@@ -80,11 +85,12 @@ export const GET = withAuth(async (request, { params, userId }) => {
 
     return apiSuccess(tools.map(toSafeTool))
     } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to fetch tools')
     }
   });
 export const POST = withAuth(async (request, { params, userId }) => {
+    let toolName = '';
     try {
     const { id } = params
     const server = await db.mcpServer.findFirst({
@@ -100,6 +106,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
     if (!parsed.success) {
       return apiValidationFailed(parsed.error.flatten())
     }
+    toolName = parsed.data.name;
 
     if (parsed.data.branchId) {
       const branch = await db.branch.findFirst({
@@ -110,18 +117,12 @@ export const POST = withAuth(async (request, { params, userId }) => {
       }
     }
 
-    // Check for duplicate tool name in the same server
-    const existingTool = await db.tool.findFirst({
-      where: {
-        serverId: id,
-        name: parsed.data.name,
-      },
-    })
-    if (existingTool) {
-      return apiError('A tool with this name already exists in this branch', 'DUPLICATE', 409)
+    const toolValidationErrors = validateToolForSave(parsed.data)
+    if (toolValidationErrors.length > 0) {
+      return apiValidationFailed(toolValidationErrors)
     }
 
-    let handlerConfigObj: any = safeParseJSON(parsed.data.handlerConfig, {})
+    let handlerConfigObj: any = safeParseJSON<Record<string, any>>(parsed.data.handlerConfig, {})
     if (handlerConfigObj.connectionId) {
       const isLinked = await db.fMConnectionServer.findFirst({
         where: {
@@ -134,19 +135,44 @@ export const POST = withAuth(async (request, { params, userId }) => {
       }
     }
 
+    // Pre-check before hitting the DB constraint — gives a friendlier error message
+    // than a raw P2002, and avoids a wasted insert attempt in the common case.
+    const dupCheck = await checkDuplicateToolName(db, id, parsed.data.name)
+    if (dupCheck.isDuplicate) {
+      return apiError(duplicateToolNameMessage(parsed.data.name), DUPLICATE_TOOL_NAME_CODE, 409)
+    }
+
     const { branchId, enabled, isEnabled, ...restData } = parsed.data;
-    const tool = await db.tool.create({
-      data: {
-        ...restData,
-        // Resolve `enabled` alias → `isEnabled`
-        isEnabled: isEnabled ?? enabled ?? true,
-        serverId: id,
-      },
-    })
+    const toolData = {
+      ...restData,
+      isEnabled: isEnabled ?? enabled ?? true,
+      isAiGenerated: false,
+      serverId: id,
+    };
+
+    // Determine which branch to link — explicit branchId, or the server's default branch
+    let targetBranchId = branchId;
+    if (!targetBranchId) {
+      const defaultBranch = await db.branch.findFirst({ where: { serverId: id, isDefault: true } });
+      if (defaultBranch) targetBranchId = defaultBranch.id;
+    }
+
+    let tool: any;
+    if (targetBranchId) {
+      // Atomically create Tool + BranchTool so the tool is visible to getEffectiveTools
+      const result = await createToolWithBranch(db, toolData, targetBranchId);
+      tool = result.tool;
+    } else {
+      // No branch exists yet (e.g. server has no branches) — create Tool only
+      tool = await db.tool.create({ data: toolData });
+    }
 
     return apiSuccess(toSafeTool(tool), 201)
-    } catch (error) {
-    console.error('[API Error]', error)
+    } catch (error: any) {
+    if (error?.code === 'P2002') {
+      return apiError(duplicateToolNameMessage(toolName), DUPLICATE_TOOL_NAME_CODE, 409)
+    }
+    logger.error({ err: error }, '[API Error]')
     return apiServerError('Failed to create tool')
     }
   });

@@ -25,12 +25,19 @@ import {
   Layers,
   ArrowRight,
   ChevronRight,
+  Database,
 } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 import { api } from '@/lib/utils/api-client'
 
 type Mode = 'single' | 'flow'
 type Step = 'input' | 'generating' | 'preview'
+
+interface ConnectionOption {
+  id: string
+  name: string
+  database: string
+}
 
 interface GeneratedTool {
   name: string
@@ -71,13 +78,14 @@ export function AiPromptToolDialog({
   branchId,
 }: AiPromptToolDialogProps) {
   const queryClient = useQueryClient()
-  const triggerRefreshTools = useAppStore((s) => s.triggerRefreshTools)
 
   const [step, setStep] = useState<Step>('input')
   const [mode, setMode] = useState<Mode>('single')
   const [prompt, setPrompt] = useState('')
   const [tools, setTools] = useState<GeneratedTool[]>([])
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set())
+  const [availableConnections, setAvailableConnections] = useState<ConnectionOption[]>([])
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Reset on close
@@ -89,6 +97,8 @@ export function AiPromptToolDialog({
         setTools([])
         setSelectedIndices(new Set())
         setMode('single')
+        setAvailableConnections([])
+        setSelectedConnectionId(null)
       }, 300)
     } else {
       setTimeout(() => textareaRef.current?.focus(), 300)
@@ -97,8 +107,13 @@ export function AiPromptToolDialog({
 
   // Generate tools mutation
   const generateMutation = useMutation({
-    mutationFn: () =>
-      api.post<{ tools: GeneratedTool[]; mode: Mode }>(`/api/servers/${serverId}/ai/generate-from-prompt`, { prompt, mode, branchId }),
+    mutationFn: (connectionId?: string) =>
+      api.post<{ tools: GeneratedTool[]; mode: Mode }>(`/api/servers/${serverId}/ai/generate-from-prompt`, {
+        prompt,
+        mode,
+        branchId,
+        connectionId: connectionId ?? undefined,
+      }),
     onSuccess: (result) => {
       if (!result.tools || result.tools.length === 0) {
         toast.error('No tools were generated. Try rephrasing your prompt.')
@@ -109,7 +124,12 @@ export function AiPromptToolDialog({
       setSelectedIndices(new Set(result.tools.map((_, i) => i)))
       setStep('preview')
     },
-    onError: (err: Error) => {
+    onError: (err: any) => {
+      if (err.code === 'CONNECTION_REQUIRED' && err.details?.connections?.length > 0) {
+        setAvailableConnections(err.details.connections as ConnectionOption[])
+        setStep('input') // stay on input, show connection picker
+        return
+      }
       toast.error(err.message || 'Failed to generate tools')
       setStep('input')
     },
@@ -123,7 +143,6 @@ export function AiPromptToolDialog({
       toast.success(`Successfully added ${data.saved} tool${data.saved !== 1 ? 's' : ''}`)
       queryClient.invalidateQueries({ queryKey: ['server', serverId] })
       queryClient.invalidateQueries({ queryKey: ['branch-tools', branchId, serverId] })
-      triggerRefreshTools()
       onOpenChange(false)
     },
     onError: (err: Error) => {
@@ -136,8 +155,13 @@ export function AiPromptToolDialog({
       toast.error('Please enter a prompt first')
       return
     }
+    // For multi-connection servers, require a connection selection before generating
+    if (availableConnections.length > 0 && !selectedConnectionId) {
+      toast.error('Please select a connection first')
+      return
+    }
     setStep('generating')
-    generateMutation.mutate()
+    generateMutation.mutate(selectedConnectionId ?? undefined)
   }
 
   const toggleSelection = (index: number) => {
@@ -235,6 +259,40 @@ export function AiPromptToolDialog({
                   })}
                 </div>
               </div>
+
+              {/* Connection picker — only shown when server has multiple connections */}
+              {availableConnections.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Select Connection
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    This server has multiple connections. Choose which database to generate tools from.
+                  </p>
+                  <div className="space-y-1.5">
+                    {availableConnections.map((conn) => (
+                      <button
+                        key={conn.id}
+                        type="button"
+                        onClick={() => setSelectedConnectionId(conn.id)}
+                        className={`w-full text-left flex items-start gap-3 p-3 rounded-lg border transition-all ${
+                          selectedConnectionId === conn.id
+                            ? 'bg-violet-500/10 border-violet-500/40'
+                            : 'bg-muted/30 border hover:bg-muted/60'
+                        }`}
+                      >
+                        <Database className={`size-4 mt-0.5 shrink-0 ${selectedConnectionId === conn.id ? 'text-violet-400' : 'text-muted-foreground'}`} />
+                        <div className="min-w-0">
+                          <div className={`text-sm font-medium ${selectedConnectionId === conn.id ? 'text-foreground' : 'text-muted-foreground'}`}>
+                            {conn.name}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground/70 mt-0.5">{conn.database}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Prompt textarea */}
               <div className="space-y-2">
@@ -410,7 +468,7 @@ export function AiPromptToolDialog({
               </Button>
               <Button
                 className="bg-violet-600 hover:bg-violet-500 text-white min-w-[140px] gap-2"
-                disabled={!prompt.trim() || generateMutation.isPending}
+                disabled={!prompt.trim() || generateMutation.isPending || (availableConnections.length > 0 && !selectedConnectionId)}
                 onClick={handleGenerate}
               >
                 <Sparkles className="size-4" />

@@ -180,7 +180,7 @@ export function normalizeTool(raw: RawToolDef): NormalizedTool {
   }
 
   return {
-    name: (raw.name ?? 'unnamed_tool').trim(),
+    name: (raw.name ?? '').trim(),
     description,
     category,
     fmMethod,

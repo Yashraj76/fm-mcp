@@ -53,11 +53,11 @@ export default function LoginPage() {
       <div className="w-full max-w-md p-8 space-y-6 bg-card border border-border rounded-xl shadow-lg">
         
         <div className="text-center space-y-2">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center mx-auto">
-            <span className="text-primary-foreground font-bold text-lg">M</span>
+          <div className="w-10 h-10 rounded-lg overflow-hidden mx-auto">
+            <img src="/logo.svg" alt="kilink" className="w-10 h-10" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Sign in</h1>
-          <p className="text-sm text-muted-foreground">FileMaker MCP Platform</p>
+          <h1 className="text-2xl font-bold text-foreground">Sign in to kilink</h1>
+          <p className="text-sm text-muted-foreground">FileMaker MCP server builder by kibizsystems</p>
         </div>
 
         {error && (

@@ -1,6 +1,6 @@
 'use client'
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useInfiniteQuery, InfiniteData, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAppStore } from '@/lib/store'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -18,13 +18,19 @@ import { useToast } from '@/hooks/use-toast'
 import { api } from '@/lib/utils/api-client'
 import {
   Plus, Database, MoreVertical, Pencil, Zap, Trash2,
-  Server, CircleDot, Layout, ServerIcon, ChevronRight,
+  Server, CircleDot, Layout, ServerIcon, ChevronRight, CheckCircle2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { SchemaBrowser } from './schema-browser'
 import { ServerConnectionDialog } from './server-connection-dialog'
 import { DatabasePicker } from './database-picker'
+import {
+  deriveConnectionBadgeState,
+  deriveFMServerBadgeState,
+  CONNECTION_BADGE,
+  FM_SERVER_BADGE,
+} from '@/lib/status/connection-status'
 
 interface Connection {
   id: string
@@ -38,6 +44,9 @@ interface Connection {
   lastTested: string | null
   lastError: string | null
   version: string | null
+  hasBrowsedSchema: boolean
+  schemaLayoutCount: number
+  schemaTableCount: number
   createdAt: string
   updatedAt: string
 }
@@ -55,15 +64,9 @@ interface FMServer {
   _count?: { connections: number }
 }
 
-const statusConfig: Record<string, { color: string; badge: string; label: string }> = {
-  connected:    { color: 'text-emerald-500', badge: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/25', label: 'Connected' },
-  disconnected: { color: 'text-muted-foreground', badge: 'bg-muted text-muted-foreground border-border', label: 'Disconnected' },
-  error:        { color: 'text-red-500', badge: 'bg-red-500/15 text-red-500 border-red-500/25', label: 'Error' },
-}
-const serverStatusConfig: Record<string, { dot: string; badge: string }> = {
-  online:  { dot: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25' },
-  error:   { dot: 'bg-red-500', badge: 'bg-red-500/15 text-red-400 border-red-500/25' },
-  unknown: { dot: 'bg-muted-foreground/30', badge: 'bg-muted text-muted-foreground border-border' },
+type ConnectionPage = {
+  data: Connection[]
+  pagination: { hasMore: boolean; nextCursor: string | null; limit: number }
 }
 
 export function ConnectionsPage() {
@@ -80,11 +83,32 @@ export function ConnectionsPage() {
   const [dbPickerServer, setDbPickerServer] = useState<FMServer | null>(null)
 
   // ── Queries ──
-  const { data: connections, isLoading: loadingConns } = useQuery<Connection[]>({
-    queryKey: ['connections'],
-    queryFn: () => api.get<Connection[]>('/api/connections'),
+  const {
+    data: connectionPages,
+    isLoading: loadingConns,
+    isError: isConnsError,
+    error: connsError,
+    fetchNextPage: fetchMoreConnections,
+    hasNextPage: hasMoreConnections,
+    isFetchingNextPage: isFetchingMoreConnections,
+  } = useInfiniteQuery<ConnectionPage, Error, InfiniteData<ConnectionPage>, readonly ['connections'], string | null>({
+    queryKey: ['connections'] as const,
+    queryFn: async ({ pageParam }) => {
+      const url = pageParam
+        ? `/api/connections?cursor=${pageParam}`
+        : '/api/connections'
+      const res = await fetch(url)
+      const json = await res.json()
+      if (!res.ok || json.success === false)
+        throw new Error(json.error || 'Failed to load connections')
+      return json as ConnectionPage
+    },
+    getNextPageParam: (lastPage): string | null | undefined =>
+      lastPage.pagination.hasMore ? lastPage.pagination.nextCursor : undefined,
+    initialPageParam: null,
   })
-  const { data: servers, isLoading: loadingServers } = useQuery<FMServer[]>({
+  const connections = connectionPages?.pages.flatMap((p) => p.data) ?? []
+  const { data: servers, isLoading: loadingServers, isError: isServersError, error: serversError } = useQuery<FMServer[]>({
     queryKey: ['server-connections'],
     queryFn: () => api.get<FMServer[]>('/api/server-connections'),
   })
@@ -205,7 +229,24 @@ export function ConnectionsPage() {
           </Button>
         </div>
 
-        {!servers?.length ? (
+        {isServersError ? (
+          <Card className="border-destructive/30 bg-destructive/5">
+            <CardContent className="p-6 text-center">
+              <p className="text-sm text-destructive font-medium">Failed to load FM Servers</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {(serversError as any)?.message || 'An unexpected error occurred'}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['server-connections'] })}
+              >
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        ) : !servers?.length ? (
           <div className="border border-dashed border-border rounded-xl py-10 flex flex-col items-center gap-3 text-center">
             <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
               <ServerIcon className="w-5 h-5 text-muted-foreground" />
@@ -223,7 +264,7 @@ export function ConnectionsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {servers.map((server) => {
-              const sc = serverStatusConfig[server.status] || serverStatusConfig.unknown
+              const sc = FM_SERVER_BADGE[deriveFMServerBadgeState(server.status)]
               return (
                 <Card key={server.id} className="py-0 gap-0 hover:border-foreground/20 transition-colors">
                   <CardContent className="p-4">
@@ -264,7 +305,7 @@ export function ConnectionsPage() {
                     <div className="flex items-center justify-between">
                       <Badge variant="outline" className={`text-[10px] ${sc.badge}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${sc.dot} mr-1.5`} />
-                        {server.status}
+                        {sc.label}
                       </Badge>
                       <button
                         onClick={() => setDbPickerServer(server)}
@@ -298,14 +339,32 @@ export function ConnectionsPage() {
           </div>
           <Button
             size="sm"
+            variant="outline"
             onClick={() => setShowConnectionDialog(true, null)}
-            className="h-8 text-xs bg-purple-600 hover:bg-purple-700"
+            className="h-8 text-xs"
           >
             <Plus className="w-3.5 h-3.5 mr-1.5" /> Manual Connection
           </Button>
         </div>
 
-        {!connections?.length ? (
+        {isConnsError ? (
+          <Card className="border-destructive/30 bg-destructive/5">
+            <CardContent className="p-6 text-center">
+              <p className="text-sm text-destructive font-medium">Failed to load file connections</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {(connsError as any)?.message || 'An unexpected error occurred'}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['connections'] })}
+              >
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        ) : !connections?.length ? (
           <div className="border border-dashed border-border rounded-xl py-10 flex flex-col items-center gap-3 text-center">
             <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
               <Database className="w-5 h-5 text-muted-foreground" />
@@ -314,9 +373,11 @@ export function ConnectionsPage() {
             <p className="text-xs text-muted-foreground/60 max-w-xs">Add a server above and pick a database, or add a manual connection</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {connections.map((conn) => {
-              const config = statusConfig[conn.status] || statusConfig.disconnected
+              const badgeState = deriveConnectionBadgeState(conn.status, conn.hasBrowsedSchema)
+              const config = CONNECTION_BADGE[badgeState]
               const isTesting = testMutation.isPending && testMutation.variables === conn.id
               return (
                 <Card key={conn.id} className="py-0 gap-0 hover:border-foreground/20 transition-colors">
@@ -375,12 +436,38 @@ export function ConnectionsPage() {
                       {conn.lastError && (
                         <p className="text-[11px] text-red-400 truncate">{conn.lastError}</p>
                       )}
+                      {conn.hasBrowsedSchema && (conn.schemaLayoutCount > 0 || conn.schemaTableCount > 0) ? (
+                        <p className="text-[11px] text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="size-3 shrink-0" />
+                          {[
+                            conn.schemaLayoutCount > 0 && `${conn.schemaLayoutCount} layout${conn.schemaLayoutCount !== 1 ? 's' : ''}`,
+                            conn.schemaTableCount > 0 && `${conn.schemaTableCount} OData table${conn.schemaTableCount !== 1 ? 's' : ''}`,
+                          ].filter(Boolean).join(', ')} selected
+                        </p>
+                      ) : conn.hasBrowsedSchema ? (
+                        <p className="text-[11px] text-amber-400">Schema browsed — no selection saved yet</p>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground/50">No schema loaded — click Browse Schema</p>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
               )
             })}
-          </div>
+            </div>
+            {hasMoreConnections && (
+              <div className="flex justify-center mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchMoreConnections()}
+                  disabled={isFetchingMoreConnections}
+                >
+                  {isFetchingMoreConnections ? 'Loading…' : 'Load more'}
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </section>
 
@@ -419,7 +506,10 @@ export function ConnectionsPage() {
       {schemaBrowserId && (
         <SchemaBrowser
           connectionId={schemaBrowserId}
-          onClose={() => setSchemaBrowserId(null)}
+          onClose={() => {
+            setSchemaBrowserId(null)
+            queryClient.invalidateQueries({ queryKey: ['connections'] })
+          }}
         />
       )}
 
@@ -433,7 +523,7 @@ export function ConnectionsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteConnectionId && deleteConnectionMutation.mutate(deleteConnectionId)}
               className="bg-destructive text-white hover:bg-destructive/90"
@@ -452,7 +542,7 @@ export function ConnectionsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteServerId && deleteServerMutation.mutate(deleteServerId)}
               className="bg-destructive text-white hover:bg-destructive/90"

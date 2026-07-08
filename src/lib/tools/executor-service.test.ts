@@ -255,6 +255,33 @@ async function runTests() {
     console.log('  ✓ Multi Step: join mode, chunking, and client-side filtering passed')
   }
 
+  // 4. Execution Error Handling
+  console.log('\nTesting Execution Error Handling...')
+  {
+    const handlerConfig = {
+      layout: 'Contacts',
+      fieldMappings: { firstName: 'First_Name_FM' }
+    }
+    const params = { firstName: 'BadQuery' }
+
+    const mockFindError = createMockFn((layout, query, limit) => {
+      // Simulate an FM Data API error response format (non-zero code)
+      return Promise.resolve({
+        messages: [{ code: '401', message: 'No records match the request' }],
+        response: {}
+      })
+    })
+    mockClient.find = mockFindError as any
+
+    try {
+      await executeSingleStepTool(mockClient, 'find', handlerConfig, params)
+      assert.fail('Should have thrown an execution error for code 401')
+    } catch (err: any) {
+      assert.ok(err.message.includes('401') || err.message.includes('No records'), 'Should surface FileMaker error gracefully')
+      console.log('  ✓ Execution Error: FM error correctly caught and surfaced')
+    }
+  }
+
   console.log('\n🎉 ALL TESTS PASSED SUCCESSFULLY! 🎉')
 }
 

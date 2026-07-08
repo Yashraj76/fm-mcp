@@ -1,6 +1,7 @@
 import { prisma } from '../prisma';
 import { withFMSession } from './session';
-import { FileMakerClient } from './client';
+import { FileMakerError } from './client';
+import { logger } from '../logger';
 
 export interface MultiStepConfig {
   steps: {
@@ -15,7 +16,7 @@ export interface MultiStepConfig {
   connectionId: string;
 }
 
-export async function executeMultiStepTool(steps: any[], connectionId: string, params: any, userId?: string) {
+export async function executeMultiStepTool(steps: MultiStepConfig['steps'], connectionId: string, params: Record<string, unknown>, userId?: string) {
   let connId = connectionId;
 
   // Fallback: if connectionId is missing, try to find it from the server
@@ -37,13 +38,13 @@ export async function executeMultiStepTool(steps: any[], connectionId: string, p
 
     for (const step of steps) {
       // Build query for this step
-      const query: Record<string, any> = {};
+      const query: Record<string, string | number> = {};
       
       if (step.fieldMappings) {
         for (const [paramKey, fmField] of Object.entries(step.fieldMappings)) {
           // Check context (passed params or extracted from previous steps)
           if (context[paramKey] !== undefined) {
-            query[fmField as string] = context[paramKey];
+            query[fmField as string] = context[paramKey] as string | number;
           }
         }
       }
@@ -52,13 +53,13 @@ export async function executeMultiStepTool(steps: any[], connectionId: string, p
       try {
         // Execute find only if we have criteria
         if (Object.keys(query).length === 0) {
-           console.warn(`Step ${step.stepIndex} has empty query criteria. Skipping.`);
+           logger.warn({ stepIndex: step.stepIndex }, 'multi-executor: step has empty query criteria, skipping')
            results[step.stepIndex] = [];
            continue; // Skip the find
         }
 
         const res = await client.find(step.layout, [query], step.limit || 50);
-        const data = res.response.data;
+        const data = res.response.data ?? [];
         results[step.stepIndex] = data;
 
         // Extract field for next steps if needed
@@ -68,12 +69,14 @@ export async function executeMultiStepTool(steps: any[], connectionId: string, p
 
         // If no records found and it's a critical path, we might want to stop
         if (data.length === 0 && steps.indexOf(step) < steps.length - 1 && step.extractField) {
-          console.warn(`Step ${step.stepIndex} returned no records. Subsequent steps will fail. Returning early.`);
+          logger.warn({ stepIndex: step.stepIndex }, 'multi-executor: step returned no records, returning early')
           break;
         }
-      } catch (err: any) {
-        // If it's a 401 (no records found), we treat it as empty data rather than a hard error for intermediate steps
-        if (err.message?.includes('401')) {
+      } catch (err: unknown) {
+        // FM Data API code 401 = "No records match" — safe to treat as empty result
+        // for intermediate steps. client.ts already handles this gracefully so this
+        // branch is a safety net, but we must NOT catch HTTP 401 (auth failure) here.
+        if (err instanceof FileMakerError && err.isNoRecordsFound) {
           results[step.stepIndex] = [];
         } else {
           throw err;
@@ -85,7 +88,7 @@ export async function executeMultiStepTool(steps: any[], connectionId: string, p
     const lastStep = steps[steps.length - 1];
     return {
       status: 'success',
-      data: results[lastStep.stepIndex]?.map((r: any) => ({
+      data: (results[lastStep.stepIndex] as any[])?.map((r: any) => ({
         recordId: r.recordId,
         ...r.fieldData
       })) || [],

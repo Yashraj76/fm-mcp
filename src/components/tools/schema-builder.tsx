@@ -307,6 +307,7 @@ function PropertyRow({ property, index, onChange, onRemove, canRemove, available
                 size="sm"
                 onClick={() => onRemove(index)}
                 className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                aria-label="Remove property"
               >
                 <Trash2 className="size-3.5" />
               </Button>

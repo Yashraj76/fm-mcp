@@ -1,18 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { withFMSession } from '@/lib/filemaker/session'
 import { withAuth } from "@/lib/auth/api-guard";
-import { safeParseJSON } from '@/lib/utils/safe-parse';
-
-type Params = { params: Promise<{ id: string }> }
+import { persistLayoutMeta } from '@/lib/db/layout-meta'
+import { logger } from '@/lib/logger'
 
 const BodySchema = z.object({
   layout: z.string().min(1),
 })
+
 export const POST = withAuth(async (req, { params, userId }) => {
-    try {
-    const { id } = params
+  try {
+    const { id } = await params
     const body = BodySchema.parse(await req.json())
     const { layout } = body
 
@@ -38,25 +38,26 @@ export const POST = withAuth(async (req, { params, userId }) => {
       }
     })
 
-    // Persist into rawLayoutMeta (merge with existing entries) — fire-and-forget
-    db.browsedSchema.findUnique({
-      where: { connectionId: id }
-    }).then((bs) => {
-      if (!bs) return
-      const existing = safeParseJSON(bs.rawLayoutMeta, {})
-      existing[layout] = { fields: meta.fields, portals: meta.portals, portalDetails: meta.portalDetails }
-      return db.browsedSchema.update({
-        where: { connectionId: id },
-        data: { rawLayoutMeta: JSON.stringify(existing) },
+    // Persist into rawLayoutMeta — awaited so the 200 is only returned once
+    // the write is committed. Errors here are non-fatal: the caller already
+    // has the layout data in the response body.
+    let persisted = false
+    try {
+      persisted = await persistLayoutMeta(id, layout, {
+        fields: meta.fields,
+        portals: meta.portals,
+        portalDetails: meta.portalDetails,
       })
-    }).catch((err: Error) => console.error('[layout-fields] Failed to persist rawLayoutMeta:', err.message))
+    } catch (persistErr: any) {
+      logger.error({ errMsg: persistErr.message }, '[layout-fields] Failed to persist rawLayoutMeta:')
+    }
 
-    return NextResponse.json({ success: true, data: meta })
-    } catch (e: any) {
-    console.error('[layout-fields POST]', e)
+    return NextResponse.json({ success: true, data: { ...meta, persisted } })
+  } catch (e: any) {
+    logger.error({ err: e }, '[layout-fields POST]')
     return NextResponse.json(
       { success: false, error: e.message || 'Failed to fetch layout fields', code: 'SCHEMA_FETCH_ERROR' },
       { status: 500 }
     )
-    }
-    });
+  }
+})

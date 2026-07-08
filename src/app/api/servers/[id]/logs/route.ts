@@ -1,19 +1,22 @@
-import { NextResponse } from 'next/server';
+import { apiSuccess, apiNotFound, apiServerError } from '@/lib/utils/api-response';
 import { prisma } from '@/lib/prisma';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { withAuth } from "@/lib/auth/api-guard";
+import { logger } from '@/lib/logger'
 export const GET = withAuth(async (req, { params, userId }) => {
+  try {
     const server = await prisma.mcpServer.findFirst({
       where: { id: params.id, userId }
     });
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Server not found' }, { status: 404 });
+      return apiNotFound('Server not found');
     }
 
     const { searchParams } = new URL(req.url);
     const action = searchParams.get('action') ?? undefined;
     const entityType = searchParams.get('entityType') ?? undefined;
     const limit = Math.min(parseInt(searchParams.get('limit') ?? '50'), 200);
+    const cursor = searchParams.get('cursor') ?? undefined;
 
     const logs = await prisma.activityLog.findMany({
       where: {
@@ -22,12 +25,16 @@ export const GET = withAuth(async (req, { params, userId }) => {
         ...(entityType ? { entityType } : {}),
       },
       orderBy: { createdAt: 'desc' },
-      take: limit,
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
-    return NextResponse.json({
-      success: true,
-      data: logs.map(l => ({
+    const hasMore = logs.length > limit;
+    const data = hasMore ? logs.slice(0, limit) : logs;
+    const nextCursor = hasMore ? data[data.length - 1].id : null;
+
+    return apiSuccess({
+      data: data.map(l => ({
         id: l.id,
         action: l.action,
         entityType: l.entityType,
@@ -35,8 +42,13 @@ export const GET = withAuth(async (req, { params, userId }) => {
         branchId: l.branchId,
         deploymentId: l.deploymentId,
         hasDiff: !!(l.before && l.after),
-        meta: safeParseJSON(l.meta, null),
+        meta: safeParseJSON<any>(l.meta, null),
         createdAt: l.createdAt,
       })),
+      pagination: { hasMore, nextCursor, limit }
     });
-  });
+  } catch (error) {
+    logger.error({ err: error }, '[API Error]');
+    return apiServerError('Failed to list server logs');
+  }
+});

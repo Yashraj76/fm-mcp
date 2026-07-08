@@ -1,9 +1,12 @@
-import { NextResponse } from 'next/server';
+import { apiSuccess, apiNotFound, apiError, apiServerError } from '@/lib/utils/api-response';
 import { prisma } from '@/lib/prisma';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { withAuth } from "@/lib/auth/api-guard";
+import { toolCreateDataFromSnapshot } from '@/lib/deployments/tool-from-snapshot';
+import { logger } from '@/lib/logger'
 export const POST = withAuth(async (_, { params, userId }) => {
+  try {
     const targetDep = await prisma.deployment.findFirst({
       where: {
         id: (await params).id,
@@ -12,32 +15,30 @@ export const POST = withAuth(async (_, { params, userId }) => {
       include: { server: true },
     });
     if (!targetDep || targetDep.server.userId !== userId) {
-      return NextResponse.json({ success: false, error: 'Deployment not found' }, { status: 404 });
+      return apiNotFound('Deployment not found');
     }
-    if (targetDep.isLive) return NextResponse.json({ success: false, error: 'Already the live deployment' }, { status: 400 });
+    if (targetDep.isLive) return apiError('Already the live deployment', 'VALIDATION_ERROR', 400);
 
-    const snapshot = safeParseJSON(targetDep.snapshot, { tools: [] });
+    const snapshot = safeParseJSON<{ tools: any[] }>(targetDep.snapshot, { tools: [] });
     const mainBranch = await prisma.branch.findFirst({
       where: { serverId: targetDep.serverId, isDefault: true },
     });
 
     await prisma.$transaction(async (tx) => {
-    // 1. Delete ALL current tools on main
+    // 1. Soft-delete current tools to preserve ToolExecution history; hard-delete branch links
     await tx.branchTool.deleteMany({ where: { branchId: mainBranch!.id } });
-    await tx.tool.deleteMany({ where: { serverId: targetDep.serverId } });
+    await tx.tool.updateMany({
+      where: { serverId: targetDep.serverId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
 
-    // 2. Recreate tools from snapshot
+    // 2. Recreate tools from snapshot — all execution-critical and metadata
+    //    fields are mapped via toolCreateDataFromSnapshot to ensure the
+    //    rolled-back tools are identical to what was originally deployed.
     for (const toolData of snapshot.tools ?? []) {
       const newTool = await tx.tool.create({
         data: {
-          name: toolData.name,
-          description: toolData.description,
-          inputSchema: typeof toolData.inputSchema === 'string'
-            ? toolData.inputSchema : JSON.stringify(toolData.inputSchema),
-          handlerConfig: typeof toolData.handlerConfig === 'string'
-            ? toolData.handlerConfig : JSON.stringify(toolData.handlerConfig),
-          isEnabled: toolData.isEnabled ?? toolData.enabled,
-          category: toolData.category,
+          ...toolCreateDataFromSnapshot(toolData),
           serverId: targetDep.serverId,
         },
       });
@@ -70,10 +71,12 @@ export const POST = withAuth(async (_, { params, userId }) => {
     entityType: 'deployment', entityId: targetDep.id, entityName: `v${targetDep.version}`,
     serverId: targetDep.serverId,
     meta: { rolledBackTo: targetDep.version, toolCount: snapshot.tools?.length ?? 0 },
+    actorUserId: userId,
     });
 
-    return NextResponse.json({
-    success: true,
-    data: { rolledBackTo: targetDep.version, toolCount: snapshot.tools?.length ?? 0 },
-    });
-    });
+    return apiSuccess({ rolledBackTo: targetDep.version, toolCount: snapshot.tools?.length ?? 0 });
+  } catch (error) {
+    logger.error({ err: error }, '[API Error]');
+    return apiServerError('Failed to rollback deployment');
+  }
+});

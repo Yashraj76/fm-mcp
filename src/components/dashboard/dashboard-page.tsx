@@ -158,7 +158,7 @@ export function DashboardPage() {
   ]
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
+    <div className="space-y-6">
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statsLoading
@@ -302,7 +302,7 @@ export function DashboardPage() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-base">Connection Health</CardTitle>
-              <CardDescription>FileMaker connection statuses</CardDescription>
+              <CardDescription>Connection statuses and health</CardDescription>
             </div>
             <Button
               variant="outline"

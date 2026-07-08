@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '@/lib/utils/api-client'
+import { api, ApiError } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -12,10 +12,11 @@ import { Separator } from '@/components/ui/separator'
 import {
   Copy, Check, AlertTriangle, ShieldCheck, FileJson,
   Terminal, Wifi, Key, RefreshCw, Trash2, Eye, EyeOff,
-  X, ChevronRight, Info, Loader2,
+  X, ChevronRight, Info, Loader2, GitBranch,
 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 interface ApiKeyMeta {
   keyPrefix: string
@@ -23,11 +24,25 @@ interface ApiKeyMeta {
   lastUsedAt: string | null
 }
 
+interface CorsConfig {
+  allowedOrigins: string[]
+  isConfigured: boolean
+  browserClientsBlocked: boolean
+  setupNote: string | null
+  envVar: string
+  exampleValue: string
+}
+
 interface ConfigData {
   serverId: string
   serverName: string
   serverVersion: string
+  activeBranchId: string | null
+  activeBranchName: string | null
+  isDefaultBranch: boolean
   hasApiKey: boolean
+  sseAvailable: boolean
+  corsConfig?: CorsConfig
   endpoints: { streamableHttp: string; sse: string }
   streamableHttp: Record<string, unknown>
   sse: Record<string, unknown>
@@ -98,8 +113,9 @@ export function ConfigDialog() {
   const currentBranchId = useAppStore((s) => s.currentBranchId)
   const queryClient = useQueryClient()
   const [newApiKey, setNewApiKey] = useState<string | null>(null)
+  const [revokeOpen, setRevokeOpen] = useState(false)
 
-  const { data: config, isLoading, isError } = useQuery<ConfigData>({
+  const { data: config, isLoading, isError, error } = useQuery<ConfigData, ApiError>({
     queryKey: ['config', currentServerId, currentBranchId],
     queryFn: () => api.get<ConfigData>(`/api/servers/${currentServerId}/config?branchId=${currentBranchId || ''}`),
     enabled: showConfigDialog && !!currentServerId,
@@ -173,6 +189,18 @@ export function ConfigDialog() {
         </DialogHeader>
 
         <div className="px-6 pb-6 space-y-6 mt-4">
+          {/* Branch indicator — shown when viewing a non-default branch config */}
+          {config && !config.isDefaultBranch && (
+            <div className="flex items-center gap-2.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2.5">
+              <GitBranch className="size-4 text-indigo-400 shrink-0" />
+              <p className="text-xs text-indigo-300">
+                Viewing config for branch <span className="font-semibold text-indigo-200">{config.activeBranchName}</span>.
+                Endpoint URLs include <code className="font-mono">?branchId={config.activeBranchId}</code> — AI clients
+                connecting to these URLs will see this branch&apos;s tools, not main.
+              </p>
+            </div>
+          )}
+
           {/* Security warning */}
           <div className="flex items-start gap-3 rounded-lg border border-yellow-500/20 bg-yellow-500/5 px-3 py-2.5">
             <AlertTriangle className="size-4 text-yellow-500 shrink-0 mt-0.5" />
@@ -188,9 +216,26 @@ export function ConfigDialog() {
               ))}
             </div>
           ) : isError ? (
-            <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-400">
-              Failed to generate configuration. Make sure the server has an active branch.
-            </div>
+            error?.code === 'CONFIG_ERROR' ? (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-amber-400">
+                  <AlertTriangle className="size-4 shrink-0" />
+                  <span className="text-sm font-semibold">Server configuration required</span>
+                </div>
+                <p className="text-xs text-amber-300/80">
+                  The <code className="font-mono bg-amber-500/10 px-1 rounded">NEXT_PUBLIC_APP_URL</code> environment variable
+                  is not set on this deployment. MCP endpoint URLs cannot be generated without it.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Add <code className="font-mono">NEXT_PUBLIC_APP_URL=https://your-app.vercel.app</code> to your deployment
+                  environment variables and redeploy.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-400">
+                Failed to generate configuration. Make sure the server has an active branch.
+              </div>
+            )
           ) : (
             <>
               {/* ── API KEY SECTION ── */}
@@ -211,11 +256,7 @@ export function ConfigDialog() {
                         variant="ghost"
                         size="sm"
                         className="text-red-400 hover:text-red-300 hover:bg-red-500/10 gap-1.5 text-xs h-7"
-                        onClick={() => {
-                          if (confirm('Revoke this token? All clients using it will lose access.')) {
-                            revokeKeyMutation.mutate()
-                          }
-                        }}
+                        onClick={() => setRevokeOpen(true)}
                         disabled={revokeKeyMutation.isPending}
                       >
                         {revokeKeyMutation.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
@@ -282,6 +323,17 @@ export function ConfigDialog() {
                   </div>
                 )}
 
+                {config?.corsConfig?.browserClientsBlocked && (
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-300">
+                    <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      Browser-based MCP clients (e.g. claude.ai) are blocked in production.
+                      Set <code className="font-mono mx-1">MCP_ALLOWED_ORIGINS=https://claude.ai</code> on your
+                      deployment to allow them.
+                    </span>
+                  </div>
+                )}
+
                 <Tabs defaultValue="streamable">
                   <TabsList className="h-9">
                     <TabsTrigger
@@ -326,9 +378,22 @@ export function ConfigDialog() {
                   {/* SSE */}
                   <TabsContent value="sse" className="space-y-3 mt-4">
                     <div className="text-xs text-muted-foreground space-y-0.5">
-                      <p className="font-medium text-foreground">Claude Desktop · Claude.ai</p>
-                      <p>Server-Sent Events transport. Requires <code className="font-mono">REDIS_URL</code> on the server.</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-foreground">Claude Desktop · Claude.ai</p>
+                        {config && (
+                          config.sseAvailable
+                            ? <Badge className="bg-green-500/15 text-green-400 border-green-500/20 text-[10px]">Available</Badge>
+                            : <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-500/30 bg-amber-500/10">Requires REDIS_URL</Badge>
+                        )}
+                      </div>
+                      <p>Server-Sent Events transport. Requires <code className="font-mono">REDIS_URL</code> configured on the server.</p>
                     </div>
+                    {config && !config.sseAvailable && (
+                      <div className="flex items-center gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-300">
+                        <AlertTriangle className="size-3.5 shrink-0" />
+                        SSE is not active on this server. Use <strong>Streamable HTTP</strong> or <strong>mcp-remote</strong> instead, or set <code className="font-mono">REDIS_URL</code> to enable SSE.
+                      </div>
+                    )}
                     <CodeBlock
                       code={sseJson}
                       label="Add to your Claude Desktop config (claude_desktop_config.json)"
@@ -381,6 +446,14 @@ export function ConfigDialog() {
           )}
         </div>
       </DialogContent>
+      <ConfirmDialog
+        open={revokeOpen}
+        onOpenChange={setRevokeOpen}
+        title="Revoke API token?"
+        description="All clients using this token will lose access immediately. This cannot be undone."
+        confirmLabel="Revoke"
+        onConfirm={() => revokeKeyMutation.mutate()}
+      />
     </Dialog>
   )
 }

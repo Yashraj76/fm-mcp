@@ -31,7 +31,8 @@ import {
 import { SchemaBuilder, type JsonSchema } from '@/components/tools/schema-builder'
 import { MultiTableBuilder, type ToolStep } from '@/components/tools/multi-table-builder'
 import { FieldMappingBuilder, mappingsToRecord, recordToMappings } from '@/components/tools/field-mapping-builder'
-import { HandlerPreview } from '@/components/tools/handler-preview'
+import dynamic from 'next/dynamic'
+const HandlerPreview = dynamic(() => import('@/components/tools/handler-preview').then(m => m.HandlerPreview), { ssr: false, loading: () => <div className="p-4 text-sm text-muted-foreground animate-pulse">Loading preview...</div> })
 import { ODataFilterBuilder } from '@/components/tools/odata-filter-builder'
 import { useAppStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
@@ -54,6 +55,83 @@ import {
   Globe,
 } from 'lucide-react'
 import { useCompiledSchema } from '@/hooks/use-compiled-schema'
+
+// ── Test result summary (readable by default, raw JSON on demand) ──────────
+function TestResultSummary({ data, isSuccess }: { data: unknown; isSuccess: boolean }) {
+  if (!isSuccess) {
+    const errMsg =
+      typeof data === 'object' && data !== null
+        ? ((data as any).error || (data as any).message || JSON.stringify(data))
+        : String(data ?? 'Unknown error')
+    return (
+      <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400 whitespace-pre-wrap">
+        {errMsg}
+      </div>
+    )
+  }
+  const raw = data as any
+  const records: any[] | null = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw?.data) ? raw.data
+    : Array.isArray(raw?.response?.data) ? raw.response.data
+    : null
+
+  if (records !== null) {
+    const count = records.length
+    const first = records[0]
+    const cols = first ? Object.keys(first).slice(0, 5) : []
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-green-400 flex items-center gap-2">
+          <CheckCircle2 className="size-4 shrink-0" />
+          {count} record{count !== 1 ? 's' : ''} returned
+        </p>
+        {first && cols.length > 0 && (
+          <div className="rounded-lg border overflow-hidden text-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-muted/50 border-b">
+                  <tr>
+                    {cols.map(k => <th key={k} className="px-3 py-2 text-left text-muted-foreground font-medium truncate max-w-[140px]">{k}</th>)}
+                    {Object.keys(first).length > 5 && <th className="px-3 py-2 text-left text-muted-foreground">+{Object.keys(first).length - 5}</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.slice(0, 3).map((row: any, i: number) => (
+                    <tr key={i} className="border-b last:border-0">
+                      {cols.map(k => <td key={k} className="px-3 py-2 truncate max-w-[140px]">{String(row[k] ?? '')}</td>)}
+                      {Object.keys(first).length > 5 && <td className="px-3 py-2 text-muted-foreground">…</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {count > 3 && <p className="px-3 py-1.5 text-[11px] text-muted-foreground border-t bg-muted/20">Showing 3 of {count} records</p>}
+          </div>
+        )}
+        {count === 0 && <p className="text-xs text-muted-foreground">No records matched the query.</p>}
+      </div>
+    )
+  }
+
+  const entries = Object.entries(raw || {}).slice(0, 10)
+  if (entries.length === 0) {
+    return <p className="text-sm text-green-400 flex items-center gap-2"><CheckCircle2 className="size-4" />Success</p>
+  }
+  return (
+    <div className="rounded-lg border bg-muted/10 divide-y text-xs">
+      {entries.map(([k, v]) => (
+        <div key={k} className="flex items-start gap-3 px-3 py-2">
+          <span className="text-muted-foreground font-mono w-32 shrink-0 truncate">{k}</span>
+          <span className="break-all">{typeof v === 'object' ? JSON.stringify(v) : String(v ?? '')}</span>
+        </div>
+      ))}
+      {Object.keys(raw || {}).length > 10 && (
+        <div className="px-3 py-2 text-muted-foreground">+{Object.keys(raw).length - 10} more fields</div>
+      )}
+    </div>
+  )
+}
 
 const CATEGORIES = ['CRUD', 'Find', 'Script', 'Custom', 'Multi-Table'] as const
 
@@ -125,11 +203,15 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
   const currentServerId = useAppStore(s => s.currentServerId)
   const currentBranchId = useAppStore(s => s.currentBranchId)
   const setShowToolDialog = useAppStore(s => s.setShowToolDialog)
-  const triggerRefreshTools = useAppStore(s => s.triggerRefreshTools)
+
 
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState('basic')
   const [formData, setFormData] = useState<ToolFormData>(getDefaultFormData())
+  const [nameError, setNameError] = useState<string | null>(null)
+  const [descriptionError, setDescriptionError] = useState<string | null>(null)
+  const [layoutError, setLayoutError] = useState<string | null>(null)
+  const [showRawResult, setShowRawResult] = useState(false)
   const [testResult, setTestResult] = useState<{
     status: number
     duration: number
@@ -185,7 +267,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     // Legacy fallback
     const layouts = new Set<string>()
     serverData?.connections?.forEach((conn: any) => {
-      const schema = safeParseJSON(conn.connection?.browsedSchema?.compiledSchema, {})
+      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
       schema.layouts?.forEach((l: any) => layouts.add(l.name))
     })
     return Array.from(layouts).sort()
@@ -195,7 +277,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     if (compiledSchema?.scripts?.length) return compiledSchema.scripts.sort()
     const scripts = new Set<string>()
     serverData?.connections?.forEach((conn: any) => {
-      const schema = safeParseJSON(conn.connection?.browsedSchema?.compiledSchema, {})
+      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
       schema.scripts?.forEach((s: any) => scripts.add(typeof s === 'string' ? s : s.name))
     })
     return Array.from(scripts).sort()
@@ -212,7 +294,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     const fields: any[] = []
     serverData?.connections?.forEach((conn: any) => {
       if (connId && conn.connection?.id !== connId) return
-      const schema = safeParseJSON(conn.connection?.browsedSchema?.compiledSchema, {})
+      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
       const layout = schema.layouts?.find((l: any) => l.name === formData.fmLayout)
       if (layout?.fieldMetaData) {
         layout.fieldMetaData.forEach((f: any) => {
@@ -311,7 +393,11 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       queueMicrotask(() => {
         setFormData(getDefaultFormData())
         setActiveTab('basic')
+        setNameError(null)
+        setDescriptionError(null)
+        setLayoutError(null)
         setTestResult(null)
+        setShowRawResult(false)
         setTestBody('{}')
         setHandlerConfigStr('{}')
         setMultiTableSteps([])
@@ -391,6 +477,9 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
   )
 
   const updateField = useCallback((field: keyof ToolFormData, value: any) => {
+    if (field === 'name') setNameError(null)
+    if (field === 'description') setDescriptionError(null)
+    if (field === 'fmLayout') setLayoutError(null)
     setFormData(prev => {
       const updated = { ...prev, [field]: value }
 
@@ -430,7 +519,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
         finalConfig = { ...finalConfig, steps: multiTableSteps, method: 'sequential-multi-table' }
       }
       try {
-        const editorParsed = safeParseJSON(handlerConfigStr, null)
+        const editorParsed = safeParseJSON<Record<string, any>>(handlerConfigStr, null)
         if (!editorParsed) throw new Error('Invalid JSON')
         if (editorParsed?.steps?.length > 0) {
           finalConfig = { ...editorParsed, method: 'sequential-multi-table' }
@@ -463,23 +552,47 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
         return api.post<any>(url, payload)
       }
     },
-    onSuccess: () => {
-      toast.success(isEditing ? 'Tool updated successfully' : 'Tool created successfully')
-      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId] })
-      triggerRefreshTools()
-      setShowToolDialog(false)
+    onSuccess: (data: any) => {
+      toast.success(isEditing ? 'Tool updated' : 'Tool created')
+      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId, currentBranchId] })
+      if (!isEditing && data?.id) {
+        // Switch to edit mode for the new tool so Test tab becomes live
+        setShowToolDialog(true, data.id)
+      } else {
+        queryClient.invalidateQueries({ queryKey: ['tool', editingToolId, currentBranchId] })
+      }
+      setActiveTab('test')
+      setShowRawResult(false)
     },
     onError: (err: any) => {
-      toast.error(err.message || 'Failed to save tool')
+      if (err.code === 'DUPLICATE_TOOL_NAME') {
+        setNameError(err.message)
+        setActiveTab('basic')
+      } else {
+        toast.error(err.message || 'Failed to save tool')
+      }
     },
   })
 
   const handleSave = useCallback(() => {
-    if (!formData.name.trim()) { toast.error('Tool name is required'); return }
-    if (!formData.description.trim()) { toast.error('Tool description is required'); return }
+    let firstErrorTab: string | null = null
+    if (!formData.name.trim()) {
+      setNameError('Tool name is required')
+      if (!firstErrorTab) firstErrorTab = 'basic'
+    }
+    if (!formData.description.trim()) {
+      setDescriptionError('Description is required')
+      if (!firstErrorTab) firstErrorTab = 'basic'
+    }
+    const needsLayout = !useOData && ['find', 'create', 'update', 'delete', 'list', 'get'].includes(formData.fmMethod)
+    if (needsLayout && !formData.fmLayout) {
+      setLayoutError('Select a layout for this operation')
+      if (!firstErrorTab) firstErrorTab = 'fm-mapping'
+    }
+    if (firstErrorTab) { setActiveTab(firstErrorTab); return }
     if (!currentBranchId) { toast.error('No branch selected'); return }
     saveMutation.mutate(formData)
-  }, [formData, currentBranchId, saveMutation])
+  }, [formData, currentBranchId, saveMutation, useOData])
 
   const handleExecuteTest = useCallback(async () => {
     if (!currentServerId) return
@@ -502,7 +615,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
         finalConfig = { ...finalConfig, steps: multiTableSteps, method: 'sequential-multi-table' }
       }
       try {
-        const editorParsed = safeParseJSON(handlerConfigStr, null)
+        const editorParsed = safeParseJSON<Record<string, any>>(handlerConfigStr, null)
         if (!editorParsed) throw new Error('Invalid JSON')
         if (editorParsed?.steps?.length > 0) {
           finalConfig = { ...editorParsed, method: 'sequential-multi-table' }
@@ -647,8 +760,16 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                         value={formData.name}
                         onChange={e => updateField('name', e.target.value)}
                         placeholder="e.g., search_contacts"
-                        className="font-mono text-sm"
+                        className={cn('font-mono text-sm', nameError && 'border-destructive focus-visible:ring-destructive')}
+                        aria-describedby={nameError ? 'tool-name-error' : undefined}
+                        aria-invalid={!!nameError}
                       />
+                      {nameError && (
+                        <p id="tool-name-error" className="flex items-center gap-1 text-xs text-destructive">
+                          <XCircle className="size-3 shrink-0" />
+                          {nameError}
+                        </p>
+                      )}
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="tool-category">Category</Label>
@@ -675,11 +796,19 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                       value={formData.description}
                       onChange={e => updateField('description', e.target.value)}
                       placeholder="Describe what this tool does for AI assistants…"
-                      className="min-h-[80px] text-sm"
+                      className={cn('min-h-[80px] text-sm', descriptionError && 'border-destructive focus-visible:ring-destructive')}
+                      aria-describedby={descriptionError ? 'tool-desc-error' : undefined}
+                      aria-invalid={!!descriptionError}
                     />
-                    <p className="text-xs text-muted-foreground">
-                      This description helps AI assistants understand when to use this tool.
-                    </p>
+                    {descriptionError ? (
+                      <p id="tool-desc-error" className="flex items-center gap-1 text-xs text-destructive">
+                        <XCircle className="size-3 shrink-0" />{descriptionError}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        This description helps AI assistants understand when to use this tool.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-3 pt-2">
@@ -856,7 +985,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                               setHandlerConfigStr(JSON.stringify(hc, null, 2))
                             }}
                           >
-                            <SelectTrigger id="fm-layout" className="text-sm">
+                            <SelectTrigger id="fm-layout" className={cn('text-sm', layoutError && 'border-destructive')}>
                               <SelectValue placeholder="Select layout" />
                             </SelectTrigger>
                             <SelectContent>
@@ -868,9 +997,15 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                               ))}
                             </SelectContent>
                           </Select>
-                          <p className="text-xs text-muted-foreground">
-                            The FileMaker layout to target for data operations
-                          </p>
+                          {layoutError ? (
+                            <p className="flex items-center gap-1 text-xs text-destructive">
+                              <XCircle className="size-3 shrink-0" />{layoutError}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              The FileMaker layout to target for data operations
+                            </p>
+                          )}
                         </div>
 
                         <div className="space-y-2">
@@ -1060,6 +1195,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
 
                       {testResult && (
                         <div ref={testPanelRef} className="space-y-3">
+                          {/* Status bar */}
                           <div className="flex items-center gap-3">
                             <Badge
                               variant="outline"
@@ -1099,10 +1235,30 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                               </Button>
                             </div>
                           </div>
-                          <div className="bg-muted/20 rounded-lg p-4 font-mono text-xs overflow-auto max-h-[300px] custom-scrollbar border">
-                            <pre className="whitespace-pre-wrap">
-                              {JSON.stringify(testResult.data, null, 2)}
-                            </pre>
+
+                          {/* Readable summary */}
+                          <TestResultSummary
+                            data={testResult.data}
+                            isSuccess={testResult.status >= 200 && testResult.status < 300}
+                          />
+
+                          {/* Expandable raw JSON */}
+                          <div className="rounded-lg border overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => setShowRawResult(s => !s)}
+                              className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:bg-muted/20 transition-colors"
+                            >
+                              <span>Raw JSON</span>
+                              {showRawResult ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                            </button>
+                            {showRawResult && (
+                              <div className="border-t bg-muted/10 p-4 font-mono text-xs overflow-auto max-h-[260px] custom-scrollbar">
+                                <pre className="whitespace-pre-wrap">
+                                  {JSON.stringify(testResult.data, null, 2)}
+                                </pre>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}

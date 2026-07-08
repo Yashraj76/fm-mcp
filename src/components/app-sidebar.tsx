@@ -105,12 +105,12 @@ export function AppSidebar({ userNav }: { userNav?: React.ReactNode }) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" isActive={false}>
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <Database className="size-4" />
+              <div className="flex aspect-square size-8 items-center justify-center rounded-lg overflow-hidden">
+                <img src="/logo.svg" alt="kilink" className="size-8" />
               </div>
               <div className="flex flex-col gap-0.5 leading-none">
-                <span className="font-semibold">MCP Platform</span>
-                <span className="text-xs text-muted-foreground">FileMaker Server</span>
+                <span className="font-semibold">kilink</span>
+                <span className="text-xs text-muted-foreground">by kibizsystems</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>

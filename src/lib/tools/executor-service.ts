@@ -1,5 +1,5 @@
 import { withFMSession } from '../filemaker/session'
-import { FileMakerClient } from '../filemaker/client'
+import { FileMakerClient, FileMakerError } from '../filemaker/client'
 import { executeSystemTool } from './system-executor'
 import {
   executeODataFilter,
@@ -33,11 +33,11 @@ export async function executeSingleStepTool(
       
       const rawQuery = Array.isArray(fieldBody) ? fieldBody : [fieldBody]
       const mappedQuery = rawQuery.map((criterion: Record<string, unknown>) => {
-        const mapped: Record<string, unknown> = {}
+        const mapped: Record<string, string | number> = {}
         for (const [inputKey, inputVal] of Object.entries(criterion)) {
           if (RESERVED_PARAMS.has(inputKey)) continue
           const fmField = fieldMappings[inputKey] || inputKey
-          mapped[fmField] = inputVal
+          mapped[fmField] = inputVal as string | number
         }
         return mapped
       })
@@ -132,7 +132,7 @@ export async function executeMultiStepTool(
           allData = allData.concat(chunkData)
           totalFound += (chunkResult as any)?.response?.dataInfo?.foundCount || 0
         } catch (err: any) {
-          if (!err.message?.includes('No records match')) throw err
+          if (!(err instanceof FileMakerError) || !err.isNoRecordsFound) throw err
         }
       }
 
@@ -182,12 +182,12 @@ export async function executeMultiStepTool(
 
     // ── STANDARD MODE ──
     const RESERVED_STEP_PARAMS = new Set(['limit', 'offset', '_limit', '_offset'])
-    const query: Record<string, unknown> = {}
+    const query: Record<string, string | number> = {}
     
     for (const [inputKey, fmField] of Object.entries(fieldMappings)) {
       if (RESERVED_STEP_PARAMS.has(inputKey) || RESERVED_STEP_PARAMS.has(fmField as string)) continue
       if (runtimeParams[inputKey] !== undefined) {
-        query[fmField as string] = runtimeParams[inputKey]
+        query[fmField as string] = runtimeParams[inputKey] as string | number
       }
     }
     
@@ -252,15 +252,15 @@ export async function executeToolWithParams(
   params: Record<string, any>,
   connection: any
 ): Promise<any> {
-  const handlerConfig = typeof tool.handlerConfig === 'string'
-    ? safeParseJSON(tool.handlerConfig, {})
-    : tool.handlerConfig || {}
+  const handlerConfig = (typeof tool.handlerConfig === 'string'
+    ? safeParseJSON<Record<string, unknown>>(tool.handlerConfig, {})
+    : tool.handlerConfig || {}) as Record<string, unknown>
 
-  const fmMethod = tool.fmMethod || handlerConfig.type || handlerConfig.method || 'find'
+  const fmMethod = (tool.fmMethod || handlerConfig.type || handlerConfig.method || 'find') as string
 
   // 1. SYSTEM TOOLS (No FM connection needed)
   if (tool.category === 'system') {
-    const operation = handlerConfig.operation || fmMethod
+    const operation = (handlerConfig.operation || fmMethod) as string
     return executeSystemTool(operation, params)
   }
 
@@ -269,9 +269,9 @@ export async function executeToolWithParams(
   }
 
   // 2. ODATA TOOLS
-  const isOData = fmMethod.startsWith('odata-') || handlerConfig.type?.startsWith('odata-')
+  const isOData = fmMethod.startsWith('odata-') || (typeof handlerConfig.type === 'string' && handlerConfig.type.startsWith('odata-'))
   if (isOData) {
-    const odataConfig = handlerConfig as ODataHandlerConfig
+    const odataConfig = handlerConfig as unknown as ODataHandlerConfig
     switch (odataConfig.type) {
       case 'odata-filter':
         return executeODataFilter(odataConfig, params, connection)
@@ -287,7 +287,7 @@ export async function executeToolWithParams(
   // 3. FILEMAKER SESSION TOOLS (Multi-step or Single-step)
   return withFMSession(connection, async (client) => {
     if (fmMethod === 'multi-step' || handlerConfig.method === 'sequential-multi-table' || Array.isArray(handlerConfig.steps)) {
-      return executeMultiStepTool(client, handlerConfig.steps || [], params)
+      return executeMultiStepTool(client, (handlerConfig.steps as any[]) || [], params)
     }
 
     return executeSingleStepTool(client, fmMethod, handlerConfig, params)

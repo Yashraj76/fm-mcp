@@ -1,9 +1,21 @@
 import { Agent } from 'undici';
+import { FMConnection } from '@prisma/client';
 import { decrypt } from '../crypto';
 import { prisma } from '../prisma';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { FileMakerError } from './client';
+import { interpolateODataFilter, coerceODataInt, validateODataRecordId } from './odata-filter';
+import { resolveToolConnection } from './resolve-connection';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
+
+export interface ODataResponse {
+  status: string;
+  data?: unknown[];
+  count?: number;
+  results?: unknown[];
+  operationCount?: number;
+}
 
 export interface ODataHandlerConfig {
   type: 'odata-filter' | 'odata-expand' | 'odata-batch';
@@ -16,7 +28,7 @@ export interface ODataHandlerConfig {
   orderby?: string;                 // e.g. "CreatedDate desc"
   // For odata-batch writes
   batchOperations?: {
-    method: 'POST' | 'PATCH' | 'DELETE';
+    method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
     table: string;
     fieldMappings?: Record<string, string>;
     recordIdParam?: string;         // param name containing the record ID
@@ -25,45 +37,29 @@ export interface ODataHandlerConfig {
 
 // ─── Auth helper ─────────────────────────────────────────────────────────────
 
-function buildODataAuth(connection: any): string {
+function buildODataAuth(connection: FMConnection): string {
   const password = decrypt(connection.password); // DB field is `password`, not `passwordEncrypted`
   return Buffer.from(`${connection.username}:${password}`).toString('base64');
 }
 
-function buildODataBase(connection: any): string {
+function buildODataBase(connection: FMConnection): string {
   const host = connection.host.startsWith('http') ? connection.host : `https://${connection.host}`;
   const port = connection.port ? `:${connection.port}` : '';
   const dbName = encodeURIComponent(connection.database);
   return `${host}${port}/fmi/odata/v4/${dbName}`;
 }
 
-function buildDispatcher(connection: any): Agent {
+function buildDispatcher(connection: FMConnection): Agent {
   return new Agent({ connect: { rejectUnauthorized: connection.sslVerify } });
-}
-
-// ─── Filter interpolation ────────────────────────────────────────────────────
-
-/**
- * Replaces {paramName} placeholders in a filter expression with actual values.
- * Strings are auto-wrapped in single quotes. Numbers are injected as-is.
- * Single quotes inside string values are escaped as ''.
- */
-function interpolateFilter(expression: string, params: Record<string, any>): string {
-  return expression.replace(/\{(\w+)\}/g, (_, key) => {
-    const val = params[key];
-    if (val === undefined || val === null) return 'null';
-    if (typeof val === 'number' || typeof val === 'boolean') return String(val);
-    return `'${String(val).replace(/'/g, "''")}'`;
-  });
 }
 
 // ─── Strategy: OData $filter ─────────────────────────────────────────────────
 
 export async function executeODataFilter(
   config: ODataHandlerConfig,
-  params: Record<string, any>,
-  connection: any
-): Promise<any> {
+  params: Record<string, unknown>,
+  connection: FMConnection
+): Promise<ODataResponse> {
   const base = buildODataBase(connection);
   const credentials = buildODataAuth(connection);
   const dispatcher = buildDispatcher(connection);
@@ -71,12 +67,14 @@ export async function executeODataFilter(
   const queryParts: string[] = [];
 
   if (config.filterExpression) {
-    const interpolated = interpolateFilter(config.filterExpression, params);
+    const interpolated = interpolateODataFilter(config.filterExpression, params);
     queryParts.push(`$filter=${encodeURIComponent(interpolated)}`);
   }
   if (config.select?.length) queryParts.push(`$select=${config.select.join(',')}`);
-  if (config.top ?? params.limit) queryParts.push(`$top=${config.top ?? params.limit}`);
-  if (config.skip ?? params.offset) queryParts.push(`$skip=${config.skip ?? params.offset}`);
+  const topVal = coerceODataInt(config.top ?? params.limit);
+  if (topVal !== undefined) queryParts.push(`$top=${topVal}`);
+  const skipVal = coerceODataInt(config.skip ?? params.offset);
+  if (skipVal !== undefined) queryParts.push(`$skip=${skipVal}`);
   if (config.orderby) queryParts.push(`$orderby=${encodeURIComponent(config.orderby)}`);
 
   const url = `${base}/${encodeURIComponent(config.table)}${queryParts.length ? '?' + queryParts.join('&') : ''}`;
@@ -89,11 +87,14 @@ export async function executeODataFilter(
     },
     dispatcher,
     signal: AbortSignal.timeout(30_000),
-  } as any);
+  } as RequestInit & { dispatcher: Agent });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`OData $filter failed (${res.status}): ${errText.substring(0, 300)}`);
+    if (res.status === 401) {
+      throw new FileMakerError('', 401, 'OData authentication failed. Verify the FileMaker username and password in connection settings.');
+    }
+    throw new FileMakerError('', res.status, `OData $filter failed (HTTP ${res.status}): ${errText.substring(0, 200)}`);
   }
 
   const json = await res.json();
@@ -108,9 +109,9 @@ export async function executeODataFilter(
 
 export async function executeODataExpand(
   config: ODataHandlerConfig,
-  params: Record<string, any>,
-  connection: any
-): Promise<any> {
+  params: Record<string, unknown>,
+  connection: FMConnection
+): Promise<ODataResponse> {
   const base = buildODataBase(connection);
   const credentials = buildODataAuth(connection);
   const dispatcher = buildDispatcher(connection);
@@ -118,14 +119,15 @@ export async function executeODataExpand(
   const queryParts: string[] = [];
 
   if (config.filterExpression) {
-    const interpolated = interpolateFilter(config.filterExpression, params);
+    const interpolated = interpolateODataFilter(config.filterExpression, params);
     queryParts.push(`$filter=${encodeURIComponent(interpolated)}`);
   }
   if (config.expandTables?.length) {
     queryParts.push(`$expand=${config.expandTables.join(',')}`);
   }
   if (config.select?.length) queryParts.push(`$select=${config.select.join(',')}`);
-  if (config.top ?? params.limit) queryParts.push(`$top=${config.top ?? params.limit}`);
+  const expandTopVal = coerceODataInt(config.top ?? params.limit);
+  if (expandTopVal !== undefined) queryParts.push(`$top=${expandTopVal}`);
 
   const url = `${base}/${encodeURIComponent(config.table)}${queryParts.length ? '?' + queryParts.join('&') : ''}`;
 
@@ -137,11 +139,14 @@ export async function executeODataExpand(
     },
     dispatcher,
     signal: AbortSignal.timeout(30_000),
-  } as any);
+  } as RequestInit & { dispatcher: Agent });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`OData $expand failed (${res.status}): ${errText.substring(0, 300)}`);
+    if (res.status === 401) {
+      throw new FileMakerError('', 401, 'OData authentication failed. Verify the FileMaker username and password in connection settings.');
+    }
+    throw new FileMakerError('', res.status, `OData $expand failed (HTTP ${res.status}): ${errText.substring(0, 200)}`);
   }
 
   const json = await res.json();
@@ -156,9 +161,9 @@ export async function executeODataExpand(
 
 export async function executeODataBatch(
   config: ODataHandlerConfig,
-  params: Record<string, any>,
-  connection: any
-): Promise<any> {
+  params: Record<string, unknown>,
+  connection: FMConnection
+): Promise<ODataResponse> {
   const base = buildODataBase(connection);
   const credentials = buildODataAuth(connection);
   const dispatcher = buildDispatcher(connection);
@@ -170,7 +175,7 @@ export async function executeODataBatch(
   const boundary = `batch_${Date.now()}`;
   const changesetBoundary = `changeset_${Date.now()}`;
 
-  const writes = config.batchOperations.filter(op => op.method !== ('GET' as any));
+  const writes = config.batchOperations.filter(op => op.method !== 'GET');
 
   let body = '';
 
@@ -182,14 +187,15 @@ export async function executeODataBatch(
       const op = writes[i];
 
       // Build field data from mappings
-      const fieldData: Record<string, any> = {};
+      const fieldData: Record<string, unknown> = {};
       if (op.fieldMappings) {
         for (const [paramKey, tableField] of Object.entries(op.fieldMappings)) {
           if (params[paramKey] !== undefined) fieldData[tableField] = params[paramKey];
         }
       }
 
-      const recordId = op.recordIdParam ? params[op.recordIdParam] : undefined;
+      const rawRecordId = op.recordIdParam ? params[op.recordIdParam] : undefined;
+      const recordId = rawRecordId !== undefined ? validateODataRecordId(rawRecordId) : undefined;
       const url = recordId
         ? `${base}/${encodeURIComponent(op.table)}(${recordId})`
         : `${base}/${encodeURIComponent(op.table)}`;
@@ -221,11 +227,14 @@ export async function executeODataBatch(
     body,
     dispatcher,
     signal: AbortSignal.timeout(30_000),
-  } as any);
+  } as RequestInit & { dispatcher: Agent });
 
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`OData $batch failed (${res.status}): ${errText.substring(0, 300)}`);
+    if (res.status === 401) {
+      throw new FileMakerError('', 401, 'OData authentication failed. Verify the FileMaker username and password in connection settings.');
+    }
+    throw new FileMakerError('', res.status, `OData $batch failed (HTTP ${res.status}): ${errText.substring(0, 200)}`);
   }
 
   const responseText = await res.text();
@@ -244,23 +253,22 @@ export async function executeODataBatch(
 
 export async function executeODataTool(
   toolId: string,
-  params: Record<string, any>,
+  params: Record<string, unknown>,
   userId?: string
-): Promise<any> {
+): Promise<ODataResponse> {
   const tool = await prisma.tool.findFirst({
-    where: userId ? { id: toolId, server: { userId } } : { id: toolId },
+    where: userId ? { id: toolId, deletedAt: null, server: { userId } } : { id: toolId, deletedAt: null },
     include: { server: { include: { connections: { include: { connection: true } } } } },
   });
 
   if (!tool) throw new Error(`Tool ${toolId} not found`);
 
-  const connServer = tool.server.connections[0];
-  if (!connServer?.connection) {
-    throw new Error(`No FileMaker connection linked to server ${tool.serverId}`);
-  }
-
-  const connection = connServer.connection;
   const config: ODataHandlerConfig = safeParseJSON(tool.handlerConfig, {});
+  const connection = resolveToolConnection(
+    (config as any).connectionId ?? null,
+    (tool as any).server.connections,
+    tool.name,
+  );
 
   switch (config.type) {
     case 'odata-filter':
@@ -270,6 +278,6 @@ export async function executeODataTool(
     case 'odata-batch':
       return executeODataBatch(config, params, connection);
     default:
-      throw new Error(`Unknown OData handler type: ${(config as any).type}`);
+      throw new Error(`Unknown OData handler type: ${(config as { type: string }).type}`);
   }
 }

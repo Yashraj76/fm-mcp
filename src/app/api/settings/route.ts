@@ -18,7 +18,8 @@ function maskKey(key: string): string {
   return key.slice(0, 4) + '••••' + key.slice(-4)
 }
 
-import { getAppSettings } from '@/lib/settings'
+import { getAppSettings, userSettingsId } from '@/lib/settings'
+import { logger } from '@/lib/logger'
 
 export const GET = withAuth(async (req, { params, userId }) => {
     try {
@@ -38,7 +39,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
       },
     })
     } catch (e) {
-    console.error('[settings GET]', e)
+    logger.error({ err: e }, '[settings GET]')
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
     }
     });
@@ -57,21 +58,14 @@ export const PUT = withAuth(async (req, { params, userId }) => {
     if (parsed.aiMaxTokens !== undefined) updateData.aiMaxTokens = parsed.aiMaxTokens
     if (parsed.aiTemperature !== undefined) updateData.aiTemperature = parsed.aiTemperature
 
-    let settings = await db.appSettings.findFirst({ where: { userId } })
-    if (settings) {
-      settings = await db.appSettings.update({
-        where: { id: settings.id },
-        data: updateData,
-      })
-    } else {
-      settings = await db.appSettings.create({
-        data: {
-          id: `user_${userId}`,
-          userId,
-          ...updateData,
-        },
-      })
-    }
+    // Atomic upsert on the deterministic PK — eliminates the findFirst→create
+    // TOCTOU race where two concurrent first-saves both see null and both try
+    // to create a new row (the second would fail or produce a duplicate).
+    const settings = await db.appSettings.upsert({
+      where:  { id: userSettingsId(userId) },
+      create: { id: userSettingsId(userId), userId, ...updateData },
+      update: updateData,
+    })
 
     const decryptedKey = settings.aiApiKeyEncrypted ? decrypt(settings.aiApiKeyEncrypted) : ''
     return NextResponse.json({
@@ -91,7 +85,7 @@ export const PUT = withAuth(async (req, { params, userId }) => {
     if (e instanceof ZodError) {
       return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
     }
-    console.error('[settings PUT]', e)
+    logger.error({ err: e }, '[settings PUT]')
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
     }
     });

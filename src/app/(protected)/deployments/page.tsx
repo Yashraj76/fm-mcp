@@ -1,11 +1,6 @@
-import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 import { Loader2 } from 'lucide-react'
 
-export const metadata: Metadata = {
-  title: 'Deployments & Rollbacks - FileMaker MCP',
-  description: 'Deploy server configurations, view changelogs, manage release versions, and execute rollback operations.',
-}
 
 const DeploymentsPage = dynamic(
   () => import('@/components/deployments/deployments-page').then((mod) => mod.DeploymentsPage),

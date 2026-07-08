@@ -1,15 +1,15 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withFMSession } from '@/lib/filemaker/session'
 import { Agent } from 'undici'
 import { decrypt } from '@/lib/crypto'
 import { withAuth } from "@/lib/auth/api-guard";
-
-type Params = { params: Promise<{ id: string }> }
+import { fetchODataMetadata } from '@/lib/filemaker/odata-metadata'
+import { logger } from '@/lib/logger'
 
 /**
- * Fetch only the OData service document (entity names only — fast).
- * No $metadata XML (too slow / times out on large databases).
+ * Fetch the OData service document — entity names only, no field metadata.
+ * Fast (~10 s timeout) and used as a fallback entity list when $metadata is unavailable.
  */
 async function fetchODataEntityNames(connection: any): Promise<string[]> {
   try {
@@ -24,14 +24,14 @@ async function fetchODataEntityNames(connection: any): Promise<string[]> {
     const res = await fetch(url, {
       headers: { Authorization: `Basic ${credentials}`, Accept: 'application/json' },
       dispatcher,
-      signal: AbortSignal.timeout(10_000), // 10s timeout — service doc is fast
+      signal: AbortSignal.timeout(10_000),
     } as any)
 
     if (!res.ok) {
       if (res.status === 501 || res.status === 404) {
-        console.warn('[browse-schema] OData not available on this server (HTTP', res.status, ')')
+        logger.warn({ status: res.status }, '[browse-schema] OData not available on this server')
       } else {
-        console.warn('[browse-schema] OData service doc failed:', res.status)
+        logger.warn({ detail: res.status }, '[browse-schema] OData service doc failed:')
       }
       return []
     }
@@ -40,45 +40,62 @@ async function fetchODataEntityNames(connection: any): Promise<string[]> {
     const entities: string[] = (json?.value || []).map((v: any) => v.name).filter(Boolean)
     return entities
   } catch (e: any) {
-    console.warn('[browse-schema] OData fetch error (non-fatal):', e.message)
+    logger.warn({ detail: e.message }, '[browse-schema] OData service doc fetch error (non-fatal):')
     return []
   }
 }
 
 export const POST = withAuth(async (_req, { params, userId }) => {
-    try {
+  try {
     const { id } = await params
-    const connection = await db.fMConnection.findUnique({ where: {
-        userId: userId,
-        id } })
+    const connection = await db.fMConnection.findFirst({ where: { userId, id } })
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
-    // --- Fetch FM Data API: layouts + scripts only ---
-    const { layouts, scripts } = await withFMSession(connection, async (client) => {
-      const layoutsRes = await client.getLayouts()
-      const allLayouts: string[] = (layoutsRes?.response?.layouts || []).map((l: any) => l.name)
+    // ── Run all three fetches in parallel ──────────────────────────────────
+    // 1. Data API session: layouts + scripts
+    // 2. OData service document: entity names (fast, ~10 s timeout)
+    // 3. OData $metadata: full field definitions (slower, ~20 s timeout)
+    const [
+      { layouts, scripts },
+      odataTablesFromServiceDoc,
+      odataMetaResult,
+    ] = await Promise.all([
+      // 1. Data API
+      withFMSession(connection, async (client) => {
+        const layoutsRes = await client.getLayouts()
+        const allLayouts: string[] = (layoutsRes?.response?.layouts || []).map((l: any) => l.name)
 
-      let allScripts: string[] = []
-      try {
-        const scriptsRes = await client.getScripts()
-        // Filter out folder entries and separators (name '-') — only keep runnable scripts
-        allScripts = (scriptsRes?.response?.scripts || [])
-          .filter((s: any) => !s.isFolder && s.name !== '-')
-          .map((s: any) => s.name)
-      } catch (scriptErr: any) {
-        // FM servers that don't support /scripts — non-fatal
-        console.warn('[browse-schema] Scripts endpoint not available:', scriptErr.message)
-      }
+        let allScripts: string[] = []
+        try {
+          const scriptsRes = await client.getScripts()
+          allScripts = (scriptsRes?.response?.scripts || [])
+            .filter((s: any) => !s.isFolder && s.name !== '-')
+            .map((s: any) => s.name)
+        } catch (scriptErr: any) {
+          logger.warn({ detail: scriptErr.message }, '[browse-schema] Scripts endpoint not available:')
+        }
 
-      return { layouts: allLayouts, scripts: allScripts }
-    })
+        return { layouts: allLayouts, scripts: allScripts }
+      }),
 
-    // --- Fetch OData entity names (service document only — fast) ---
-    const odataTables = await fetchODataEntityNames(connection)
+      // 2. OData service document
+      fetchODataEntityNames(connection),
 
-    // --- Persist raw lists (no layoutMeta yet) ---
+      // 3. OData $metadata
+      fetchODataMetadata(connection, 20_000),
+    ])
+
+    // Derive the canonical OData table list:
+    // • If $metadata succeeded → use its entity names (more authoritative; includes all fields)
+    // • Otherwise → fall back to service document names
+    const odataTables =
+      odataMetaResult.status === 'ok'
+        ? Object.keys(odataMetaResult.meta)
+        : odataTablesFromServiceDoc
+
+    // ── Persist ────────────────────────────────────────────────────────────
     await db.browsedSchema.upsert({
       where: { connectionId: id },
       create: {
@@ -87,7 +104,7 @@ export const POST = withAuth(async (_req, { params, userId }) => {
         rawScripts: JSON.stringify(scripts),
         rawLayoutMeta: JSON.stringify({}),
         rawODataTables: JSON.stringify(odataTables),
-        rawODataMeta: JSON.stringify({}),
+        rawODataMeta: JSON.stringify(odataMetaResult.meta),
         fetchedAt: new Date(),
       },
       update: {
@@ -95,7 +112,7 @@ export const POST = withAuth(async (_req, { params, userId }) => {
         rawScripts: JSON.stringify(scripts),
         rawLayoutMeta: JSON.stringify({}),
         rawODataTables: JSON.stringify(odataTables),
-        rawODataMeta: JSON.stringify({}),
+        rawODataMeta: JSON.stringify(odataMetaResult.meta),
         fetchedAt: new Date(),
       },
     })
@@ -105,16 +122,21 @@ export const POST = withAuth(async (_req, { params, userId }) => {
       data: {
         layouts,
         scripts,
-        layoutMeta: {},   // empty — fields are fetched on-demand via /layout-fields
+        layoutMeta: {},   // fields fetched on-demand via /layout-fields
         odataTables,
-        odataMeta: {},
+        odataMeta: odataMetaResult.meta,
+        // Let the UI show a warning banner when field metadata is unavailable
+        odataMetaStatus: odataMetaResult.status,
+        ...(odataMetaResult.message && odataMetaResult.status !== 'ok'
+          ? { odataMetaMessage: odataMetaResult.message }
+          : {}),
       },
     })
-    } catch (e: any) {
-    console.error('[browse-schema POST]', e)
+  } catch (e: any) {
+    logger.error({ err: e }, '[browse-schema POST]')
     return NextResponse.json(
       { success: false, error: e.message || 'Schema fetch failed', code: 'SCHEMA_FETCH_ERROR' },
-      { status: 500 }
+      { status: 500 },
     )
-    }
-    });
+  }
+})

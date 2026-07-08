@@ -1,9 +1,11 @@
+import { apiSuccess, apiNotFound, apiError, apiServerError, apiValidationFailed } from '@/lib/utils/api-response'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { encrypt } from '@/lib/crypto'
 import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
 import { getFMServerConnection } from '@/lib/db/user-scoped';
+import { logger } from '@/lib/logger'
 
 const updateSchema = z.object({
   name: z.string().min(1).optional(),
@@ -44,15 +46,15 @@ export const GET = withAuth(async (_req, { params, userId }) => {
     })
 
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Not found')
     }
 
-    return NextResponse.json({ success: true, data: server })
+    return apiSuccess(server)
   } catch (e) {
-    console.error('[server-connections/[id] GET]', e)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+    logger.error({ err: e }, '[server-connections/[id] GET]')
+    return apiServerError('Internal server error')
   }
-});
+})
 
 // PUT /api/server-connections/[id] - Update a server connection
 export const PUT = withAuth(async (req, { params, userId }) => {
@@ -60,7 +62,7 @@ export const PUT = withAuth(async (req, { params, userId }) => {
     const { id } = await params
     const server = await getFMServerConnection(id, userId)
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Not found')
     }
 
     const body = await req.json()
@@ -79,15 +81,15 @@ export const PUT = withAuth(async (req, { params, userId }) => {
       ...serverConnectionSelect
     })
 
-    return NextResponse.json({ success: true, data: updated })
+    return apiSuccess(updated)
   } catch (e) {
     if (e instanceof ZodError) {
-      return NextResponse.json({ success: false, error: 'Validation failed', code: 'VALIDATION_ERROR', details: e.issues }, { status: 400 })
+      return apiValidationFailed(e.issues)
     }
-    console.error('[server-connections/[id] PUT]', e)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+    logger.error({ err: e }, '[server-connections/[id] PUT]')
+    return apiServerError('Internal server error')
   }
-});
+})
 
 // DELETE /api/server-connections/[id] - Delete a server connection
 export const DELETE = withAuth(async (_req, { params, userId }) => {
@@ -98,21 +100,17 @@ export const DELETE = withAuth(async (_req, { params, userId }) => {
     })
 
     if (!server) {
-      return NextResponse.json({ success: false, error: 'Not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Not found')
     }
 
     if ((server as any)._count.connections > 0) {
-      return NextResponse.json({
-        success: false,
-        error: 'Cannot delete server with active connections. Remove connections first.',
-        code: 'HAS_CONNECTIONS',
-      }, { status: 400 })
+      return apiError('Cannot delete server with active connections. Remove connections first.', 'HAS_CONNECTIONS', 400)
     }
 
     await db.fMServerConnection.delete({ where: { id } })
-    return NextResponse.json({ success: true, data: { deleted: true } })
+    return apiSuccess({ deleted: true })
   } catch (e) {
-    console.error('[server-connections/[id] DELETE]', e)
-    return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
+    logger.error({ err: e }, '[server-connections/[id] DELETE]')
+    return apiServerError('Internal server error')
   }
-});
+})

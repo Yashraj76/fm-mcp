@@ -33,8 +33,8 @@ export default function ForgotPasswordPage() {
       <div className="w-full max-w-md p-8 space-y-6 bg-card border border-border rounded-xl shadow-lg">
         
         <div className="text-center space-y-2">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center mx-auto">
-            <span className="text-primary-foreground font-bold text-lg">M</span>
+          <div className="w-10 h-10 rounded-lg overflow-hidden mx-auto">
+            <img src="/logo.svg" alt="kilink" className="w-10 h-10" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">Reset password</h1>
           <p className="text-sm text-muted-foreground">Enter your email to receive a reset link</p>

@@ -47,17 +47,7 @@ interface AppState {
   setShowConfigDialog: (show: boolean) => void
   setShowAiDialog: (show: boolean) => void
 
-  // Data refresh triggers
-  refreshConnections: number
-  refreshServers: number
-  refreshBranches: number
-  refreshTools: number
-  refreshDeployments: number
-  triggerRefreshConnections: () => void
-  triggerRefreshServers: () => void
-  triggerRefreshBranches: () => void
-  triggerRefreshTools: () => void
-  triggerRefreshDeployments: () => void
+
 }
 
 export const useAppStore = create<AppState>()(
@@ -94,17 +84,7 @@ export const useAppStore = create<AppState>()(
       setShowConfigDialog: (show) => set({ showConfigDialog: show }),
       setShowAiDialog: (show) => set({ showAiDialog: show }),
 
-      // Refresh triggers
-      refreshConnections: 0,
-      refreshServers: 0,
-      refreshBranches: 0,
-      refreshTools: 0,
-      refreshDeployments: 0,
-      triggerRefreshConnections: () => set((s) => ({ refreshConnections: s.refreshConnections + 1 })),
-      triggerRefreshServers: () => set((s) => ({ refreshServers: s.refreshServers + 1 })),
-      triggerRefreshBranches: () => set((s) => ({ refreshBranches: s.refreshBranches + 1 })),
-      triggerRefreshTools: () => set((s) => ({ refreshTools: s.refreshTools + 1 })),
-      triggerRefreshDeployments: () => set((s) => ({ refreshDeployments: s.refreshDeployments + 1 })),
+
     }),
     {
       name: 'mcp-platform-store',

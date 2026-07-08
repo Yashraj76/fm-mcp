@@ -42,11 +42,18 @@ import {
   Zap,
 } from 'lucide-react'
 
+interface ConnectionOption {
+  id: string
+  name: string
+  database: string
+}
+
 interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
   content: string
   suggestions?: AiSuggestion[]
+  connectionPicker?: ConnectionOption[]  // set when CONNECTION_REQUIRED response received
   timestamp: Date
 }
 
@@ -85,13 +92,14 @@ export function AiAssistantDialog() {
   const currentServerId = useAppStore((s) => s.currentServerId)
   const setShowAiDialog = useAppStore((s) => s.setShowAiDialog)
   const setShowToolDialog = useAppStore((s) => s.setShowToolDialog)
-  const triggerRefreshTools = useAppStore((s) => s.triggerRefreshTools)
+
   const queryClient = useQueryClient()
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [selectedSchemas, setSelectedSchemas] = useState<Set<string>>(new Set())
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -159,10 +167,9 @@ export function AiAssistantDialog() {
       toast.success(`Created ${toolCount} tool(s) from AI suggestion`)
       
       const currentBranchId = useAppStore.getState().currentBranchId
-      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId] })
+      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId, currentBranchId] })
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
-      triggerRefreshTools()
     },
     onError: (err: Error) => {
       toast.error(err.message || 'Failed to create tools from suggestion')
@@ -171,15 +178,16 @@ export function AiAssistantDialog() {
 
   // Send message mutation
   const sendMessageMutation = useMutation({
-    mutationFn: (message: string) =>
+    mutationFn: ({ message, connectionId }: { message: string; connectionId?: string }) =>
       api.post<any>(`/api/servers/${currentServerId}/ai/suggest`, {
         suggestionType: 'tool_suggestion',
         context: message,
+        connectionId: connectionId ?? undefined,
       }),
   })
 
   const handleSendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, overrideConnectionId?: string) => {
       if (!content.trim() || isLoading) return
 
       const userMsg: ChatMessage = {
@@ -193,7 +201,10 @@ export function AiAssistantDialog() {
       setIsLoading(true)
 
       try {
-        const result = await sendMessageMutation.mutateAsync(content)
+        const result = await sendMessageMutation.mutateAsync({
+          message: content,
+          connectionId: overrideConnectionId ?? selectedConnectionId ?? undefined,
+        })
 
         const aiMsg: ChatMessage = {
           id: `msg_${Date.now() + 1}`,
@@ -203,14 +214,25 @@ export function AiAssistantDialog() {
           timestamp: new Date(),
         }
         setMessages((prev) => [...prev, aiMsg])
-      } catch {
-        const errorMsg: ChatMessage = {
-          id: `msg_${Date.now() + 1}`,
-          role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again.',
-          timestamp: new Date(),
+      } catch (err: any) {
+        if (err.code === 'CONNECTION_REQUIRED' && err.details?.connections?.length > 0) {
+          const pickerMsg: ChatMessage = {
+            id: `msg_${Date.now() + 1}`,
+            role: 'assistant',
+            content: 'This server has multiple connections. Select which one to use:',
+            connectionPicker: err.details.connections as ConnectionOption[],
+            timestamp: new Date(),
+          }
+          setMessages((prev) => [...prev, pickerMsg])
+        } else {
+          const errorMsg: ChatMessage = {
+            id: `msg_${Date.now() + 1}`,
+            role: 'assistant',
+            content: err.message || 'Sorry, I encountered an error. Please try again.',
+            timestamp: new Date(),
+          }
+          setMessages((prev) => [...prev, errorMsg])
         }
-        setMessages((prev) => [...prev, errorMsg])
       } finally {
         setIsLoading(false)
       }
@@ -379,7 +401,7 @@ export function AiAssistantDialog() {
                             <button
                               key={suggestion.label}
                               onClick={() => handlePrebuiltSuggestion(suggestion.message)}
-                              className="flex items-start gap-2 p-3 rounded-lg border bg-muted/10 hover:bg-muted/30 transition-colors text-left group"
+                              className="flex items-start gap-2 p-3 rounded-lg border bg-muted/10 hover:bg-muted/30 transition-colors text-left group focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                             >
                               <suggestion.icon className="size-4 text-violet-400 mt-0.5 flex-shrink-0 group-hover:scale-110 transition-transform" />
                               <span className="text-xs text-foreground">{suggestion.label}</span>
@@ -436,6 +458,34 @@ export function AiAssistantDialog() {
                               onReject={handleRejectSuggestion}
                               onModify={handleModifySuggestion}
                             />
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Connection picker — shown when server has multiple connections */}
+                      {msg.connectionPicker && msg.connectionPicker.length > 0 && (
+                        <div className="mt-3 ml-9 space-y-1.5">
+                          {msg.connectionPicker.map((conn) => (
+                            <button
+                              key={conn.id}
+                              onClick={() => {
+                                setSelectedConnectionId(conn.id)
+                                // Re-send the last user message with the selected connection
+                                const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
+                                if (lastUserMsg) handleSendMessage(lastUserMsg.content, conn.id)
+                              }}
+                              className={`flex items-start gap-2.5 w-full text-left p-3 rounded-lg border transition-all text-sm ${
+                                selectedConnectionId === conn.id
+                                  ? 'bg-violet-500/10 border-violet-500/40'
+                                  : 'bg-muted/30 border hover:bg-muted/60'
+                              }`}
+                            >
+                              <Database className={`size-4 mt-0.5 shrink-0 ${selectedConnectionId === conn.id ? 'text-violet-400' : 'text-muted-foreground'}`} />
+                              <div className="min-w-0">
+                                <div className="font-medium text-foreground">{conn.name}</div>
+                                <div className="text-xs text-muted-foreground mt-0.5">{conn.database}</div>
+                              </div>
+                            </button>
                           ))}
                         </div>
                       )}
@@ -509,9 +559,18 @@ function SchemaCard({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected}
       onClick={() => onToggle(schema.databaseName)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onToggle(schema.databaseName)
+        }
+      }}
       className={cn(
-        'rounded-lg border p-3 cursor-pointer transition-all',
+        'rounded-lg border p-3 cursor-pointer transition-all focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         isSelected
           ? 'border-violet-500/50 bg-violet-500/10'
           : 'hover:border-border/80 bg-muted/10'

@@ -1,10 +1,28 @@
 import { prisma } from '../prisma';
 import { safeParseJSON } from '../utils/safe-parse';
 import { executeToolWithParams } from '../tools/executor-service';
+import { FMConnectionServer, FMConnection } from '@prisma/client';
+import { resolveToolConnection } from '../filemaker/resolve-connection';
+import { getEffectiveTools } from '../branching';
 
-type StepLog = { stepIndex: number; toolName: string; reason: string; status: 'running' | 'done' | 'error'; result?: any; error?: string; durationMs?: number };
+type StepLog = { stepIndex: number; toolName: string; reason: string; status: 'running' | 'done' | 'error'; result?: unknown; error?: string; durationMs?: number };
 
-async function updateSession(id: string, patch: any) {
+type PlanStep = {
+  stepIndex: number;
+  toolName: string;
+  reason: string;
+  params: Record<string, unknown>;
+  extractFromResult?: { fieldPath: string; bindAs: string };
+};
+
+type Plan = {
+  intent: string;
+  outputFormat?: string;
+  tableConfig?: unknown;
+  steps: PlanStep[];
+};
+
+async function updateSession(id: string, patch: Partial<{ status: string; finalResult: string }>) {
   await prisma.playgroundSession.update({ where: { id }, data: { ...patch, updatedAt: new Date() } });
 }
 
@@ -17,9 +35,42 @@ async function appendStep(id: string, entry: StepLog) {
   await prisma.playgroundSession.update({ where: { id }, data: { stepLog: JSON.stringify(log) } });
 }
 
-export async function runPlaygroundSession(sessionId: string, plan: any, serverId?: string) {
+/**
+ * Resolve the effective tool for a plan step.
+ *
+ * When a branchId is provided the tool is looked up via getEffectiveTools so
+ * that branch-level overrides (fmMethod, handlerConfig, etc.) are applied.
+ * Without a branchId the raw Tool row is used directly.
+ *
+ * Exported for unit testing.
+ */
+export async function resolveToolForStep(
+  toolName: string,
+  serverId: string | undefined,
+  branchId: string | undefined
+): Promise<any | null> {
+  if (branchId) {
+    const effectiveTools = await getEffectiveTools(branchId);
+    return (
+      effectiveTools.find(
+        (t: any) => t.name === toolName && (!serverId || t.serverId === serverId)
+      ) ?? null
+    );
+  }
+  return prisma.tool.findFirst({
+    where: serverId ? { serverId, name: toolName, deletedAt: null } : { name: toolName, deletedAt: null },
+    include: { server: { include: { connections: { include: { connection: true } } } } },
+  });
+}
+
+export async function runPlaygroundSession(
+  sessionId: string,
+  plan: Plan,
+  serverId?: string,
+  branchId?: string
+) {
   const steps = plan.steps ?? [];
-  const results: Record<number, any> = {};
+  const results: Record<number, unknown> = {};
 
   try {
     for (const step of steps) {
@@ -31,24 +82,19 @@ export async function runPlaygroundSession(sessionId: string, plan: any, serverI
       const resolvedParams = resolveParams(step.params, results);
 
       try {
-        const tool = await prisma.tool.findFirst({
-          where: serverId ? { serverId, name: step.toolName } : { name: step.toolName },
-          include: { server: { include: { connections: { include: { connection: true } } } } }
-        });
+        const tool = await resolveToolForStep(step.toolName, serverId, branchId);
 
         if (!tool) throw new Error(`Tool "${step.toolName}" not found`);
 
-        let result: any;
-        const config = safeParseJSON(tool.handlerConfig, {});
+        const config = safeParseJSON<{ connectionId?: string }>(tool.handlerConfig, {});
+        const toolServerConnections = tool.server?.connections as (FMConnectionServer & { connection: FMConnection })[];
+        const validConnection = resolveToolConnection(
+          config.connectionId,
+          toolServerConnections ?? [],
+          step.toolName
+        );
 
-        let validConnectionId = config.connectionId;
-        let validConnection = tool.server?.connections?.find((c: any) => c.connectionId === validConnectionId)?.connection;
-        if (!validConnection) {
-          validConnection = tool.server?.connections?.[0]?.connection;
-          validConnectionId = validConnection?.id;
-        }
-
-        result = await executeToolWithParams(tool, resolvedParams, validConnection);
+        const result = await executeToolWithParams(tool, resolvedParams, validConnection) as Record<string, unknown>;
 
         results[step.stepIndex] = result;
 
@@ -62,8 +108,8 @@ export async function runPlaygroundSession(sessionId: string, plan: any, serverI
         }
 
         await appendStep(sessionId, { ...logEntry, status: 'done', result, durationMs: Date.now() - start });
-      } catch (err: any) {
-        await appendStep(sessionId, { ...logEntry, status: 'error', error: err.message, durationMs: Date.now() - start });
+      } catch (err: unknown) {
+        await appendStep(sessionId, { ...logEntry, status: 'error', error: err instanceof Error ? err.message : String(err), durationMs: Date.now() - start });
         // Continue to next step unless it dependsOn this one
       }
     }
@@ -72,14 +118,14 @@ export async function runPlaygroundSession(sessionId: string, plan: any, serverI
     const finalResult = buildFinalResult(plan, results);
     await updateSession(sessionId, { status: 'done', finalResult: JSON.stringify(finalResult) });
 
-  } catch (err: any) {
-    await updateSession(sessionId, { status: 'error', finalResult: JSON.stringify({ error: err.message }) });
+  } catch (err: unknown) {
+    await updateSession(sessionId, { status: 'error', finalResult: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }) });
   }
 }
 
-function resolveParams(params: any, results: Record<number, any>): any {
-  if (typeof params !== 'object' || params === null) return params;
-  const resolved: any = Array.isArray(params) ? [] : {};
+function resolveParams(params: unknown, results: Record<number, unknown>): Record<string, unknown> {
+  if (typeof params !== 'object' || params === null) return params as Record<string, unknown>;
+  const resolved: Record<string, unknown> = Array.isArray(params) ? ([] as unknown as Record<string, unknown>) : {};
   for (const [key, value] of Object.entries(params)) {
     if (typeof value === 'string' && value.startsWith('{{') && value.endsWith('}}')) {
       const path = value.slice(2, -2).trim();
@@ -102,7 +148,7 @@ function resolveParams(params: any, results: Record<number, any>): any {
         if (fieldPath.includes('[*]')) {
           const [arrayPath, field] = fieldPath.split('[*].');
           const arr = getByPath(stepResult, arrayPath);
-          resolved[key] = Array.isArray(arr) ? arr.map((item: any) => getByPath(item, field)) : [];
+          resolved[key] = Array.isArray(arr) ? arr.map((item: unknown) => getByPath(item, field)) : [];
         } else {
           resolved[key] = getByPath(stepResult, fieldPath);
         }
@@ -116,9 +162,9 @@ function resolveParams(params: any, results: Record<number, any>): any {
   return resolved;
 }
 
-function getByPath(obj: any, path: string): any {
-  if (!path) return obj;
-  return path.split('.').reduce((curr, key) => {
+function getByPath(obj: unknown, path: string): unknown {
+  if (!path || typeof obj !== 'object' || obj === null) return obj;
+  return path.split('.').reduce((curr: any, key) => {
     if (curr === null || curr === undefined) return undefined;
     if (curr[key] !== undefined) return curr[key];
     // Case-insensitive fallback
@@ -127,7 +173,7 @@ function getByPath(obj: any, path: string): any {
   }, obj);
 }
 
-function buildFinalResult(plan: any, results: Record<number, any>) {
+function buildFinalResult(plan: Plan, results: Record<number, unknown>) {
   const keys = Object.keys(results).map(Number);
   if (keys.length === 0) {
       return {

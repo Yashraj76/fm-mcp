@@ -1,10 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
 import { callAI } from '@/lib/ai/client'
 import { SINGLE_TOOL_FROM_PROMPT, FLOW_TOOLS_FROM_PROMPT } from '@/lib/ai/prompts/prompt-tool-from-prompt'
+import { normalizeTool } from '@/lib/tools/normalize-tool'
+import { validateToolForSave } from '@/lib/tools/validate-tool'
+import { resolveGenerationConnection } from '@/lib/tools/resolve-generation-connection'
 import { withAuth } from "@/lib/auth/api-guard";
 import { safeParseJSON } from '@/lib/utils/safe-parse';
+import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +16,7 @@ const requestSchema = z.object({
   prompt: z.string().min(1, 'Prompt is required'),
   mode: z.enum(['single', 'flow']),
   branchId: z.string().optional(),
+  connectionId: z.string().optional(),
 })
 
 // POST /api/servers/[id]/ai/generate-from-prompt
@@ -39,14 +44,13 @@ export const POST = withAuth(async (request, { params, userId }) => {
       )
     }
 
-    const { prompt, mode } = parsed.data
+    const { prompt, mode, connectionId: requestedConnectionId } = parsed.data
 
-    // Load server with active connections + browsed schema
+    // Load server with all connections (not filtered by isActive — user must pick explicitly)
     const server = await db.mcpServer.findFirst({
       where: { id, userId },
       include: {
         connections: {
-          where: { isActive: true },
           include: {
             connection: {
               include: { browsedSchema: true },
@@ -63,8 +67,35 @@ export const POST = withAuth(async (request, { params, userId }) => {
       )
     }
 
-    // Require compiled schema
-    const activeConn = server.connections[0]?.connection
+    // Resolve which connection to use — enforces explicit selection for multi-connection servers.
+    const connResult = resolveGenerationConnection(requestedConnectionId, server.connections as any)
+    if (!connResult.ok) {
+      if (connResult.reason === 'no-connections') {
+        return NextResponse.json(
+          { success: false, error: 'No connections are linked to this server. Attach a FileMaker database first.', code: 'NO_CONNECTIONS' },
+          { status: 400 }
+        )
+      }
+      if (connResult.reason === 'connection-required') {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'This server has multiple connections. Select which one to generate tools from.',
+            code: 'CONNECTION_REQUIRED',
+            details: { connections: connResult.connections },
+          },
+          { status: 400 }
+        )
+      }
+      return NextResponse.json(
+        { success: false, error: 'The selected connection is not linked to this server.', code: 'INVALID_CONNECTION' },
+        { status: 400 }
+      )
+    }
+
+    const resolvedConnectionId = connResult.connectionId
+    const resolvedConnServer = server.connections.find((c: any) => c.connectionId === resolvedConnectionId)
+    const activeConn = resolvedConnServer?.connection
     const bs = activeConn?.browsedSchema
     if (!bs || !bs.compiledSchema) {
       return NextResponse.json(
@@ -77,19 +108,27 @@ export const POST = withAuth(async (request, { params, userId }) => {
       )
     }
 
-    const compiledSchema = safeParseJSON<Record<string, unknown>>(bs.compiledSchema, {})
-    if (!compiledSchema || Object.keys(compiledSchema).length === 0) {
+    const compiledSchema = safeParseJSON<Record<string, any>>(bs.compiledSchema, {})
+    const hasLayouts = Array.isArray(compiledSchema?.layouts) && compiledSchema.layouts.length > 0
+    const hasTables = Array.isArray(compiledSchema?.tables) && compiledSchema.tables.length > 0
+    if (!hasLayouts && !hasTables) {
       return NextResponse.json(
-        { success: false, error: 'Compiled schema is malformed or empty', code: 'SCHEMA_MISSING' },
-        { status: 500 }
+        {
+          success: false,
+          error:
+            'No layouts or OData tables are selected. Open Schema Browser, select at least one layout or table, and save your selections before generating tools.',
+          code: 'SCHEMA_MISSING',
+        },
+        { status: 400 },
       )
     }
 
-    // Build user message payload
+    // Build user message payload — include connectionId so AI embeds it in handlerConfig
     const userMessage = JSON.stringify(
       {
         serverName: server.name,
         serverDescription: server.description || '',
+        connectionId: resolvedConnectionId,
         userPrompt: prompt,
         compiledSchema,
       },
@@ -122,38 +161,53 @@ try {
   if (!Array.isArray(rawParsed) || rawParsed.length === 0) throw new Error('Expected non-empty JSON array')
   tools = rawParsed
 } catch (err: any) {
-  console.error('[generate-from-prompt] AI parse error. Raw output:', aiText.substring(0, 500))
+  logger.error({ output: aiText.substring(0, 500) }, '[generate-from-prompt] AI parse error')
   return NextResponse.json(
     { success: false, error: 'Failed to parse AI tool output: ' + err.message, code: 'SERVER_ERROR' },
     { status: 500 }
   )
 }
 
-// Normalise each tool: ensure inputSchema and handlerConfig are plain objects (not strings)
-const normalisedTools = tools
-  .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object' && !!(t as Record<string, unknown>).name)
-  .map((tool) => {
-    const t = tool as Record<string, unknown>
-    return {
-      ...t,
-      inputSchema:
-        typeof t.inputSchema === 'string'
-          ? safeParseJSON(t.inputSchema as string, { type: 'object', properties: {}, required: [] })
-          : (t.inputSchema ?? { type: 'object', properties: {}, required: [] }),
-      handlerConfig:
-        typeof t.handlerConfig === 'string'
-          ? safeParseJSON(t.handlerConfig as string, {})
-          : (t.handlerConfig ?? {}),
+// Normalize + validate each tool so the preview matches what save will produce.
+// Valid tools are fully normalized (fields serialized as objects for the UI).
+// Invalid tools are collected with per-tool error messages.
+const validTools: Record<string, unknown>[] = []
+const rejectedTools: Array<{ name: string; errors: string[] }> = []
+
+for (const rawTool of tools) {
+  const t = rawTool as Record<string, unknown>
+  const toolName = typeof t.name === 'string' && t.name ? t.name : null
+  if (!toolName) continue // unnamed tools are silently dropped
+
+  try {
+    const normalized = normalizeTool({ ...t, isAiGenerated: true })
+    const validationErrors = validateToolForSave(normalized)
+
+    if (validationErrors.length > 0) {
+      rejectedTools.push({ name: toolName, errors: validationErrors.map((e) => e.message) })
+    } else {
+      const hc = safeParseJSON<Record<string, any>>(normalized.handlerConfig, {})
+      validTools.push({
+        ...normalized,
+        // Deserialize JSON strings back to objects so the preview UI can render them
+        inputSchema: safeParseJSON(normalized.inputSchema, {}),
+        // Ensure connectionId is always present — use AI's value if set, else resolved
+        handlerConfig: { ...hc, connectionId: hc.connectionId || resolvedConnectionId },
+        outputSchema: safeParseJSON(normalized.outputSchema, {}),
+      })
     }
-  })
+  } catch (err: any) {
+    rejectedTools.push({ name: toolName, errors: [err.message] })
+  }
+}
 
 return NextResponse.json(
-  { success: true, data: { tools: normalisedTools, mode } },
+  { success: true, data: { tools: validTools, rejectedTools, mode } },
   { status: 200 }
 )
 } catch (error: unknown) {
 const msg = error instanceof Error ? error.message : 'Unknown error'
-console.error('[generate-from-prompt] Unexpected error:', msg)
+logger.error({ err: msg }, '[generate-from-prompt] Unexpected error:')
 return NextResponse.json(
   { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
   { status: 500 }

@@ -42,6 +42,7 @@ yarn-error.log*
 next-env.d.ts
 local-*
 .claude
+.agents
 .z-ai-config
 *.log
 dev.log

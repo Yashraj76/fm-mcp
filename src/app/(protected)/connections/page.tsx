@@ -1,11 +1,5 @@
-import type { Metadata } from 'next'
 import dynamic from 'next/dynamic'
 import { Loader2 } from 'lucide-react'
-
-export const metadata: Metadata = {
-  title: 'Database Connections - FileMaker MCP',
-  description: 'Configure and manage FileMaker server database connections and OData data sources.',
-}
 
 const ConnectionsPage = dynamic(
   () => import('@/components/connections/connections-page').then((mod) => mod.ConnectionsPage),

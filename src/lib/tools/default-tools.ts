@@ -1,4 +1,5 @@
 import { prisma } from '../prisma';
+import { createToolWithBranch } from './create-tool-with-branch';
 
 const SYSTEM_TOOLS = [
   {
@@ -41,28 +42,18 @@ export async function seedDefaultTools(serverId: string) {
   }
 
   for (const tool of SYSTEM_TOOLS) {
-    const exists = await prisma.tool.findFirst({ where: { serverId, name: tool.name } });
+    const exists = await prisma.tool.findFirst({ where: { serverId, name: tool.name, deletedAt: null } });
     if (!exists) {
-      const createdTool = await prisma.tool.create({
-        data: {
-          name: tool.name,
-          description: tool.description,
-          inputSchema: JSON.stringify(tool.inputSchema),
-          handlerConfig: JSON.stringify(tool.handlerConfig),
-          isEnabled: true,
-          category: 'system',
-          serverId,
-          isAiGenerated: true,
-        },
-      });
-      await prisma.branchTool.create({
-        data: {
-          branchId: defaultBranch.id,
-          toolId: createdTool.id,
-          action: 'added',
-          overrideData: '{}'
-        }
-      });
+      await createToolWithBranch(prisma, {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: JSON.stringify(tool.inputSchema),
+        handlerConfig: JSON.stringify(tool.handlerConfig),
+        isEnabled: true,
+        category: 'system',
+        serverId,
+        isAiGenerated: true,
+      }, defaultBranch.id);
     }
   }
 }

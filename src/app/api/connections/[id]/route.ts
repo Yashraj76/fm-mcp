@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { encrypt } from '@/lib/crypto'
 import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
-import { getFMConnection } from '@/lib/db/user-scoped';
+import { getFMConnection } from '@/lib/db/user-scoped'
+import { connectionUpdateAffectsSchema, invalidateConnectionSchemaCache } from '@/lib/db/schema-cache'
+import { buildConnectionUpdatePayload } from '@/lib/db/connection-update-payload'
+import { logger } from '@/lib/logger'
 
 const updateConnectionSchema = z.object({
   name: z.string().min(1).optional(),
@@ -11,9 +14,11 @@ const updateConnectionSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   database: z.string().min(1).optional(),
   username: z.string().min(1).optional(),
-  password: z.string().min(1).optional(),
+  // Empty string means "leave current password unchanged" — do not require min(1).
+  password: z.string().optional(),
   authType: z.string().optional(),
   clientId: z.string().optional().nullable(),
+  // Empty string means "leave current clientSecret unchanged".
   clientSecret: z.string().optional().nullable(),
   sslVerify: z.boolean().optional(),
 })
@@ -48,7 +53,7 @@ export const GET = withAuth(async (request, { params, userId }) => {
 
     return NextResponse.json({ success: true, data: connection })
   } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
   }
 });
@@ -65,18 +70,22 @@ export const PUT = withAuth(async (request, { params, userId }) => {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
-    const dataToUpdate: any = { ...parsed, status: 'disconnected' }
-    if (parsed.password) {
-      dataToUpdate.password = encrypt(parsed.password)
-    }
-    if (parsed.clientSecret) {
-      dataToUpdate.clientSecret = encrypt(parsed.clientSecret)
-    }
+    // buildConnectionUpdatePayload excludes password/clientSecret when blank so
+    // existing encrypted values are preserved when the user leaves those fields empty.
+    const dataToUpdate = buildConnectionUpdatePayload(parsed, encrypt)
 
-    const updated = await db.fMConnection.update({
-      where: { id },
-      data: dataToUpdate,
-      ...connectionSelect
+    const schemaAffected = connectionUpdateAffectsSchema(parsed)
+
+    const updated = await db.$transaction(async (tx) => {
+      const result = await tx.fMConnection.update({
+        where: { id },
+        data: dataToUpdate,
+        ...connectionSelect,
+      })
+      if (schemaAffected) {
+        await invalidateConnectionSchemaCache(id, tx)
+      }
+      return result
     })
 
     return NextResponse.json({ success: true, data: updated })
@@ -89,7 +98,7 @@ export const PUT = withAuth(async (request, { params, userId }) => {
         details: error.issues,
       }, { status: 400 })
     }
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
   }
 });
@@ -106,7 +115,7 @@ export const DELETE = withAuth(async (request, { params, userId }) => {
     await db.fMConnection.delete({ where: { id } })
     return NextResponse.json({ success: true, data: null })
   } catch (error) {
-    console.error('[API Error]', error)
+    logger.error({ err: error }, '[API Error]')
     return NextResponse.json({ success: false, error: 'Internal server error', code: 'SERVER_ERROR' }, { status: 500 })
   }
 });

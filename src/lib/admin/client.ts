@@ -1,5 +1,7 @@
 import { Agent } from 'undici'
 import { decrypt } from '@/lib/crypto'
+import { sanitizeText } from '@/lib/utils/sanitizer'
+import { logger } from '@/lib/logger'
 
 interface FMServerConfig {
   host: string
@@ -36,7 +38,7 @@ export class FMAdminClient {
     try {
       return { status: res.status, data: text ? JSON.parse(text) : {} }
     } catch {
-      throw new Error(`Admin API non-JSON response (${res.status}): ${text.slice(0, 200)}`)
+      throw new Error(`Admin API non-JSON response (${res.status}): ${sanitizeText(text.slice(0, 200))}`)
     }
   }
 
@@ -71,7 +73,7 @@ export class FMAdminClient {
     if (!rawToken) throw new Error('Admin login succeeded but no token returned')
     // Strip "Bearer " prefix if server includes it (some FM versions do)
     this.token = rawToken.startsWith('Bearer ') ? rawToken.slice(7) : rawToken
-    console.log('[FMAdminClient] Logged in to', this.config.host)
+    logger.debug({ host: this.config.host }, '[FMAdminClient] logged in')
   }
 
   /**
@@ -82,7 +84,7 @@ export class FMAdminClient {
     try {
       await this.fetch('/user/auth', { method: 'DELETE' })
     } catch (e: any) {
-      console.warn('[FMAdminClient] Logout error (ignored):', e.message)
+      logger.warn({ errMsg: e.message }, '[FMAdminClient] logout error')
     } finally {
       this.token = null
     }

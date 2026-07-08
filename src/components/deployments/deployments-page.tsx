@@ -4,7 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
 import Link from 'next/link'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { StatusBadge } from '@/components/ui/status-badge'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -60,8 +61,7 @@ interface DeploymentItem {
   rollbackFrom: string | null
   toolCount: number
   createdAt: string
-  configSnapshot: string
-  branchSnapshot: string
+  snapshot: string
 }
 
 interface ServerItem {
@@ -71,24 +71,12 @@ interface ServerItem {
   _count: { tools: number; branches: number; deployments: number }
 }
 
-function DeploymentStatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; className: string }> = {
-    deployed: { label: 'Deployed', className: 'bg-green-500/15 text-green-500 border-green-500/20' },
-    pending: { label: 'Pending', className: 'bg-yellow-500/15 text-yellow-500 border-yellow-500/20' },
-    deploying: { label: 'Deploying', className: 'bg-blue-500/15 text-blue-500 border-blue-500/20' },
-    failed: { label: 'Failed', className: 'bg-red-500/15 text-red-500 border-red-500/20' },
-    rolled_back: { label: 'Rolled Back', className: 'bg-orange-500/15 text-orange-500 border-orange-500/20' },
-  }
-  const { label, className } = config[status] || { label: status, className: '' }
-  return <Badge variant="outline" className={className}>{label}</Badge>
-}
 
 export function DeploymentsPage() {
   const queryClient = useQueryClient()
   const currentServerId = useAppStore((s) => s.currentServerId)
   const setCurrentServer = useAppStore((s) => s.setCurrentServer)
-  const triggerRefreshDeployments = useAppStore((s) => s.triggerRefreshDeployments)
-  const refreshDeployments = useAppStore((s) => s.refreshDeployments)
+
   const [showDeployDialog, setShowDeployDialog] = useState(false)
   const [changelog, setChangelog] = useState('')
   const [showSnapshotDialog, setShowSnapshotDialog] = useState(false)
@@ -100,7 +88,7 @@ export function DeploymentsPage() {
   })
 
   const { data: deployments = [], isLoading, isError, error } = useQuery<DeploymentItem[]>({
-    queryKey: ['deployments', currentServerId, refreshDeployments],
+    queryKey: ['deployments', currentServerId],
     queryFn: async () => {
       try {
         return await api.get<DeploymentItem[]>(`/api/servers/${currentServerId}/deployments`)
@@ -125,9 +113,8 @@ export function DeploymentsPage() {
         changelog: changelog || 'New deployment',
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['deployments'] })
-      queryClient.invalidateQueries({ queryKey: ['servers'] })
-      triggerRefreshDeployments()
+      queryClient.invalidateQueries({ queryKey: ['deployments', currentServerId] })
+      queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       toast.success('Deployment created successfully')
       setShowDeployDialog(false)
       setChangelog('')
@@ -139,8 +126,8 @@ export function DeploymentsPage() {
     mutationFn: (deploymentId: string) =>
       api.post<any>(`/api/deployments/${deploymentId}/rollback`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['deployments'] })
-      triggerRefreshDeployments()
+      queryClient.invalidateQueries({ queryKey: ['deployments', currentServerId] })
+      queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
       toast.success('Rollback completed successfully')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to rollback deployment'),
@@ -148,10 +135,10 @@ export function DeploymentsPage() {
 
   const handleViewSnapshot = (deployment: DeploymentItem) => {
     try {
-      const config = JSON.parse(deployment.configSnapshot || '{}')
+      const config = JSON.parse(deployment.snapshot || '{}')
       setSnapshotConfig(JSON.stringify(config, null, 2))
     } catch {
-      setSnapshotConfig(deployment.configSnapshot || 'No snapshot available')
+      setSnapshotConfig(deployment.snapshot || 'No snapshot available')
     }
     setShowSnapshotDialog(true)
   }
@@ -234,7 +221,7 @@ export function DeploymentsPage() {
           <CardContent className="p-6 text-center">
             <p className="text-sm text-destructive font-medium">Failed to load deployment history</p>
             <p className="text-xs text-muted-foreground mt-1">{error?.message || 'An unexpected error occurred'}</p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={() => queryClient.invalidateQueries({ queryKey: ['deployments'] })}>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => queryClient.invalidateQueries({ queryKey: ['deployments', currentServerId] })}>
               Retry
             </Button>
           </CardContent>
@@ -293,7 +280,7 @@ export function DeploymentsPage() {
                         <Tag className="size-3.5 text-muted-foreground" />
                         <span className="text-sm font-bold">v{deployment.version}</span>
                       </div>
-                      <DeploymentStatusBadge status={deployment.status} />
+                      <StatusBadge status={deployment.status} />
                       {index === 0 && deployment.status === 'deployed' && (
                         <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs">
                           Current
@@ -357,7 +344,7 @@ export function DeploymentsPage() {
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogCancel autoFocus>Cancel</AlertDialogCancel>
                             <AlertDialogAction
                               onClick={() => rollbackMutation.mutate(deployment.id)}
                               className="bg-orange-500 text-white hover:bg-orange-500/90"

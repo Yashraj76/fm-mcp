@@ -54,9 +54,9 @@ export function ODataFilterBuilder({
       .map((c, i) => {
         const prefix = i > 0 ? `${c.logic} ` : ''
         if (c.operator === 'contains' || c.operator === 'startswith') {
-          return `${prefix}${c.operator}(${c.field}, '{${c.paramName}}')`
+          return `${prefix}${c.operator}(${c.field}, {${c.paramName}})`
         }
-        return `${prefix}${c.field} ${c.operator} '{${c.paramName}}'`
+        return `${prefix}${c.field} ${c.operator} {${c.paramName}}`
       })
       .join(' ')
   }
@@ -254,13 +254,13 @@ export function ODataFilterBuilder({
             <input
               value={filterExpression}
               onChange={e => onFilterChange(e.target.value)}
-              placeholder="Email eq '{email}' and Status eq 'Active'"
+              placeholder="Email eq {email} and Status eq {status}"
               className="w-full px-3 py-2 bg-input border border-border rounded-md text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <p className="text-[11px] text-muted-foreground mt-1">
               Use{' '}
               <code className="bg-muted px-1 rounded">{'{'+'paramName'+'}'}</code>
-              {' '}as placeholders — strings are auto-quoted at runtime.
+              {' '}as placeholders — do not add surrounding quotes; strings are automatically quoted at runtime.
             </p>
           </div>
         )}

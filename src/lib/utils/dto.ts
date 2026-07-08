@@ -1,4 +1,15 @@
 import { safeParseJSON } from '@/lib/utils/safe-parse';
+import type {
+  FMServerConnection,
+  FMConnection,
+  McpServer,
+  McpApiKey,
+  Tool,
+  Branch,
+  Deployment,
+  AppSettings,
+  FMConnectionServer
+} from '@prisma/client';
 
 /**
  * Data Transfer Object (DTO) mapping helpers for secure API responses.
@@ -21,7 +32,7 @@ export interface SafeServerConnection {
   connections?: SafeConnection[];
 }
 
-export function toSafeServerConnection(sc: any): SafeServerConnection | null {
+export function toSafeServerConnection(sc: Partial<FMServerConnection> & { connections?: Partial<FMConnection>[] } | null | undefined): SafeServerConnection | null {
   if (!sc) return null;
   return {
     id: sc.id,
@@ -36,8 +47,8 @@ export function toSafeServerConnection(sc: any): SafeServerConnection | null {
     lastError: sc.lastError,
     createdAt: sc.createdAt,
     updatedAt: sc.updatedAt,
-    connections: sc.connections ? sc.connections.map(toSafeConnection) : undefined,
-  };
+    connections: sc.connections ? sc.connections.map(c => toSafeConnection(c)).filter((c): c is SafeConnection => c !== null) : undefined,
+  } as SafeServerConnection;
 }
 
 export interface SafeConnection {
@@ -59,11 +70,17 @@ export interface SafeConnection {
   updatedAt: Date;
   serverConnectionId?: string | null;
   serverConnection?: SafeServerConnection | null;
-  browsedSchema?: any;
-  relationshipGraph?: any;
+  browsedSchema?: unknown;
+  relationshipGraph?: unknown;
 }
 
-export function toSafeConnection(conn: any): SafeConnection | null {
+export type ConnectionInput = Partial<FMConnection> & { 
+  serverConnection?: Partial<FMServerConnection> | null, 
+  browsedSchema?: unknown, 
+  relationshipGraph?: unknown 
+};
+
+export function toSafeConnection(conn: ConnectionInput | null | undefined): SafeConnection | null {
   if (!conn) return null;
   return {
     id: conn.id,
@@ -86,7 +103,7 @@ export function toSafeConnection(conn: any): SafeConnection | null {
     serverConnection: conn.serverConnection ? toSafeServerConnection(conn.serverConnection) : undefined,
     browsedSchema: conn.browsedSchema || undefined,
     relationshipGraph: conn.relationshipGraph || undefined,
-  };
+  } as SafeConnection;
 }
 
 export interface SafeServer {
@@ -101,14 +118,22 @@ export interface SafeServer {
   config: string;
   createdAt: Date;
   updatedAt: Date;
-  connections?: any[];
-  branches?: any[];
-  deployments?: any[];
-  tools?: any[];
+  connections?: { id: string; connectionId: string; serverId: string; fileNames: string; connection?: SafeConnection | null }[];
+  branches?: SafeBranch[];
+  deployments?: SafeDeployment[];
+  tools?: SafeTool[];
   apiKey?: SafeApiKey | null;
 }
 
-export function toSafeServer(server: any): SafeServer | null {
+export type ServerInput = Partial<McpServer> & {
+  connections?: (Partial<FMConnectionServer> & { connection?: ConnectionInput | null })[];
+  branches?: BranchInput[];
+  deployments?: DeploymentInput[];
+  tools?: ToolInput[];
+  apiKey?: Partial<McpApiKey> | null;
+};
+
+export function toSafeServer(server: ServerInput | null | undefined): SafeServer | null {
   if (!server) return null;
   return {
     id: server.id,
@@ -122,18 +147,18 @@ export function toSafeServer(server: any): SafeServer | null {
     config: server.config,
     createdAt: server.createdAt,
     updatedAt: server.updatedAt,
-    connections: server.connections ? server.connections.map((c: any) => ({
+    connections: server.connections ? server.connections.map((c) => ({
       id: c.id,
       connectionId: c.connectionId,
       serverId: c.serverId,
       fileNames: c.fileNames,
       connection: c.connection ? toSafeConnection(c.connection) : undefined
     })) : undefined,
-    branches: server.branches ? server.branches.map(toSafeBranch) : undefined,
-    deployments: server.deployments ? server.deployments.map(toSafeDeployment) : undefined,
-    tools: server.tools ? server.tools.map(toSafeTool) : undefined,
+    branches: server.branches ? server.branches.map(b => toSafeBranch(b)).filter((b): b is SafeBranch => b !== null) : undefined,
+    deployments: server.deployments ? server.deployments.map(d => toSafeDeployment(d)).filter((d): d is SafeDeployment => d !== null) : undefined,
+    tools: server.tools ? server.tools.map(t => toSafeTool(t)).filter((t): t is SafeTool => t !== null) : undefined,
     apiKey: server.apiKey ? toSafeApiKey(server.apiKey) : undefined,
-  };
+  } as SafeServer;
 }
 
 export interface SafeApiKey {
@@ -144,15 +169,15 @@ export interface SafeApiKey {
   lastUsedAt: Date | null;
 }
 
-export function toSafeApiKey(key: any): SafeApiKey | null {
+export function toSafeApiKey(key: Partial<McpApiKey> | null | undefined): SafeApiKey | null {
   if (!key) return null;
   return {
     id: key.id,
     serverId: key.serverId,
     keyPrefix: key.keyPrefix,
     createdAt: key.createdAt,
-    lastUsedAt: key.lastUsedAt,
-  };
+    lastUsedAt: key.lastUsedAt || null,
+  } as SafeApiKey;
 }
 
 export interface SafeTool {
@@ -177,18 +202,20 @@ export interface SafeTool {
   server?: SafeServer | null;
 }
 
-export function toSafeTool(tool: any): SafeTool | null {
+export type ToolInput = Partial<Tool> & { server?: ServerInput | null };
+
+export function toSafeTool(tool: ToolInput | null | undefined): SafeTool | null {
   if (!tool) return null;
   
   // Strip out passwords or client credentials that might have leaked into handlerConfig
   let sanitizedHandlerConfig = tool.handlerConfig;
-  const config = safeParseJSON(tool.handlerConfig);
+  const config = safeParseJSON<Record<string, unknown>>(tool.handlerConfig, null);
   if (config && typeof config === 'object') {
-    if (config.password) delete config.password;
-    if (config.adminPassword) delete config.adminPassword;
-    if (config.clientSecret) delete config.clientSecret;
-    if (config.refreshToken) delete config.refreshToken;
-    if (config.accessToken) delete config.accessToken;
+    if ('password' in config) delete config.password;
+    if ('adminPassword' in config) delete config.adminPassword;
+    if ('clientSecret' in config) delete config.clientSecret;
+    if ('refreshToken' in config) delete config.refreshToken;
+    if ('accessToken' in config) delete config.accessToken;
     sanitizedHandlerConfig = JSON.stringify(config);
   }
 
@@ -212,7 +239,7 @@ export function toSafeTool(tool: any): SafeTool | null {
     createdAt: tool.createdAt,
     updatedAt: tool.updatedAt,
     server: tool.server ? toSafeServer(tool.server) : undefined,
-  };
+  } as SafeTool;
 }
 
 export interface SafeBranch {
@@ -227,7 +254,9 @@ export interface SafeBranch {
   server?: SafeServer | null;
 }
 
-export function toSafeBranch(branch: any): SafeBranch | null {
+export type BranchInput = Partial<Branch> & { server?: ServerInput | null };
+
+export function toSafeBranch(branch: BranchInput | null | undefined): SafeBranch | null {
   if (!branch) return null;
   return {
     id: branch.id,
@@ -239,7 +268,7 @@ export function toSafeBranch(branch: any): SafeBranch | null {
     createdAt: branch.createdAt,
     updatedAt: branch.updatedAt,
     server: branch.server ? toSafeServer(branch.server) : undefined,
-  };
+  } as SafeBranch;
 }
 
 export interface SafeDeployment {
@@ -257,21 +286,28 @@ export interface SafeDeployment {
   branch?: SafeBranch | null;
 }
 
-export function toSafeDeployment(dep: any): SafeDeployment | null {
+export type DeploymentInput = Partial<Deployment> & { server?: ServerInput | null, branch?: BranchInput | null };
+
+export function toSafeDeployment(dep: DeploymentInput | null | undefined): SafeDeployment | null {
   if (!dep) return null;
 
   // Clean snapshot if it contains raw connection info with credentials
   let sanitizedSnapshot = dep.snapshot;
   const snap = safeParseJSON(dep.snapshot);
-  if (snap && typeof snap === 'object') {
-    if (snap.connections) {
-      snap.connections = snap.connections.map((c: any) => {
-        if (c.password) delete c.password;
-        if (c.clientSecret) delete c.clientSecret;
+  if (snap && typeof snap === 'object' && !Array.isArray(snap)) {
+    const snapObj = snap as Record<string, unknown>;
+    if (Array.isArray(snapObj.connections)) {
+      snapObj.connections = snapObj.connections.map((c: unknown) => {
+        if (c && typeof c === 'object') {
+          const conn = c as Record<string, unknown>;
+          if (conn.password) delete conn.password;
+          if (conn.clientSecret) delete conn.clientSecret;
+          return conn;
+        }
         return c;
       });
     }
-    sanitizedSnapshot = JSON.stringify(snap);
+    sanitizedSnapshot = JSON.stringify(snapObj);
   }
 
   return {
@@ -287,7 +323,7 @@ export function toSafeDeployment(dep: any): SafeDeployment | null {
     createdAt: dep.createdAt,
     server: dep.server ? toSafeServer(dep.server) : undefined,
     branch: dep.branch ? toSafeBranch(dep.branch) : undefined,
-  };
+  } as SafeDeployment;
 }
 
 export interface SafeAppSettings {
@@ -302,7 +338,7 @@ export interface SafeAppSettings {
   updatedAt: Date;
 }
 
-export function toSafeAppSettings(settings: any): SafeAppSettings | null {
+export function toSafeAppSettings(settings: Partial<AppSettings> | null | undefined): SafeAppSettings | null {
   if (!settings) return null;
   return {
     id: settings.id,
@@ -314,5 +350,5 @@ export function toSafeAppSettings(settings: any): SafeAppSettings | null {
     aiTemperature: settings.aiTemperature,
     createdAt: settings.createdAt,
     updatedAt: settings.updatedAt,
-  };
+  } as SafeAppSettings;
 }

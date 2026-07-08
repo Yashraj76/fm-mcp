@@ -121,7 +121,7 @@ function getLayoutFields(
   if (serverData?.connections) {
     for (const conn of serverData.connections) {
       if (connectionId && conn.connection?.id !== connectionId) continue
-      const schema = safeParseJSON(conn.connection?.browsedSchema?.compiledSchema, {})
+      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
       const layout = schema.layouts?.find((l: any) => l.name === layoutName)
       if (layout?.fieldMetaData) {
         return layout.fieldMetaData.map((f: any) => ({
@@ -152,7 +152,7 @@ function getAvailableLayouts(
     const layouts = new Set<string>()
     for (const conn of serverData.connections) {
       if (connectionId && conn.connection?.id !== connectionId) continue
-      const schema = safeParseJSON(conn.connection?.browsedSchema?.compiledSchema, {})
+      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
       schema.layouts?.forEach((l: any) => layouts.add(l.name))
     }
     return Array.from(layouts).sort()

@@ -17,8 +17,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "FileMaker MCP Server Platform",
-  description: "Build, manage, and deploy MCP servers for FileMaker Data API connections with AI-powered tool generation.",
+  title: "kilink by kibizsystems",
+  description: "Build, manage, and test FileMaker MCP servers and tools.",
+  openGraph: {
+    title: "kilink by kibizsystems",
+    description: "Build, manage, and test FileMaker MCP servers and tools.",
+    siteName: "kilink",
+  },
+  twitter: {
+    title: "kilink by kibizsystems",
+    description: "Build, manage, and test FileMaker MCP servers and tools.",
+  },
 };
 
 export default async function RootLayout({

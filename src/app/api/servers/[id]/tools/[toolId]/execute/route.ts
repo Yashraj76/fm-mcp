@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { log, LOG_ACTIONS } from '@/lib/logging/logger'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
+import { apiNotFound, apiError } from '@/lib/utils/api-response'
 import { withAuth } from "@/lib/auth/api-guard"
 import { executeToolWithParams } from '@/lib/tools/executor-service'
+import { sanitizeObject } from '@/lib/utils/sanitizer'
+import { resolveToolConnection } from '@/lib/filemaker/resolve-connection'
+import { logger } from '@/lib/logger'
 
 export const POST = withAuth(async (request, { params, userId }) => {
   const startTime = Date.now()
@@ -15,11 +19,11 @@ export const POST = withAuth(async (request, { params, userId }) => {
     const branchId = searchParams.get('branchId')
     const bodyText = await request.text()
     requestBody = bodyText
-    const body = safeParseJSON(bodyText, {})
+    const body = safeParseJSON<Record<string, unknown>>(bodyText, {})
 
     // Fetch tool with server relation — ownership enforced via server.userId
     let tool = await db.tool.findFirst({
-      where: { id: toolId, server: { userId } },
+      where: { id: toolId, deletedAt: null, server: { userId } },
       include: {
         server: {
           include: {
@@ -32,18 +36,18 @@ export const POST = withAuth(async (request, { params, userId }) => {
     })
 
     if (!tool) {
-      return NextResponse.json({ success: false, error: 'Tool not found', code: 'NOT_FOUND' }, { status: 404 })
+      return apiNotFound('Tool not found')
     }
 
     if (branchId) {
       const branchObj = await db.branch.findFirst({ where: { id: branchId, serverId: tool.serverId } })
       if (!branchObj) {
-        return NextResponse.json({ success: false, error: 'Branch not found', code: 'NOT_FOUND' }, { status: 404 })
+        return apiNotFound('Branch not found')
       }
 
       const bt = await db.branchTool.findFirst({ where: { branchId, toolId } })
       if (bt && bt.action !== 'deleted' && bt.overrideData) {
-        const override = safeParseJSON(bt.overrideData, {})
+        const override = safeParseJSON<Record<string, unknown>>(bt.overrideData, {})
         const originalServer = tool.server
         tool = { ...tool, ...override } as typeof tool
         tool.server = originalServer
@@ -51,19 +55,21 @@ export const POST = withAuth(async (request, { params, userId }) => {
     }
 
     if (!tool.isEnabled) {
-      return NextResponse.json({ success: false, error: 'Tool is disabled', code: 'TOOL_DISABLED' }, { status: 400 })
+      return apiError('Tool is disabled', 'TOOL_DISABLED', 400)
     }
 
-    const handlerConfig = safeParseJSON(tool.handlerConfig, {})
+    const handlerConfig = safeParseJSON<Record<string, unknown>>(tool.handlerConfig, {})
 
-    // Choose connection
-    const connectionId = handlerConfig.connectionId
-    let connection = tool.server.connections.find((c: any) => c.connectionId === connectionId)?.connection
-
-    // Fallback to the first connection linked to the server if the specified one isn't valid/found
-    if (!connection) {
-      connection = tool.server.connections[0]?.connection
-    }
+    // System tools don't need a FM connection. All others must resolve via resolveToolConnection,
+    // which throws if connectionId is set but not linked to this server, or if >1 connections exist
+    // without a connectionId — preventing silent execution against the wrong database.
+    const connection = (tool as any).category !== 'system'
+      ? resolveToolConnection(
+          handlerConfig.connectionId as string | null | undefined,
+          (tool as any).server.connections,
+          (tool as any).name
+        )
+      : null
 
     const result = await executeToolWithParams(tool, body, connection)
 
@@ -73,13 +79,13 @@ export const POST = withAuth(async (request, { params, userId }) => {
     await db.toolExecution.create({
       data: {
         toolId,
-        requestBody,
+        requestBody: JSON.stringify(sanitizeObject(body)),
         responseStatus: 200,
-        responseBody: JSON.stringify(result),
+        responseBody: JSON.stringify(sanitizeObject(result)),
         duration,
         status: 'success'
       }
-    }).catch(e => console.error('[Execution History] Failed to save', e))
+    }).catch(e => logger.error({ err: e }, '[Execution History] Failed to save'))
 
     log({
       action: LOG_ACTIONS.TOOL_EXECUTED,
@@ -88,6 +94,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
       entityName: tool.name,
       serverId: tool.serverId,
       meta: { durationMs: duration, paramKeys: Object.keys(body) },
+      actorUserId: userId,
     })
 
     return NextResponse.json({
@@ -99,14 +106,14 @@ export const POST = withAuth(async (request, { params, userId }) => {
 
   } catch (error: any) {
     const duration = Date.now() - startTime
-    console.error('[Tool Execution Failed]', error)
+    logger.error({ err: error }, '[Tool Execution Failed]')
 
     try {
       const { toolId } = await params
       await db.toolExecution.create({
         data: {
           toolId,
-          requestBody,
+          requestBody: JSON.stringify(sanitizeObject(safeParseJSON(requestBody, {}))),
           responseStatus: 500,
           error: error.message,
           duration,
@@ -114,7 +121,7 @@ export const POST = withAuth(async (request, { params, userId }) => {
         }
       })
     } catch (e) {
-      console.error('[Execution History] Failed to save error', e)
+      logger.error({ err: e }, '[Execution History] Failed to save error')
     }
 
     try {
@@ -126,15 +133,10 @@ export const POST = withAuth(async (request, { params, userId }) => {
         entityName: toolId,
         serverId: undefined,
         meta: { durationMs: duration, error: error.message },
+        actorUserId: userId,
       })
     } catch (e) {}
 
-    return NextResponse.json({ 
-      success: false,
-      status: 500,
-      duration, 
-      error: error.message || 'Execution failed',
-      code: 'FM_EXECUTION_ERROR'
-    }, { status: 500 })
+    return apiError('Execution failed', 'FM_EXECUTION_ERROR', 500, { duration })
   }
 })
