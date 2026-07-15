@@ -1,6 +1,7 @@
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
-import { logger } from './logger';
+// NOTE: Do NOT import pino/logger here. rate-limit.ts is pulled into middleware.ts,
+// which runs in Vercel's Edge runtime where Node.js-only packages (pino) are unavailable.
 
 // ── Tier classification ───────────────────────────────────────────────────────
 
@@ -127,7 +128,7 @@ try {
 } catch (err) {
   if (err instanceof RateLimitConfigError) {
     productionConfigError = err;
-    logger.error({ code: err.code }, `[kilink] FATAL CONFIG: ${err.message}`);
+    console.error(`[kilink] FATAL CONFIG [${err.code}]: ${err.message}`);
   }
 }
 
@@ -200,14 +201,14 @@ export async function checkRateLimit(
         : 60;
       return { allowed: res.success, retryAfterSeconds };
     } catch (err) {
-      logger.error({ err }, '[kilink] rate-limit redis error');
+      console.error('[kilink] rate-limit redis error:', err);
       if (IS_PROD) {
         // In production there is no memory fallback — fail open on transient
         // Redis errors rather than returning 500 for every request. The rate
         // limit gap is brief and preferable to an outage. This path is only
         // reached when Redis is configured but transiently unreachable; the
         // misconfiguration case (missing env vars) is caught above.
-        logger.warn('[kilink] rate-limit: Redis error in production, allowing request through');
+        console.warn('[kilink] rate-limit: Redis error in production, allowing request through');
         return { allowed: true, retryAfterSeconds: 0 };
       }
       // Dev: fall through to in-memory
@@ -216,7 +217,7 @@ export async function checkRateLimit(
 
   // ── In-memory path (dev/test only) ───────────────────────────────────────
   if (!warnedOnce) {
-    logger.warn('[kilink] RATE_LIMIT: Upstash not configured, using in-memory limits (dev/test only)');
+    console.warn('[kilink] RATE_LIMIT: Upstash not configured, using in-memory limits (dev/test only)');
     warnedOnce = true;
   }
 
