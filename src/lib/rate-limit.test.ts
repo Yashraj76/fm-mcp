@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { classifyRequest, InMemoryLimiter, TIER_CONFIG, type LimitTier, assertRedisConfiguredForProduction, RateLimitConfigError } from './rate-limit';
+import { classifyRequest, InMemoryLimiter, TIER_CONFIG, type LimitTier, resolveRateLimitMode, checkRateLimit } from './rate-limit';
 
 // ── classifyRequest ───────────────────────────────────────────────────────────
 
@@ -116,81 +116,69 @@ async function testInMemoryLimiter() {
   }
 }
 
-// ── assertRedisConfiguredForProduction ───────────────────────────────────────
+// ── resolveRateLimitMode ──────────────────────────────────────────────────────
+//
+// Redis is optional in every environment, including production. These tests
+// cover the pure decision function directly (rather than the module's
+// process.env-derived singletons, which are fixed for the life of this
+// process) since NODE_ENV/Upstash env vars can't be swapped per-test without
+// reloading the module.
 
-async function testAssertRedisConfiguredForProduction() {
-  console.log('\nTesting assertRedisConfiguredForProduction...\n');
+async function testResolveRateLimitMode() {
+  console.log('\nTesting resolveRateLimitMode...\n');
 
-  // 1. Production without any Redis env vars → throws RateLimitConfigError
+  // 1. Production without any Redis env vars → 'memory' (never throws)
   {
-    let threw = false;
-    try {
-      assertRedisConfiguredForProduction({ NODE_ENV: 'production' });
-    } catch (err) {
-      threw = true;
-      assert.ok(err instanceof RateLimitConfigError, 'should be RateLimitConfigError');
-      assert.strictEqual((err as RateLimitConfigError).code, 'RATE_LIMIT_CONFIG_ERROR');
-      assert.ok((err as Error).message.includes('production'), 'message mentions production');
-      assert.ok((err as Error).message.includes('UPSTASH_REDIS_REST_URL'), 'message names the missing var');
-    }
-    assert.ok(threw, 'should have thrown in production without Redis');
-    console.log('  ✓ production + no Redis env → fails closed (RateLimitConfigError)');
+    const mode = resolveRateLimitMode({ });
+    assert.strictEqual(mode, 'memory');
+    console.log('  ✓ no Redis env → memory (does not throw, even conceptually "in production")');
   }
 
-  // 2. Production with URL but missing token → still throws
+  // 2. URL present but token missing → still 'memory' (partial config is not enough)
   {
-    let threw = false;
-    try {
-      assertRedisConfiguredForProduction({
-        NODE_ENV: 'production',
-        UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
-      });
-    } catch (err) {
-      threw = true;
-      assert.ok(err instanceof RateLimitConfigError);
-    }
-    assert.ok(threw, 'partial Redis config in production should throw');
-    console.log('  ✓ production + URL only (no token) → throws');
+    const mode = resolveRateLimitMode({ UPSTASH_REDIS_REST_URL: 'https://example.upstash.io' });
+    assert.strictEqual(mode, 'memory');
+    console.log('  ✓ URL only (no token) → memory');
   }
 
-  // 3. Development without Redis env vars → does NOT throw (memory fallback allowed)
+  // 3. Both Redis env vars present → 'redis'
+  {
+    const mode = resolveRateLimitMode({
+      UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
+      UPSTASH_REDIS_REST_TOKEN: 'AQIjtoken',
+    });
+    assert.strictEqual(mode, 'redis');
+    console.log('  ✓ both Redis env vars → redis');
+  }
+}
+
+// ── checkRateLimit ────────────────────────────────────────────────────────────
+
+async function testCheckRateLimit() {
+  console.log('\nTesting checkRateLimit...\n');
+
+  // This test process has no UPSTASH_REDIS_REST_* env vars set, so the module
+  // singleton falls back to the in-memory limiter regardless of NODE_ENV.
+  // The key behavior under test: it must not throw a config error just
+  // because Redis is absent — API routes should never fail for this reason.
   {
     let threw = false;
+    let result: { allowed: boolean; retryAfterSeconds: number } | undefined;
     try {
-      assertRedisConfiguredForProduction({ NODE_ENV: 'development' });
+      result = await checkRateLimit('203.0.113.5', 'read');
     } catch {
       threw = true;
     }
-    assert.ok(!threw, 'development without Redis should not throw');
-    console.log('  ✓ development + no Redis env → uses in-memory fallback (no throw)');
+    assert.ok(!threw, 'checkRateLimit must not throw when Redis env vars are absent');
+    assert.strictEqual(result?.allowed, true, 'first request for a fresh IP should be allowed');
+    console.log('  ✓ checkRateLimit without Redis configured → uses in-memory limiter, does not throw');
   }
 
-  // 4. Test environment without Redis env vars → does NOT throw
+  // 'none' tier always passes through regardless of backend.
   {
-    let threw = false;
-    try {
-      assertRedisConfiguredForProduction({ NODE_ENV: 'test' });
-    } catch {
-      threw = true;
-    }
-    assert.ok(!threw, 'test env without Redis should not throw');
-    console.log('  ✓ test env + no Redis env → does not throw');
-  }
-
-  // 5. Production with both Redis env vars → does NOT throw (initializes normally)
-  {
-    let threw = false;
-    try {
-      assertRedisConfiguredForProduction({
-        NODE_ENV: 'production',
-        UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
-        UPSTASH_REDIS_REST_TOKEN: 'AQIjtoken',
-      });
-    } catch {
-      threw = true;
-    }
-    assert.ok(!threw, 'production with Redis fully configured should not throw');
-    console.log('  ✓ production + both Redis env vars → initializes normally (no throw)');
+    const result = await checkRateLimit('203.0.113.6', 'none');
+    assert.strictEqual(result.allowed, true);
+    console.log('  ✓ tier "none" is never rate-limited');
   }
 }
 
@@ -200,7 +188,8 @@ async function runTests() {
   console.log('🚀 Starting Rate-Limit Tests...\n');
   await testClassifyRequest();
   await testInMemoryLimiter();
-  await testAssertRedisConfiguredForProduction();
+  await testResolveRateLimitMode();
+  await testCheckRateLimit();
   console.log('\n🎉 ALL RATE-LIMIT TESTS PASSED! 🎉\n');
 }
 

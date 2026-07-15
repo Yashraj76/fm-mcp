@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { updateSession } from '@/lib/supabase/proxy';
-import { classifyRequest, checkRateLimit, RateLimitConfigError } from '@/lib/rate-limit';
+import { classifyRequest, checkRateLimit } from '@/lib/rate-limit';
 
 export async function middleware(request: NextRequest) {
   const ip = extractIp(request);
@@ -27,18 +27,10 @@ export async function middleware(request: NextRequest) {
         );
       }
     } catch (err) {
-      if (err instanceof RateLimitConfigError) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Rate limiter is not configured correctly for this environment.',
-            code: err.code,
-          },
-          { status: 500 },
-        );
-      }
-      // Other unexpected errors — let the request through rather than blocking all traffic.
-      // The error was already logged inside checkRateLimit.
+      // Rate limiting must never break the app. Log safely and let the
+      // request through rather than failing the whole app on an unexpected
+      // rate-limiter error.
+      console.error('[kilink] rate-limit middleware error, allowing request through:', err);
     }
   }
 
