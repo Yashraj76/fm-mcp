@@ -53,6 +53,41 @@ function buildDispatcher(connection: FMConnection): Agent {
   return new Agent({ connect: { rejectUnauthorized: connection.sslVerify } });
 }
 
+/**
+ * Perform one OData request on a fresh per-connection Agent and ALWAYS destroy
+ * the Agent afterwards — these are one-shot requests, and an undestroyed Agent
+ * keeps its keep-alive sockets open (one leaked pool per tool execution).
+ * Returns the response body text; the body is fully consumed BEFORE the Agent
+ * is destroyed (fetch resolves at headers — destroying earlier would abort the
+ * body stream). Throws FileMakerError on non-2xx responses.
+ */
+async function odataFetch(
+  connection: FMConnection,
+  url: string,
+  init: Omit<RequestInit, 'signal'>,
+  opName: string,
+): Promise<string> {
+  const dispatcher = buildDispatcher(connection);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      dispatcher,
+      signal: AbortSignal.timeout(30_000),
+    } as RequestInit & { dispatcher: Agent });
+
+    const text = await res.text();
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new FileMakerError('', 401, 'OData authentication failed. Verify the FileMaker username and password in connection settings.');
+      }
+      throw new FileMakerError('', res.status, `OData ${opName} failed (HTTP ${res.status}): ${text.substring(0, 200)}`);
+    }
+    return text;
+  } finally {
+    await dispatcher.destroy();
+  }
+}
+
 // ─── Strategy: OData $filter ─────────────────────────────────────────────────
 
 export async function executeODataFilter(
@@ -62,7 +97,6 @@ export async function executeODataFilter(
 ): Promise<ODataResponse> {
   const base = buildODataBase(connection);
   const credentials = buildODataAuth(connection);
-  const dispatcher = buildDispatcher(connection);
 
   const queryParts: string[] = [];
 
@@ -79,25 +113,15 @@ export async function executeODataFilter(
 
   const url = `${base}/${encodeURIComponent(config.table)}${queryParts.length ? '?' + queryParts.join('&') : ''}`;
 
-  const res = await fetch(url, {
+  const text = await odataFetch(connection, url, {
     headers: {
       Authorization: `Basic ${credentials}`,
       Accept: 'application/json',
       'OData-Version': '4.0',
     },
-    dispatcher,
-    signal: AbortSignal.timeout(30_000),
-  } as RequestInit & { dispatcher: Agent });
+  }, '$filter');
 
-  if (!res.ok) {
-    const errText = await res.text();
-    if (res.status === 401) {
-      throw new FileMakerError('', 401, 'OData authentication failed. Verify the FileMaker username and password in connection settings.');
-    }
-    throw new FileMakerError('', res.status, `OData $filter failed (HTTP ${res.status}): ${errText.substring(0, 200)}`);
-  }
-
-  const json = await res.json();
+  const json = JSON.parse(text);
   return {
     status: 'success',
     data: json.value ?? [],
@@ -114,7 +138,6 @@ export async function executeODataExpand(
 ): Promise<ODataResponse> {
   const base = buildODataBase(connection);
   const credentials = buildODataAuth(connection);
-  const dispatcher = buildDispatcher(connection);
 
   const queryParts: string[] = [];
 
@@ -131,25 +154,15 @@ export async function executeODataExpand(
 
   const url = `${base}/${encodeURIComponent(config.table)}${queryParts.length ? '?' + queryParts.join('&') : ''}`;
 
-  const res = await fetch(url, {
+  const text = await odataFetch(connection, url, {
     headers: {
       Authorization: `Basic ${credentials}`,
       Accept: 'application/json',
       'OData-Version': '4.0',
     },
-    dispatcher,
-    signal: AbortSignal.timeout(30_000),
-  } as RequestInit & { dispatcher: Agent });
+  }, '$expand');
 
-  if (!res.ok) {
-    const errText = await res.text();
-    if (res.status === 401) {
-      throw new FileMakerError('', 401, 'OData authentication failed. Verify the FileMaker username and password in connection settings.');
-    }
-    throw new FileMakerError('', res.status, `OData $expand failed (HTTP ${res.status}): ${errText.substring(0, 200)}`);
-  }
-
-  const json = await res.json();
+  const json = JSON.parse(text);
   return {
     status: 'success',
     data: json.value ?? [],
@@ -166,7 +179,6 @@ export async function executeODataBatch(
 ): Promise<ODataResponse> {
   const base = buildODataBase(connection);
   const credentials = buildODataAuth(connection);
-  const dispatcher = buildDispatcher(connection);
 
   if (!config.batchOperations?.length) {
     throw new Error('OData batch requires batchOperations in config');
@@ -216,7 +228,7 @@ export async function executeODataBatch(
 
   body += `--${boundary}--`;
 
-  const res = await fetch(`${base}/$batch`, {
+  const responseText = await odataFetch(connection, `${base}/$batch`, {
     method: 'POST',
     headers: {
       Authorization: `Basic ${credentials}`,
@@ -225,19 +237,7 @@ export async function executeODataBatch(
       Accept: 'application/json',
     },
     body,
-    dispatcher,
-    signal: AbortSignal.timeout(30_000),
-  } as RequestInit & { dispatcher: Agent });
-
-  if (!res.ok) {
-    const errText = await res.text();
-    if (res.status === 401) {
-      throw new FileMakerError('', 401, 'OData authentication failed. Verify the FileMaker username and password in connection settings.');
-    }
-    throw new FileMakerError('', res.status, `OData $batch failed (HTTP ${res.status}): ${errText.substring(0, 200)}`);
-  }
-
-  const responseText = await res.text();
+  }, '$batch');
   // Extract JSON payloads from multipart response
   const jsonBlocks = responseText.match(/\{[\s\S]*?\}/g) ?? [];
   const results = jsonBlocks.map((block: string) => safeParseJSON(block, block));

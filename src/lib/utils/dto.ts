@@ -118,7 +118,7 @@ export interface SafeServer {
   config: string;
   createdAt: Date;
   updatedAt: Date;
-  connections?: { id: string; connectionId: string; serverId: string; fileNames: string; connection?: SafeConnection | null }[];
+  connections?: { id: string; connectionId: string; serverId: string; fileNames: string; isActive: boolean; connection?: SafeConnection | null }[];
   branches?: SafeBranch[];
   deployments?: SafeDeployment[];
   tools?: SafeTool[];
@@ -152,6 +152,7 @@ export function toSafeServer(server: ServerInput | null | undefined): SafeServer
       connectionId: c.connectionId,
       serverId: c.serverId,
       fileNames: c.fileNames,
+      isActive: c.isActive ?? true,
       connection: c.connection ? toSafeConnection(c.connection) : undefined
     })) : undefined,
     branches: server.branches ? server.branches.map(b => toSafeBranch(b)).filter((b): b is SafeBranch => b !== null) : undefined,
@@ -159,6 +160,40 @@ export function toSafeServer(server: ServerInput | null | undefined): SafeServer
     tools: server.tools ? server.tools.map(t => toSafeTool(t)).filter((t): t is SafeTool => t !== null) : undefined,
     apiKey: server.apiKey ? toSafeApiKey(server.apiKey) : undefined,
   } as SafeServer;
+}
+
+// Lightweight shape for list/dropdown consumers (servers-page.tsx cards) —
+// deliberately excludes userId/config/serverUrl/proxyUrl and the nested
+// connection/deployment/branch detail the full `SafeServer` carries, since
+// list views only ever read counts and health-flag booleans off these.
+export interface SafeServerSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  version: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+  connections: { isActive: boolean }[];
+  tools: { isEnabled: boolean }[];
+  deployments: { status: string }[];
+  _count: { tools: number; deployments: number; branches: number; connections: number };
+}
+
+export function toSafeServerSummary(server: SafeServerSummary): SafeServerSummary {
+  return {
+    id: server.id,
+    name: server.name,
+    description: server.description,
+    version: server.version,
+    status: server.status,
+    createdAt: server.createdAt,
+    updatedAt: server.updatedAt,
+    connections: server.connections,
+    tools: server.tools,
+    deployments: server.deployments,
+    _count: server._count,
+  };
 }
 
 export interface SafeApiKey {
@@ -188,6 +223,7 @@ export interface SafeTool {
   category: string | null;
   inputSchema: string;
   outputSchema: string | null;
+  outputSelector: string | null;
   handlerConfig: string;
   fmLayout: string | null;
   fmScript: string | null;
@@ -227,6 +263,7 @@ export function toSafeTool(tool: ToolInput | null | undefined): SafeTool | null 
     category: tool.category,
     inputSchema: tool.inputSchema,
     outputSchema: tool.outputSchema,
+    outputSelector: tool.outputSelector ?? null,
     handlerConfig: sanitizedHandlerConfig,
     fmLayout: tool.fmLayout,
     fmScript: tool.fmScript,
@@ -251,10 +288,16 @@ export interface SafeBranch {
   status: string;
   createdAt: Date;
   updatedAt: Date;
+  connectionOverrideId?: string | null;
+  // Minimal, credential-free preview — never the full FMConnection.
+  connectionOverride?: { id: string; name: string; database: string } | null;
   server?: SafeServer | null;
 }
 
-export type BranchInput = Partial<Branch> & { server?: ServerInput | null };
+export type BranchInput = Partial<Branch> & {
+  server?: ServerInput | null;
+  connectionOverride?: Partial<FMConnection> | null;
+};
 
 export function toSafeBranch(branch: BranchInput | null | undefined): SafeBranch | null {
   if (!branch) return null;
@@ -267,6 +310,10 @@ export function toSafeBranch(branch: BranchInput | null | undefined): SafeBranch
     status: branch.status,
     createdAt: branch.createdAt,
     updatedAt: branch.updatedAt,
+    connectionOverrideId: branch.connectionOverrideId,
+    connectionOverride: branch.connectionOverride
+      ? { id: branch.connectionOverride.id!, name: branch.connectionOverride.name!, database: branch.connectionOverride.database! }
+      : branch.connectionOverride,
     server: branch.server ? toSafeServer(branch.server) : undefined,
   } as SafeBranch;
 }

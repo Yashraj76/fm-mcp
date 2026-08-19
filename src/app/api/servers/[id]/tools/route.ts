@@ -23,6 +23,7 @@ const createToolSchema = z.object({
   outputSchema: z.union([z.string(), z.record(z.string(), z.any())]).optional().nullable().transform(
     (v) => v === undefined || v === null ? null : (typeof v === 'string' ? v : JSON.stringify(v))
   ),
+  outputSelector: z.string().nullable().optional(),
   handlerConfig: z.union([z.string(), z.record(z.string(), z.any())]).optional().transform(
     (v) => v === undefined ? '{}' : (typeof v === 'string' ? v : JSON.stringify(v))
   ),

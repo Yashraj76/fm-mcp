@@ -63,10 +63,14 @@ export const PUT = withAuth(async (req, { params, userId }) => {
     const layoutMeta = safeParseJSON<Record<string, any>>(browsedSchema.rawLayoutMeta, {})
     const odataMeta = safeParseJSON<Record<string, any>>(browsedSchema.rawODataMeta, {})
 
-    // Build compiledSchema from selections
+    // Build compiledSchema from selections. `[]` is truthy in JS, so `||`
+    // can't be used here — an empty selectedFields[name] (nothing narrowed
+    // yet, not a deliberate "zero fields" choice) must still fall through to
+    // the fetched layoutMeta, or it permanently locks in an empty field list
+    // that a later re-save can never heal even once metadata exists.
     const compiledLayouts = parsed.selectedLayouts.map((name) => ({
       name,
-      fields: parsed.selectedFields[name] || layoutMeta[name]?.fields || [],
+      fields: parsed.selectedFields[name]?.length ? parsed.selectedFields[name] : (layoutMeta[name]?.fields || []),
       portals: layoutMeta[name]?.portals || [],
       valueLists: layoutMeta[name]?.valueLists || [],
     }))

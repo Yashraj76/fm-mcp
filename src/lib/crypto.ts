@@ -1,7 +1,16 @@
 import crypto from 'crypto'
 import { logger } from './logger'
 
-const ALGORITHM = 'aes-256-cbc'
+// All NEW writes use AES-256-GCM (authenticated encryption) in the 3-part
+// format `iv:tag:ciphertext` (hex). Values written before the GCM migration
+// are AES-256-CBC in the 2-part format `iv:ciphertext`; decrypt() still reads
+// those so stored credentials keep working, and they are upgraded to GCM the
+// next time they are saved. To upgrade all legacy rows at once, run:
+//   npx tsx scripts/reencrypt-credentials.ts
+// (re-encrypts FMConnection.password/clientSecret, AppSettings.aiApiKeyEncrypted,
+// FMServerConnection.adminPasswordEncrypted in place with the current key).
+const GCM_ALGORITHM = 'aes-256-gcm'
+const LEGACY_CBC_ALGORITHM = 'aes-256-cbc' // decrypt-only
 
 // Non-secret, fixed key used ONLY in local development (NODE_ENV !== 'production').
 // Any value encrypted with this key has no real confidentiality — it exists solely
@@ -81,38 +90,70 @@ function getKey(): Buffer {
 
 export function encrypt(text: string): string {
   if (!text) return text
-  const iv = crypto.randomBytes(16)
-  const cipher = crypto.createCipheriv(ALGORITHM, getKey(), iv)
-  let encrypted = cipher.update(text, 'utf8', 'hex')
-  encrypted += cipher.final('hex')
-  return `${iv.toString('hex')}:${encrypted}`
+  const iv = crypto.randomBytes(12) // 96-bit IV per NIST SP 800-38D for GCM
+  const cipher = crypto.createCipheriv(GCM_ALGORITHM, getKey(), iv)
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`
+}
+
+/** True when the value is in the legacy 2-part CBC format (pre-GCM write). */
+export function isLegacyCiphertext(value: string): boolean {
+  return !!value && value.split(':').length === 2
 }
 
 /**
  * Decrypt a value previously produced by `encrypt`.
  *
- * Throws if the input is not in the expected `<32-char IV hex>:<ciphertext hex>` format
- * or if the underlying crypto operation fails (e.g. corrupted ciphertext).
- * Never returns the raw ciphertext on failure — the caller must handle errors explicitly.
+ * 3-part `iv:tag:ciphertext` values are AES-256-GCM — the auth tag is verified
+ * in final(), so a tampered ciphertext, tag, or IV throws. 2-part
+ * `iv:ciphertext` values are legacy AES-256-CBC from before the GCM migration
+ * and are decrypted for backward compatibility (see module header).
+ *
+ * Throws on any format or crypto failure. Never returns the raw ciphertext on
+ * failure — the caller must handle errors explicitly.
  */
 export function decrypt(hash: string): string {
   if (!hash) return hash
-  const colonIdx = hash.indexOf(':')
-  // IV must be exactly 16 bytes → 32 hex chars. Reject anything else.
-  if (colonIdx !== 32 || hash.length <= 33) {
-    throw new Error(
-      '[crypto] decrypt: value is not in the expected encrypted format ' +
-      '(32-char IV hex + ":" + ciphertext hex)'
-    )
+  const parts = hash.split(':')
+
+  if (parts.length === 3) {
+    const [ivHex, tagHex, cipherHex] = parts
+    // 12-byte IV → 24 hex chars; 16-byte GCM tag → 32 hex chars.
+    if (ivHex.length !== 24 || tagHex.length !== 32 || cipherHex.length === 0) {
+      throw new Error(
+        '[crypto] decrypt: value is not in the expected encrypted format ' +
+        '(24-char IV hex + ":" + 32-char auth tag hex + ":" + ciphertext hex)'
+      )
+    }
+    // Let crypto errors propagate — do NOT catch and return hash.
+    // Using a decryption-failure result as a credential is worse than crashing.
+    const decipher = crypto.createDecipheriv(GCM_ALGORITHM, getKey(), Buffer.from(ivHex, 'hex'))
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'))
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(cipherHex, 'hex')),
+      decipher.final(), // GCM auth-tag verification happens here
+    ])
+    return decrypted.toString('utf8')
   }
-  const ivHex = hash.slice(0, 32)
-  const cipherHex = hash.slice(33)
-  // Let crypto errors propagate — do NOT catch and return hash.
-  // Using a decryption-failure result as a credential is worse than crashing.
-  const iv = Buffer.from(ivHex, 'hex')
-  const encryptedText = Buffer.from(cipherHex, 'hex')
-  const decipher = crypto.createDecipheriv(ALGORITHM, getKey(), iv)
-  let decrypted = decipher.update(encryptedText, undefined, 'utf8')
-  decrypted += decipher.final('utf8')
-  return decrypted
+
+  if (parts.length === 2) {
+    // Legacy AES-256-CBC (pre-GCM). IV must be exactly 16 bytes → 32 hex chars.
+    const [ivHex, cipherHex] = parts
+    if (ivHex.length !== 32 || cipherHex.length === 0) {
+      throw new Error(
+        '[crypto] decrypt: value is not in the expected encrypted format ' +
+        '(32-char IV hex + ":" + ciphertext hex)'
+      )
+    }
+    const decipher = crypto.createDecipheriv(LEGACY_CBC_ALGORITHM, getKey(), Buffer.from(ivHex, 'hex'))
+    let decrypted = decipher.update(Buffer.from(cipherHex, 'hex'), undefined, 'utf8')
+    decrypted += decipher.final('utf8')
+    return decrypted
+  }
+
+  throw new Error(
+    '[crypto] decrypt: value is not in the expected encrypted format ' +
+    '(iv:tag:ciphertext for GCM, or legacy iv:ciphertext)'
+  )
 }

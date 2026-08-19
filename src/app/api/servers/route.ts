@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z, ZodError } from 'zod'
 import { withAuth } from "@/lib/auth/api-guard";
-import { toSafeServer } from '@/lib/utils/dto'
+import { toSafeServer, toSafeServerSummary } from '@/lib/utils/dto'
 import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response'
 import { logger } from '@/lib/logger'
+
+export const runtime = 'nodejs';
+// Allow up to 5 minutes — server creation awaits the tool-generation job,
+// whose AI call alone takes 15–30 s.
+export const maxDuration = 300;
 
 const createServerSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -15,9 +20,40 @@ const createServerSchema = z.object({
 })
 
 // GET /api/servers - List all MCP servers
+//   ?summary=true - lightweight variant for list/dropdown consumers: only the
+//   counts and booleans the server cards actually render, skipping the heavy
+//   nested connection/deployment includes. Reserve the full include for the
+//   server detail page (GET /api/servers/[id]).
 // POST /api/servers - Create a new MCP server
 export const GET = withAuth(async (req, { params, userId }) => {
     try {
+    const isSummary = req.nextUrl.searchParams.get('summary') === 'true'
+
+    if (isSummary) {
+      const servers = await db.mcpServer.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          version: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+          connections: { select: { isActive: true } },
+          tools: { where: { isEnabled: true }, select: { isEnabled: true } },
+          // Only existence matters for the "not deployed" health flag.
+          deployments: { take: 1, select: { status: true } },
+          _count: {
+            select: { tools: true, deployments: true, branches: true, connections: true },
+          },
+        },
+      })
+
+      return apiSuccess(servers.map(toSafeServerSummary))
+    }
+
     const servers = await db.mcpServer.findMany({
         where: { userId },
         orderBy: { createdAt: 'desc' },
@@ -40,6 +76,19 @@ export const GET = withAuth(async (req, { params, userId }) => {
         deployments: {
           orderBy: { createdAt: 'desc' },
           take: 5,
+          // Exclude the snapshot column — a full server+tools JSON blob the
+          // server cards never display.
+          select: {
+            id: true,
+            serverId: true,
+            branchId: true,
+            version: true,
+            changelog: true,
+            status: true,
+            isLive: true,
+            deployedAt: true,
+            createdAt: true,
+          },
         },
         _count: {
           select: {
@@ -146,14 +195,29 @@ if (connectionIds && connectionIds.length > 0) {
     }
   });
 
-  setImmediate(async () => {
-    try {
-      const { runToolGenerationJob } = await import('@/lib/tools/job-runner');
-      await runToolGenerationJob(job.id, server.id, userId, connectionIds[0]);
-    } catch (e) {
-      logger.error({ err: e }, '[ServerCreation] Tool generation error:');
-    }
-  });
+  // Run synchronously and await completion before sending the response.
+  //
+  // WHY: Vercel serverless functions freeze the Node.js process the moment
+  // the HTTP response is sent. setImmediate / "fire-and-forget" schedules
+  // work to run AFTER the response — i.e., after the process is frozen — so
+  // the job would silently stay 'pending' forever. maxDuration=300 gives
+  // this function up to 5 minutes for the full run.
+  try {
+    const { runToolGenerationJob } = await import('@/lib/tools/job-runner');
+    await runToolGenerationJob(job.id, server.id, userId, connectionIds[0]);
+  } catch (e) {
+    // Safety net — the runner marks failures itself; this catches a rejection
+    // that escapes it (e.g. its own status write failing).
+    logger.error({ err: e }, '[ServerCreation] Tool generation error:');
+    await db.toolGenerationJob.update({
+      where: { id: job.id },
+      data: {
+        status: 'failed',
+        error: e instanceof Error ? e.message : String(e),
+        completedAt: new Date(),
+      },
+    }).catch(() => {});
+  }
 }
 
 return apiSuccess(toSafeServer(server), 201)

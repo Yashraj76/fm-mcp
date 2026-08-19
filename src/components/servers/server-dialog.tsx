@@ -45,8 +45,12 @@ export function ServerDialog() {
 
   const isEditing = !!editingServerId
 
+  // Distinct key from connections-page.tsx's `['connections']` useInfiniteQuery —
+  // that key's cache holds an InfiniteData `{ pages, pageParams }` shape, and
+  // sharing it here (a plain flat-array query) caused each observer to stomp
+  // the other's cache shape, crashing both the Connections and Servers pages.
   const { data: connections = [], isLoading: loadingConnections } = useQuery<ConnectionItem[]>({
-    queryKey: ['connections'],
+    queryKey: ['connections', 'flat'],
     queryFn: () => api.get<ConnectionItem[]>('/api/connections'),
     enabled: showServerDialog,
   })

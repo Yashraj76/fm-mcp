@@ -114,11 +114,13 @@ export async function resolveServerBranch(
   if (preferredBranchId) {
     const branch = await db.branch.findFirst({
       where: { serverId, id: preferredBranchId },
+      include: { connectionOverride: true },
     })
     if (branch) return branch
   }
   return db.branch.findFirst({
     where: { serverId, isDefault: true },
+    include: { connectionOverride: true },
   })
 }
 

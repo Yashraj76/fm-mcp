@@ -4,6 +4,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/utils/api-client'
+import { invalidateToolLists } from '@/lib/query-keys'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
 import {
   Dialog,
@@ -203,7 +204,7 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
   const [failedStepIndex, setFailedStepIndex] = useState(1)
   const [availableConnections, setAvailableConnections] = useState<ConnectionOption[]>([])
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null)
-  type PollState = { timeoutId: ReturnType<typeof setTimeout> | null; attempts: number; startedAt: number; aborted: boolean }
+  type PollState = { timeoutId: ReturnType<typeof setTimeout> | null; attempts: number; startedAt: number; aborted: boolean; baselineJobId: string | null }
   const pollRef = useRef<PollState | null>(null)
 
   const stopPolling = useCallback(() => {
@@ -214,9 +215,14 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
     }
   }, [])
 
-  const startPolling = useCallback(() => {
+  // baselineJobId: the most-recent job id for this server *before* this run
+  // started. The status endpoint has no way to scope to "this" run's job
+  // until the long-running POST below finally returns, so without a
+  // baseline, a poll landing before the new job row exists would read the
+  // previous run's (possibly failed) job and freeze the UI on stale data.
+  const startPolling = useCallback((baselineJobId: string | null) => {
     stopPolling()
-    const state: PollState = { timeoutId: null, attempts: 0, startedAt: Date.now(), aborted: false }
+    const state: PollState = { timeoutId: null, attempts: 0, startedAt: Date.now(), aborted: false, baselineJobId }
     pollRef.current = state
 
     function schedule() {
@@ -239,6 +245,15 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
       try {
         const statusData = await api.get<any>(`/api/servers/${serverId}/generate-tools/status`)
         if (state.aborted) return
+
+        // Still seeing the pre-run job (or none yet) — this run's job row
+        // hasn't landed yet. Keep waiting without touching progress/phase.
+        if (statusData.jobId === state.baselineJobId) {
+          state.attempts++
+          schedule()
+          return
+        }
+
         state.attempts++
         const p: number = statusData.progress ?? 0
         setProgress(p)
@@ -262,7 +277,18 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
       setUiStep('generating')
       setProgress(0)
       setPhase('Queued...')
-      startPolling()
+
+      // Snapshot whatever job currently exists (if any) so polling can tell
+      // it apart from the job this run is about to create.
+      let baselineJobId: string | null = null
+      try {
+        const baseline = await api.get<any>(`/api/servers/${serverId}/generate-tools/status`)
+        baselineJobId = baseline?.jobId ?? null
+      } catch {
+        // No prior job (404) or a transient error — treat as no baseline.
+      }
+
+      startPolling(baselineJobId)
       try {
         return await api.post<any>(`/api/servers/${serverId}/generate-tools`, {
           branchId,
@@ -323,8 +349,7 @@ export function AutoGeneratePreviewDialog({ open, onOpenChange, serverId, branch
       if (data.saved > 0) toast.success(msg)
       else if (data.skipped > 0) toast.info(msg)
       else toast.error(msg || 'No tools were saved')
-      queryClient.invalidateQueries({ queryKey: ['tools', serverId] })
-      queryClient.invalidateQueries({ queryKey: ['branch-tools', branchId, serverId] })
+      invalidateToolLists(queryClient, serverId, branchId)
       onOpenChange(false)
     },
     onError: (err: any) => {

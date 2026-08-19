@@ -54,6 +54,7 @@ const updateSchema = z.object({
   description: z.string().optional(),
   inputSchema: z.any().optional(),
   handlerConfig: z.any().optional(),
+  outputSelector: z.string().nullable().optional(),
   isEnabled: z.boolean().optional(),
   enabled: z.boolean().optional(),
 });
@@ -119,12 +120,16 @@ export const PUT = withAuth(async (req, { params, userId }) => {
       ...(body.description && { description: body.description }),
       ...(body.inputSchema && { inputSchema: typeof body.inputSchema === 'string' ? body.inputSchema : JSON.stringify(body.inputSchema) }),
       ...(body.handlerConfig && { handlerConfig: typeof body.handlerConfig === 'string' ? body.handlerConfig : JSON.stringify(body.handlerConfig) }),
+      ...(body.outputSelector !== undefined && { outputSelector: body.outputSelector }),
       ...(body.isEnabled !== undefined ? { isEnabled: body.isEnabled } : (body.enabled !== undefined ? { isEnabled: body.enabled } : {})),
     };
 
     // Merge: existing fields are preserved; incoming fields win on collision.
     const overrideData = mergeToolOverrideFields(existingOverride, incomingOverride);
 
+    // Stamp the base tool's current updatedAt — merge compares this against
+    // the base's updatedAt at merge time to detect whether another branch
+    // changed the same tool underneath this one since this edit was made.
     await prisma.branchTool.upsert({
       where: { branchId_toolId: { branchId: params.id, toolId: params.toolId } },
       create: {
@@ -132,10 +137,12 @@ export const PUT = withAuth(async (req, { params, userId }) => {
         toolId: params.toolId,
         action: 'modified',
         overrideData: JSON.stringify(overrideData),
+        baseUpdatedAt: tool.updatedAt,
       },
       update: {
         action: 'modified',
         overrideData: JSON.stringify(overrideData),
+        baseUpdatedAt: tool.updatedAt,
       },
     });
 
@@ -171,7 +178,7 @@ export const DELETE = withAuth(async (_, { params, userId }) => {
       return apiNotFound('Branch not found');
     }
     if (branch.isDefault) {
-      return apiError('Use DELETE /api/tools/[id] to delete tools from main', 'VALIDATION_ERROR', 400);
+      return apiError('Use DELETE /api/servers/[id]/tools/[toolId] to delete tools from main', 'VALIDATION_ERROR', 400);
     }
 
     const tool = await prisma.tool.findFirst({

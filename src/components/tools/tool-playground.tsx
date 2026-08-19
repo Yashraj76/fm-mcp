@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { useAppStore } from '@/lib/store'
 import { api } from '@/lib/utils/api-client'
+import { toolKeys } from '@/lib/query-keys'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -76,8 +77,8 @@ export function ToolPlayground() {
 
   // Fetch all servers for the dropdown
   const { data: servers = [], isLoading: isLoadingServers } = useQuery({
-    queryKey: ['servers'],
-    queryFn: () => api.get<any[]>('/api/servers'),
+    queryKey: ['servers', 'summary'],
+    queryFn: () => api.get<any[]>('/api/servers?summary=true'),
   })
 
   // Fetch branches for selector
@@ -100,7 +101,7 @@ export function ToolPlayground() {
 
   // Fetch tools for selector
   const { data: tools = [], isLoading: isLoadingTools } = useQuery({
-    queryKey: ['tools', currentServerId, currentBranchId],
+    queryKey: toolKeys.server(currentServerId ?? '', currentBranchId ?? null),
     queryFn: async () => {
       if (!currentServerId) return []
       let url = `/api/servers/${currentServerId}/tools`
@@ -198,6 +199,36 @@ function ToolPlaygroundContent({
   const responseRef = useRef<HTMLDivElement>(null)
 
   const selectedTool = tools.find((t) => t.id === selectedToolId)
+
+  // Persisted execution history so the panel survives a page refresh.
+  // Fetched once per mount (staleTime: Infinity): runs made in this session
+  // are prepended locally and their server-side copies are never refetched,
+  // so the merged list has no duplicates.
+  const { data: persistedHistory = [] } = useQuery({
+    queryKey: ['playground-history'],
+    queryFn: () => api.get<any[]>('/api/playground/history?limit=50'),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  })
+
+  // Only show persisted runs for tools visible in the current server/branch —
+  // replay needs the tool to exist in the current tool list.
+  const mergedHistory: ExecutionHistoryItem[] = [
+    ...history,
+    ...persistedHistory
+      .filter((e: any) => tools.some((t) => t.id === e.toolId))
+      .map((e: any) => ({
+        id: e.id,
+        toolId: e.toolId,
+        toolName: e.tool?.name ?? 'unknown tool',
+        requestBody: e.requestBody ?? '{}',
+        responseStatus: e.responseStatus,
+        responseBody: e.responseBody,
+        duration: e.duration,
+        status: e.status,
+        createdAt: e.createdAt,
+      })),
+  ]
 
   // Auto-generate request body from input schema when tool changes
   useEffect(() => {
@@ -517,8 +548,8 @@ function ToolPlaygroundContent({
           </ResizablePanelGroup>
         </ResizablePanel>
 
-        {/* Execution History */}
-        {history.length > 0 && (
+        {/* Execution History — local runs from this session + persisted runs */}
+        {mergedHistory.length > 0 && (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={showHistory ? 30 : 15} minSize={10}>
@@ -531,12 +562,12 @@ function ToolPlaygroundContent({
                       <ChevronUp className="size-3" />
                     )}
                     <History className="size-3" />
-                    Execution History ({history.length})
+                    Execution History ({mergedHistory.length})
                   </button>
                 </CollapsibleTrigger>
                 <CollapsibleContent className="overflow-y-auto max-h-full custom-scrollbar">
                   <div className="space-y-1 px-1 pb-2">
-                    {history.map((item) => (
+                    {mergedHistory.map((item) => (
                       <button
                         key={item.id}
                         onClick={() => handleReplay(item)}

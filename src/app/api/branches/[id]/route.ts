@@ -4,7 +4,7 @@ import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { z } from 'zod';
 import { withAuth } from "@/lib/auth/api-guard";
 import { toSafeBranch } from '@/lib/utils/dto'
-import { apiSuccess, apiNotFound, apiValidationFailed, apiForbidden, apiServerError } from '@/lib/utils/api-response'
+import { apiSuccess, apiNotFound, apiValidationFailed, apiForbidden, apiServerError, apiError } from '@/lib/utils/api-response'
 import { logger } from '@/lib/logger'
 
 export const runtime = 'nodejs';
@@ -15,6 +15,11 @@ const UpdateBranchSchema = z.object({
   name: z.string().min(1).regex(/^[a-z0-9\-\/]+$/, 'Lowercase letters, numbers, hyphens, slashes only').optional(),
   description: z.string().optional(),
   status: z.enum(['active', 'archived', 'merged']).optional(),
+  // Points every tool execution on this branch at a different FileMaker
+  // connection (e.g. a sandbox file) instead of the server's default. null
+  // clears the override. The connection only needs to be owned by this user —
+  // it does not need to already be linked to this server.
+  connectionOverrideId: z.string().nullable().optional(),
 });
 
 // PUT /api/branches/[id] - Update branch details (archive/restore/rename)
@@ -28,6 +33,7 @@ export const GET = withAuth(async (_, { params, userId }) => {
       },
       include: {
         _count: { select: { tools: true, deployments: true } },
+        connectionOverride: { select: { id: true, name: true, database: true } },
       },
     });
 
@@ -63,10 +69,20 @@ export const PUT = withAuth(async (req, { params, userId }) => {
 
     const body = UpdateBranchSchema.parse(await req.json());
 
+    if (body.connectionOverrideId) {
+      const owned = await prisma.fMConnection.findFirst({
+        where: { id: body.connectionOverrideId, userId },
+      });
+      if (!owned) {
+        return apiError('Connection not found', 'VALIDATION_ERROR', 400);
+      }
+    }
+
     const before = JSON.stringify({
       name: branch.name,
       description: branch.description,
       status: branch.status,
+      connectionOverrideId: branch.connectionOverrideId,
     });
 
     const updated = await prisma.branch.update({
@@ -75,7 +91,9 @@ export const PUT = withAuth(async (req, { params, userId }) => {
         ...(body.name && { name: body.name }),
         ...(body.description !== undefined && { description: body.description }),
         ...(body.status && { status: body.status }),
+        ...(body.connectionOverrideId !== undefined && { connectionOverrideId: body.connectionOverrideId }),
       },
+      include: { connectionOverride: { select: { id: true, name: true, database: true } } },
     });
 
     await log({
@@ -89,6 +107,7 @@ export const PUT = withAuth(async (req, { params, userId }) => {
         name: updated.name,
         description: updated.description,
         status: updated.status,
+        connectionOverrideId: updated.connectionOverrideId,
       }),
       actorUserId: userId,
     });

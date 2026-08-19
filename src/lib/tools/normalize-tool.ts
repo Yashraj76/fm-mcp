@@ -140,11 +140,15 @@ export function normalizeTool(raw: RawToolDef): NormalizedTool {
   if (!inputSchema.properties) inputSchema.properties = {}
   if (!inputSchema.required) inputSchema.required = []
 
-  // update / delete / get tools must have recordId
-  if (
-    ['update', 'delete', 'get'].includes(fmMethod) &&
-    !inputSchema.properties.recordId
-  ) {
+  // update / delete / get tools must have recordId — check the top-level
+  // fmMethod (single-step) as well as every step's operation, since
+  // multi-table tools report fmMethod as 'sequential-multi-table' rather
+  // than the operation itself.
+  const steps: any[] = Array.isArray(hc.steps) ? hc.steps : []
+  const needsRecordId =
+    ['update', 'delete', 'get'].includes(fmMethod) ||
+    steps.some((s) => ['update', 'delete', 'get'].includes(s?.operation))
+  if (needsRecordId && !inputSchema.properties.recordId) {
     inputSchema.properties = {
       recordId: {
         type: 'string',

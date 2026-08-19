@@ -4,6 +4,14 @@ import { executeToolWithParams } from '../tools/executor-service';
 import { FMConnectionServer, FMConnection } from '@prisma/client';
 import { resolveToolConnection } from '../filemaker/resolve-connection';
 import { getEffectiveTools } from '../branching';
+import { callAI as _callAI } from '../ai/client';
+import { PLAYGROUND_SUMMARIZER_PROMPT } from '../ai/prompts/playground-summarizer';
+import { logger } from '../logger';
+
+/** Injectable dependencies — override in tests to avoid live AI calls. */
+export interface SessionRunnerDeps {
+  callAI?: typeof _callAI;
+}
 
 type StepLog = { stepIndex: number; toolName: string; reason: string; status: 'running' | 'done' | 'error'; result?: unknown; error?: string; durationMs?: number };
 
@@ -67,8 +75,11 @@ export async function runPlaygroundSession(
   sessionId: string,
   plan: Plan,
   serverId?: string,
-  branchId?: string
+  branchId?: string,
+  userId?: string,
+  deps: SessionRunnerDeps = {},
 ) {
+  const callAI = deps.callAI ?? _callAI;
   const steps = plan.steps ?? [];
   const results: Record<number, unknown> = {};
 
@@ -115,7 +126,24 @@ export async function runPlaygroundSession(
     }
 
     // Build final result
-    const finalResult = buildFinalResult(plan, results);
+    const finalResult = buildFinalResult(plan, results) as Record<string, unknown>;
+
+    // Synthesize a human-readable answer from the raw tool results. This is
+    // a nice-to-have on top of the data the platform already has — a failure
+    // here (no API key, network error, etc.) must never fail the session;
+    // the raw results remain fully available as a fallback.
+    try {
+      const answerText = await callAI({
+        systemPrompt: PLAYGROUND_SUMMARIZER_PROMPT,
+        userMessage: `Original request: ${plan.intent ?? '(no intent provided)'}\n\nTool results:\n${JSON.stringify(results, null, 2)}`,
+        maxOutputTokens: 800,
+        userId,
+      });
+      finalResult.answerText = answerText.trim();
+    } catch (err: unknown) {
+      logger.warn({ err, sessionId }, '[Playground] Answer synthesis failed — falling back to raw results');
+    }
+
     await updateSession(sessionId, { status: 'done', finalResult: JSON.stringify(finalResult) });
 
   } catch (err: unknown) {

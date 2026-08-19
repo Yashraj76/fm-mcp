@@ -23,6 +23,9 @@ export const GET = withAuth(async (_, { params, userId }) => {
       where: { serverId: params.id },
       include: {
         _count: { select: { tools: true, deployments: true } },
+        // select-only: this route returns rows unsanitized (no toSafeBranch),
+        // so never pull the full FMConnection here — it carries credentials.
+        connectionOverride: { select: { id: true, name: true, database: true } },
       },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
     });

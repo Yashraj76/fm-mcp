@@ -51,7 +51,7 @@ export default function UpdatePasswordPage() {
         </div>
 
         {message && (
-          <div className={`p-3 rounded-md text-sm ${
+          <div role="alert" aria-live="assertive" className={`p-3 rounded-md text-sm ${
             message.type === 'success' 
               ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
               : 'bg-red-500/10 text-red-400 border border-red-500/20'

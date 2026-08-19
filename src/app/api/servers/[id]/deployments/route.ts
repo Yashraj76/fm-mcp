@@ -5,13 +5,18 @@ import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { incrementVersion } from '@/lib/utils/version';
 import { log, LOG_ACTIONS } from '@/lib/logging/logger';
 import { withAuth } from "@/lib/auth/api-guard";
+import { apiError } from '@/lib/utils/api-response';
 import { logger } from '@/lib/logger'
 
 // GET /api/servers/[id]/deployments — list deployments with all fields needed by UI
 // POST /api/servers/[id]/deployments — manually create a deployment snapshot
+//   Deploys are always snapshotted from `main` (see below) — if the caller
+//   passes `branchId` for a non-main branch, reject rather than silently
+//   deploying main's state while the user believes their branch went out.
 
 const createDeploymentSchema = z.object({
   changelog: z.string().optional(),
+  branchId: z.string().optional(),
 });
 
 export const GET = withAuth(async (req, { params, userId }) => {
@@ -70,7 +75,7 @@ export const POST = withAuth(async (req, { params, userId }) => {
     try {
     const { id: serverId } = params;
     const body = await req.json().catch(() => ({}));
-    const { changelog = 'Manual deployment' } = createDeploymentSchema.parse(body);
+    const { changelog = 'Manual deployment', branchId } = createDeploymentSchema.parse(body);
 
     const server = await prisma.mcpServer.findFirst({
       where: { id: serverId, userId }
@@ -84,6 +89,17 @@ export const POST = withAuth(async (req, { params, userId }) => {
     });
     if (!mainBranch) {
       return apiNotFound('Main branch not found');
+    }
+
+    // Deploys always snapshot main's tools (below) — deploying while viewing
+    // a feature branch would silently ship main's state, not the branch's
+    // edits. Require the branch to be merged into main first.
+    if (branchId && branchId !== mainBranch.id) {
+      return apiError(
+        'Deploy to Production only deploys the main branch. Merge this branch into main first, then deploy.',
+        'DEPLOY_NOT_MAIN',
+        400,
+      );
     }
 
     const lastDeployment = await prisma.deployment.findFirst({

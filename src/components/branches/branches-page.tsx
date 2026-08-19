@@ -3,6 +3,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/utils/api-client'
+import { invalidateToolLists } from '@/lib/query-keys'
+import type { MergeConflict } from '@/lib/merge/detect-merge-conflicts'
 import { useAppStore } from '@/lib/store'
 import Link from 'next/link'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -11,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Plus,
   GitBranch,
@@ -50,6 +53,35 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import { Loader2 } from 'lucide-react'
+
+interface BranchDiffEntry {
+  toolId: string
+  name: string
+  originalName: string
+  action: string
+  overrides: string[]
+}
+
+interface BranchDiff {
+  branch: { id: string; name: string }
+  base: { id: string; name: string }
+  added: BranchDiffEntry[]
+  modified: BranchDiffEntry[]
+  deleted: BranchDiffEntry[]
+  inherited: BranchDiffEntry[]
+  summary: { added: number; modified: number; deleted: number; unchanged: number }
+}
 
 interface BranchTool {
   id: string
@@ -69,6 +101,14 @@ interface BranchItem {
   updatedAt: string
   parent: { id: string; name: string } | null
   children: { id: string }[]
+  connectionOverrideId: string | null
+  connectionOverride: { id: string; name: string; database: string } | null
+}
+
+interface ConnectionOption {
+  id: string
+  name: string
+  database: string
 }
 
 interface ServerItem {
@@ -252,8 +292,26 @@ export function BranchesPage() {
 
 
   const { data: servers = [] } = useQuery<ServerItem[]>({
-    queryKey: ['servers'],
-    queryFn: () => api.get<ServerItem[]>('/api/servers'),
+    queryKey: ['servers', 'summary'],
+    queryFn: () => api.get<ServerItem[]>('/api/servers?summary=true'),
+  })
+
+  // For the per-branch connection-override picker — any connection the user
+  // owns is eligible, not just ones already linked to this server (that's
+  // the whole point: pointing a test branch at a sandbox file elsewhere).
+  const { data: connections = [] } = useQuery<ConnectionOption[]>({
+    queryKey: ['connections', 'summary-for-branch-override'],
+    queryFn: () => api.get<ConnectionOption[]>('/api/connections?limit=200'),
+  })
+
+  const connectionOverrideMutation = useMutation({
+    mutationFn: ({ branchId, connectionOverrideId }: { branchId: string; connectionOverrideId: string | null }) =>
+      api.put<any>(`/api/branches/${branchId}`, { connectionOverrideId }),
+    onSuccess: (_data, { connectionOverrideId }) => {
+      queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
+      toast.success(connectionOverrideId ? 'Branch now points at the selected connection' : 'Branch reset to the server default connection')
+    },
+    onError: (err: any) => toast.error(err.message || 'Failed to update connection override'),
   })
 
   const { data: branches = [], isLoading, isError, error } = useQuery<BranchItem[]>({
@@ -293,27 +351,60 @@ export function BranchesPage() {
 
   const server = servers.find(s => s.id === currentServerId)
 
+  // Merge flow: the Merge button opens a preview dialog showing the branch
+  // diff against main and a changelog field; the actual merge happens from
+  // the dialog's confirm button.
+  const [mergeTarget, setMergeTarget] = useState<{ id: string; name: string } | null>(null)
+  const [mergeChangelog, setMergeChangelog] = useState('')
+  // Populated when the server reports 409 MERGE_CONFLICT — another branch
+  // already merged a change to one of these tools since this branch edited
+  // them. Shown inline with a "Merge Anyway" escape hatch (force:true).
+  const [mergeConflicts, setMergeConflicts] = useState<MergeConflict[] | null>(null)
+
+  const { data: mergeDiff, isLoading: isLoadingDiff, isError: isDiffError } = useQuery({
+    queryKey: ['branch-diff', mergeTarget?.id],
+    queryFn: () => api.get<BranchDiff>(`/api/branches/${mergeTarget!.id}/diff`),
+    enabled: !!mergeTarget,
+  })
+
   const mergeMutation = useMutation({
-    mutationFn: (branchId: string) =>
-      api.post<{ message: string }>(`/api/branches/${branchId}/merge`, {
-        changelog: `Merged branch ${branchId}`,
-      }),
+    mutationFn: ({ branchId, changelog, force }: { branchId: string; changelog: string; force?: boolean }) =>
+      api.post<{ message: string }>(`/api/branches/${branchId}/merge`, { changelog, force }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
+      // Merge creates a deployment and rewrites main's tools: refresh the
+      // server-list cards, dashboard stats, and every cached tool list.
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      queryClient.invalidateQueries({ queryKey: ['stats'] })
+      queryClient.invalidateQueries({ queryKey: ['branch-tools'] })
+      queryClient.invalidateQueries({ queryKey: ['server-tools'] })
+      setMergeTarget(null)
+      setMergeConflicts(null)
       toast.success(data.message || 'Branch merged successfully')
     },
-    onError: (err: any) => toast.error(err.message || 'Failed to merge branch'),
+    onError: (err: any) => {
+      if (err.code === 'MERGE_CONFLICT' && err.details?.conflicts) {
+        setMergeConflicts(err.details.conflicts)
+        return
+      }
+      toast.error(err.message || 'Failed to merge branch')
+    },
   })
 
-  const revertMutation = useMutation({
+  // "Reset to Main" (not a true history-based revert — it discards this
+  // branch's overrides and re-clones main's *current* tools). Named
+  // accordingly so it isn't mistaken for restoring an earlier branch state.
+  const resetToMainMutation = useMutation({
     mutationFn: (branchId: string) =>
       api.post<any>(`/api/branches/${branchId}/revert`),
-    onSuccess: () => {
+    onSuccess: (_data, branchId) => {
       queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
-      toast.success('Branch reverted successfully')
+      // Resetting rewrites this branch's tool overrides — drop its cached tool list.
+      invalidateToolLists(queryClient, currentServerId, branchId)
+      toast.success('Branch reset to main successfully')
     },
-    onError: (err: any) => toast.error(err.message || 'Failed to revert branch'),
+    onError: (err: any) => toast.error(err.message || 'Failed to reset branch to main'),
   })
 
   const archiveMutation = useMutation({
@@ -321,6 +412,8 @@ export function BranchesPage() {
       api.put<any>(`/api/branches/${branchId}`, { status: 'archived' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
+      // Server-list cards show branch counts.
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Branch archived')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to archive branch'),
@@ -331,6 +424,8 @@ export function BranchesPage() {
       api.delete<any>(`/api/branches/${branchId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['branches', currentServerId] })
+      // Server-list cards show branch counts.
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Branch deleted')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to delete branch'),
@@ -589,6 +684,36 @@ export function BranchesPage() {
                               </span>
                             )}
                           </div>
+
+                          <div className="flex items-center gap-1.5 mt-2">
+                            <Database className="size-3 text-muted-foreground shrink-0" />
+                            <span className="text-[11px] text-muted-foreground shrink-0">Connection:</span>
+                            <Select
+                              value={branch.connectionOverrideId ?? 'default'}
+                              onValueChange={(v) =>
+                                connectionOverrideMutation.mutate({
+                                  branchId: branch.id,
+                                  connectionOverrideId: v === 'default' ? null : v,
+                                })
+                              }
+                              disabled={connectionOverrideMutation.isPending}
+                            >
+                              <SelectTrigger size="sm" className="h-6 text-[11px] w-auto max-w-56 gap-1 px-2">
+                                <SelectValue placeholder="Server default" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="default" className="text-xs">Server default</SelectItem>
+                                {connections.map((c) => (
+                                  <SelectItem key={c.id} value={c.id} className="text-xs">
+                                    {c.name} ({c.database})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {branch.connectionOverrideId && (
+                              <span className="text-[10px] text-amber-500 font-medium">override active</span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
@@ -598,9 +723,13 @@ export function BranchesPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => mergeMutation.mutate(branch.id)}
+                              onClick={() => {
+                                setMergeTarget({ id: branch.id, name: branch.name })
+                                setMergeChangelog(`Merged branch ${branch.name}`)
+                                setMergeConflicts(null)
+                              }}
                               disabled={mergeMutation.isPending}
-                              title="Merge into default branch"
+                              title="Preview changes and merge into default branch"
                             >
                               <GitMerge className="size-3.5" />
                               Merge
@@ -608,10 +737,10 @@ export function BranchesPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => revertMutation.mutate(branch.id)}
-                              disabled={revertMutation.isPending}
-                              title="Revert to snapshot"
-                              aria-label="Revert branch to snapshot"
+                              onClick={() => resetToMainMutation.mutate(branch.id)}
+                              disabled={resetToMainMutation.isPending}
+                              title="Reset to Main — discards this branch's edits and re-clones main's current tools"
+                              aria-label="Reset branch to main"
                             >
                               <RotateCcw className="size-3.5" />
                             </Button>
@@ -720,6 +849,135 @@ export function BranchesPage() {
           )}
         </div>
       )}
+
+      {/* Merge preview dialog — shows the diff against main + changelog input */}
+      <Dialog open={!!mergeTarget} onOpenChange={(open) => { if (!open && !mergeMutation.isPending) { setMergeTarget(null); setMergeConflicts(null) } }}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <GitMerge className="size-4" />
+              Merge &quot;{mergeTarget?.name}&quot; into main
+            </DialogTitle>
+            <DialogDescription>
+              Review the changes this merge will apply, then confirm. Merging immediately creates a new live deployment — there's no separate deploy step after this.
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingDiff ? (
+            <div className="space-y-2 py-2">
+              <Skeleton className="h-5 w-2/3" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : isDiffError ? (
+            <p className="text-sm text-destructive py-2">Failed to load the change preview. You can still merge.</p>
+          ) : mergeDiff ? (
+            <div className="space-y-3 py-1">
+              <div className="flex items-center gap-2 flex-wrap text-xs">
+                <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/20">
+                  +{mergeDiff.summary.added} added
+                </Badge>
+                <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
+                  ~{mergeDiff.summary.modified} modified
+                </Badge>
+                <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/20">
+                  −{mergeDiff.summary.deleted} deleted
+                </Badge>
+                <Badge variant="outline" className="text-muted-foreground">
+                  {mergeDiff.summary.unchanged} unchanged
+                </Badge>
+              </div>
+
+              {mergeDiff.summary.added + mergeDiff.summary.modified + mergeDiff.summary.deleted === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  This branch has no tool changes relative to main — merging will only create a new deployment.
+                </p>
+              ) : (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto rounded-md border p-2">
+                  {mergeDiff.added.map((e) => (
+                    <div key={`a-${e.toolId}`} className="flex items-center gap-2 text-xs">
+                      <span className="text-green-500 font-mono w-3 shrink-0">+</span>
+                      <span className="truncate">{e.name}</span>
+                    </div>
+                  ))}
+                  {mergeDiff.modified.map((e) => (
+                    <div key={`m-${e.toolId}`} className="flex items-center gap-2 text-xs">
+                      <span className="text-yellow-500 font-mono w-3 shrink-0">~</span>
+                      <span className="truncate">{e.name}</span>
+                      {e.overrides.length > 0 && (
+                        <span className="text-muted-foreground truncate">({e.overrides.join(', ')})</span>
+                      )}
+                    </div>
+                  ))}
+                  {mergeDiff.deleted.map((e) => (
+                    <div key={`d-${e.toolId}`} className="flex items-center gap-2 text-xs">
+                      <span className="text-red-500 font-mono w-3 shrink-0">−</span>
+                      <span className="truncate line-through">{e.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {mergeConflicts && mergeConflicts.length > 0 && (
+            <div className="space-y-1.5 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+              <p className="text-xs font-medium text-destructive flex items-center gap-1.5">
+                <AlertCircle className="size-3.5 shrink-0" />
+                {mergeConflicts.length} tool{mergeConflicts.length > 1 ? 's' : ''} changed on main since this branch edited {mergeConflicts.length > 1 ? 'them' : 'it'}
+              </p>
+              <div className="space-y-1 max-h-32 overflow-y-auto">
+                {mergeConflicts.map((c) => (
+                  <p key={c.toolId} className="text-xs text-muted-foreground truncate">
+                    <span className="font-mono text-foreground">{c.toolName}</span> — main changed at{' '}
+                    {new Date(c.currentUpdatedAt).toLocaleString()}
+                  </p>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Merging anyway overwrites those tools with this branch's version. Cancel to review main's changes first.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="merge-changelog">Changelog</Label>
+            <Textarea
+              id="merge-changelog"
+              rows={2}
+              value={mergeChangelog}
+              onChange={(e) => setMergeChangelog(e.target.value)}
+              placeholder="Describe what this merge changes…"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { setMergeTarget(null); setMergeConflicts(null) }}
+              disabled={mergeMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant={mergeConflicts && mergeConflicts.length > 0 ? 'destructive' : 'default'}
+              onClick={() => {
+                if (!mergeTarget) return
+                mergeMutation.mutate({
+                  branchId: mergeTarget.id,
+                  changelog: mergeChangelog.trim() || `Merged branch ${mergeTarget.name}`,
+                  force: !!mergeConflicts && mergeConflicts.length > 0,
+                })
+              }}
+              disabled={mergeMutation.isPending}
+            >
+              {mergeMutation.isPending
+                ? <Loader2 className="size-4 mr-2 animate-spin" />
+                : <GitMerge className="size-4 mr-2" />}
+              {mergeConflicts && mergeConflicts.length > 0 ? 'Merge Anyway' : 'Merge branch'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

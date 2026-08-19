@@ -172,6 +172,7 @@ export async function fetchODataMetadata(
       ...(({ dispatcher, signal: AbortSignal.timeout(timeoutMs) } as any)),
     })
   } catch (e: any) {
+    await dispatcher.destroy().catch(() => {}) // release the one-shot Agent on fetch failure
     // AbortSignal timeout fires as an AbortError/TimeoutError
     const isTimeout =
       e?.name === 'TimeoutError' ||
@@ -194,6 +195,7 @@ export async function fetchODataMetadata(
   }
 
   if (!res.ok) {
+    await dispatcher.destroy().catch(() => {}) // error paths below don't read the body
     if (res.status === 401 || res.status === 403) {
       return { meta: {}, status: 'auth_error', message: `HTTP ${res.status} — check FileMaker credentials` }
     }
@@ -210,6 +212,9 @@ export async function fetchODataMetadata(
     xml = await res.text()
   } catch (e: any) {
     return { meta: {}, status: 'parse_error', message: `Failed to read $metadata response body: ${e.message}` }
+  } finally {
+    // Body consumed (or failed) — the one-shot Agent's sockets are no longer needed.
+    await dispatcher.destroy().catch(() => {})
   }
 
   if (!xml.trim()) {

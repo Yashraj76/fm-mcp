@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,6 +22,7 @@ import {
   ChevronUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { FieldMappingBuilder, mappingsToRecord, recordToMappings } from './field-mapping-builder'
 import { FieldSelector } from './field-selector'
 import { RelationshipDetector } from './relationship-detector'
@@ -30,8 +31,12 @@ import { safeParseJSON } from '@/lib/utils/safe-parse'
 
 export type StepApi = 'data-api' | 'odata'
 export type StepOperation =
-  | 'find' | 'create' | 'update' | 'delete' | 'list' | 'script'
+  | 'find' | 'create' | 'update' | 'delete' | 'get' | 'list' | 'script'
   | 'odata-get' | 'odata-batch'
+
+/** Operations that address one specific record — need a `recordId` input
+ * param rather than (or in addition to) field-mapped criteria. */
+export const RECORD_ID_OPERATIONS: StepOperation[] = ['update', 'delete', 'get']
 
 export interface ToolStep {
   stepIndex: number
@@ -55,6 +60,10 @@ interface MultiTableBuilderProps {
   /** Primary source of truth for layouts/tables/relationships */
   compiledSchema?: CompiledSchema
   onChange: (steps: ToolStep[]) => void
+  /** Constrains to exactly one FM Data API step and hides add/remove-step
+   * chrome and the strategy banner — the "Single Table" mode of the merged
+   * FileMaker tab. Auto-creates a default step if none exists yet. */
+  singleMode?: boolean
 }
 
 const OPERATION_LABELS: Record<StepOperation, string> = {
@@ -62,6 +71,7 @@ const OPERATION_LABELS: Record<StepOperation, string> = {
   create: 'Create Record',
   update: 'Update Record',
   delete: 'Delete Record',
+  get: 'Get Record by ID',
   list: 'List Records (paginated)',
   script: 'Run FM Script',
   'odata-get': 'OData GET ($filter / $expand)',
@@ -170,6 +180,7 @@ function StepEditor({
   prevStep,
   onChange,
   onDelete,
+  singleMode,
   onAutoMap,
 }: {
   step: ToolStep
@@ -180,7 +191,8 @@ function StepEditor({
   connectionId?: string
   prevStep?: ToolStep
   onChange: (s: ToolStep) => void
-  onDelete: () => void
+  onDelete?: () => void
+  singleMode?: boolean
   onAutoMap?: (
     prevExtract: string,
     prevUseAs: string,
@@ -207,8 +219,31 @@ function StepEditor({
     prevStep?.api === 'data-api' &&
     prevStep?.layout
 
-  // Convert Record<string,string> ↔ Mapping[]
-  const mappings = recordToMappings(step.fieldMappings)
+  // The row list is buffered in local state rather than derived fresh from
+  // `step.fieldMappings` every render — that Record<string,string> can't
+  // represent a row mid-edit (empty inputParam or fmField), so re-deriving
+  // on every render would make a just-added empty row vanish immediately
+  // (mappingsToRecord drops it, then recordToMappings reflects the drop).
+  // `lastEmittedRef` distinguishes "step.fieldMappings changed because we
+  // just wrote it" (ignore) from "it changed some other way" — a
+  // relationship-detector auto-map or a layout switch — in which case we
+  // do want to resync from the new record.
+  const [mappings, setMappings] = useState(() => recordToMappings(step.fieldMappings))
+  const lastEmittedRef = useRef(mappingsToRecord(mappings))
+  useEffect(() => {
+    const incoming = step.fieldMappings || {}
+    if (JSON.stringify(incoming) !== JSON.stringify(lastEmittedRef.current)) {
+      lastEmittedRef.current = incoming
+      setMappings(recordToMappings(incoming))
+    }
+  }, [step.fieldMappings])
+
+  function handleMappingsChange(next: ReturnType<typeof recordToMappings>) {
+    setMappings(next)
+    const record = mappingsToRecord(next)
+    lastEmittedRef.current = record
+    update('fieldMappings', record)
+  }
 
   return (
     <div className="border rounded-lg overflow-hidden">
@@ -220,15 +255,17 @@ function StepEditor({
         )}
         onClick={() => setExpanded(e => !e)}
       >
-        <Badge
-          variant="outline"
-          className={cn(
-            'text-xs font-mono shrink-0',
-            isOdata ? 'border-violet-500/40 text-violet-400' : 'border-blue-500/40 text-blue-400',
-          )}
-        >
-          Step {index}
-        </Badge>
+        {!singleMode && (
+          <Badge
+            variant="outline"
+            className={cn(
+              'text-xs font-mono shrink-0',
+              isOdata ? 'border-violet-500/40 text-violet-400' : 'border-blue-500/40 text-blue-400',
+            )}
+          >
+            Step {index}
+          </Badge>
+        )}
 
         {isOdata ? (
           <Globe className="size-3 text-violet-400 shrink-0" />
@@ -243,15 +280,17 @@ function StepEditor({
         </span>
 
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6 shrink-0"
-            onClick={e => { e.stopPropagation(); onDelete() }}
-            aria-label={`Delete step ${index}`}
-          >
-            <Trash2 className="size-3 text-destructive" />
-          </Button>
+          {onDelete && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 shrink-0"
+              onClick={e => { e.stopPropagation(); onDelete() }}
+              aria-label={`Delete step ${index}`}
+            >
+              <Trash2 className="size-3 text-destructive" />
+            </Button>
+          )}
           {expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
         </div>
       </div>
@@ -306,7 +345,7 @@ function StepEditor({
                 <SelectContent>
                   {(isOdata
                     ? (['odata-get', 'odata-batch'] as StepOperation[])
-                    : (['find', 'create', 'update', 'delete', 'list', 'script'] as StepOperation[])
+                    : (['find', 'create', 'update', 'delete', 'get', 'list', 'script'] as StepOperation[])
                   ).map(op => (
                     <SelectItem key={op} value={op} className="text-xs">
                       {OPERATION_LABELS[op]}
@@ -324,7 +363,7 @@ function StepEditor({
               {availableLayouts.length > 0 ? (
                 <Select
                   value={step.layout ?? ''}
-                  onValueChange={v => update('layout', v)}
+                  onValueChange={v => onChange({ ...step, layout: v, fieldMappings: {} })}
                 >
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Select layout…" />
@@ -342,7 +381,7 @@ function StepEditor({
                   className="h-8 text-xs font-mono"
                   placeholder="Layout name…"
                   value={step.layout ?? ''}
-                  onChange={e => update('layout', e.target.value)}
+                  onChange={e => onChange({ ...step, layout: e.target.value, fieldMappings: {} })}
                 />
               )}
             </div>
@@ -380,13 +419,35 @@ function StepEditor({
           {!isOdata && step.operation === 'script' && (
             <div className="space-y-1">
               <Label className="text-xs">Script Name</Label>
-              <Input
-                className="h-8 text-xs font-mono"
-                placeholder="e.g. SendWelcomeEmail"
-                value={step.scriptName ?? ''}
-                onChange={e => update('scriptName', e.target.value)}
-              />
+              {(compiledSchema?.scripts?.length ?? 0) > 0 ? (
+                <Select value={step.scriptName ?? ''} onValueChange={v => update('scriptName', v)}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="Select script…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {[...(compiledSchema?.scripts ?? [])].sort().map(s => (
+                      <SelectItem key={s} value={s} className="text-xs font-mono">{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  className="h-8 text-xs font-mono"
+                  placeholder="e.g. SendWelcomeEmail"
+                  value={step.scriptName ?? ''}
+                  onChange={e => update('scriptName', e.target.value)}
+                />
+              )}
             </div>
+          )}
+
+          {/* recordId hint — update/delete/get address one record by id,
+              which is a reserved input param, never a mapped FM field */}
+          {!isOdata && RECORD_ID_OPERATIONS.includes(step.operation) && (
+            <p className="text-[11px] text-amber-500/90 flex items-center gap-1">
+              <span className="font-mono bg-amber-500/10 px-1 rounded">recordId</span>
+              is required — it's added to this tool's inputs automatically, not mapped below.
+            </p>
           )}
 
           {/* Field Mappings (data-api, non-script) */}
@@ -395,7 +456,7 @@ function StepEditor({
               <FieldMappingBuilder
                 mappings={mappings}
                 fields={layoutFields}
-                onChange={m => update('fieldMappings', mappingsToRecord(m))}
+                onChange={handleMappingsChange}
               />
             </div>
           )}
@@ -478,8 +539,17 @@ export function MultiTableBuilder({
   serverData,
   compiledSchema,
   onChange,
+  singleMode = false,
 }: MultiTableBuilderProps) {
-  const strategy = inferStrategy(steps)
+  const strategy = singleMode ? null : inferStrategy(steps)
+
+  // Single Table mode always has exactly one step — seed a default the first
+  // time there isn't one (e.g. a brand new tool, or switching modes).
+  useEffect(() => {
+    if (singleMode && steps.length === 0) {
+      onChange([{ stepIndex: 0, api: 'data-api', operation: 'find', layout: '' }])
+    }
+  }, [singleMode, steps.length, onChange])
 
   const addStep = (api: StepApi) => {
     const next: ToolStep = {
@@ -518,7 +588,7 @@ export function MultiTableBuilder({
         </div>
       )}
 
-      {steps.length === 0 && (
+      {!singleMode && steps.length === 0 && (
         <div className="text-xs text-muted-foreground rounded-md border border-dashed p-3 space-y-1.5">
           <p className="font-medium text-foreground">Choose a multi-table strategy:</p>
           {Object.values(STRATEGY_DESCRIPTIONS).map(s => (
@@ -544,7 +614,8 @@ export function MultiTableBuilder({
               connectionId={connectionId}
               prevStep={i > 0 ? steps[i - 1] : undefined}
               onChange={updated => updateStep(i, updated)}
-              onDelete={() => deleteStep(i)}
+              onDelete={singleMode ? undefined : () => deleteStep(i)}
+              singleMode={singleMode}
               onAutoMap={(prevExtract, prevUseAs, currMappings) => {
                 const newSteps = [...steps]
                 newSteps[i - 1] = {
@@ -565,27 +636,39 @@ export function MultiTableBuilder({
         ))}
       </div>
 
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5 text-xs flex-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
-          onClick={() => addStep('data-api')}
-        >
-          <Database className="size-3" />
-          + FM Data API Step
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5 text-xs flex-1 border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
-          onClick={() => addStep('odata')}
-          disabled={(compiledSchema?.tables?.length ?? 0) === 0}
-        >
-          <Globe className="size-3" />
-          + OData Step
-        </Button>
-      </div>
+      {!singleMode && (
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs flex-1 border-blue-500/30 text-blue-400 hover:bg-blue-500/10"
+            onClick={() => addStep('data-api')}
+          >
+            <Database className="size-3" />
+            + FM Data API Step
+          </Button>
+          {/* OData steps aren't supported by the multi-step executor yet
+              (executeMultiStepTool only handles api:'data-api') — disabled
+              rather than shipping a step type that throws at run time. Use
+              the "Use OData API" toggle in Single Table mode instead. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="flex-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs w-full border-violet-500/30 text-violet-400 hover:bg-violet-500/10"
+                  disabled
+                >
+                  <Globe className="size-3" />
+                  + OData Step
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Not supported in multi-table chains yet — use the OData toggle in Single Table mode.</TooltipContent>
+          </Tooltip>
+        </div>
+      )}
     </div>
   )
 }

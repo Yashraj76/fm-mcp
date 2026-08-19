@@ -1,7 +1,6 @@
 import { prisma } from '../prisma';
 import { callAI as _callAI } from '../ai/client';
 import { CREATE_TOOLS_PROMPT } from '../ai/prompts/create-tools';
-import { seedDefaultTools } from './default-tools';
 import { safeParseJSON } from '../utils/safe-parse';
 import { sanitizeText } from '../utils/sanitizer';
 import { logger } from '../logger';
@@ -67,9 +66,6 @@ export async function runToolGenerationJob(
     }
     await appendLog(jobId, `Schema ready: ${schemaLayouts.length} layout(s), ${schemaTables.length} table(s).`);
 
-    // Seed default system tools first
-    await appendLog(jobId, 'Creating default system tools (add, subtract, average, percentage)...');
-    await seedDefaultTools(serverId);
     await prisma.toolGenerationJob.update({ where: { id: jobId }, data: { progress: 20 } });
 
     // Build AI input

@@ -10,7 +10,7 @@ npm run dev          # Next.js dev server on port 3000 (logs to dev.log)
 
 # Build & production
 npm run build        # prisma generate + next build
-npm run start        # Production server via bun standalone
+npm run start        # Production server (next start, port 3000; logs to server.log)
 
 # Database
 npm run db:push      # Apply schema changes (prisma db push)

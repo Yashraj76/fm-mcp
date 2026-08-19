@@ -108,8 +108,28 @@ const session = await prisma.playgroundSession.create({
   },
 });
 
-// Run async — pass branchId so the runner uses effective tool versions
-setImmediate(() => runPlaygroundSession(session.id, plan, resolvedServerId, branchId));
+// Run synchronously and await completion before sending the response.
+//
+// WHY: Vercel serverless functions freeze the Node.js process the moment
+// the HTTP response is sent. setImmediate / "fire-and-forget" schedules
+// work to run AFTER the response — i.e., after the process is frozen — so
+// the session would silently stay 'running' forever. maxDuration=300 gives
+// this function up to 5 minutes for the full run. branchId is passed so
+// the runner uses effective tool versions.
+try {
+  await runPlaygroundSession(session.id, plan, resolvedServerId, branchId, userId);
+} catch (err: unknown) {
+  // Safety net — the runner marks failures itself; this catches a rejection
+  // that escapes it (e.g. its own status write failing).
+  logger.error({ err, sessionId: session.id }, '[Playground] Session run error');
+  await prisma.playgroundSession.update({
+    where: { id: session.id },
+    data: {
+      status: 'error',
+      finalResult: JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
+    },
+  }).catch(() => {});
+}
 
 return apiSuccess({
   sessionId: session.id,

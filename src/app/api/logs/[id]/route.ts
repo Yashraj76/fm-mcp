@@ -2,16 +2,11 @@ import { prisma } from '@/lib/prisma';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { withAuth } from "@/lib/auth/api-guard";
 import { apiSuccess, apiNotFound } from '@/lib/utils/api-response';
+import { buildLogEntryAccessWhere } from '@/lib/logging/logger';
 
 export const GET = withAuth(async (_, { params, userId }) => {
     const entry = await prisma.activityLog.findFirst({
-      where: {
-        id: (await params).id,
-        OR: [
-          { serverId: null },
-          { server: { userId } }
-        ]
-      },
+      where: buildLogEntryAccessWhere((await params).id, userId),
       include: { server: true }
     });
     if (!entry) {

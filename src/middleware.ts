@@ -1,61 +1,58 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { updateSession } from '@/lib/supabase/proxy';
-import { classifyRequest, checkRateLimit, RateLimitConfigError } from '@/lib/rate-limit';
+import {
+  classifyRequest,
+  checkRateLimit,
+  extractClientIp,
+  parseTrustedProxyCount,
+  rateLimitFailureResult,
+} from '@/lib/rate-limit';
 
 export async function middleware(request: NextRequest) {
-  const ip = extractIp(request);
+  // Derive the client IP from a trusted position — platform IP first, then
+  // the X-Forwarded-For entry contributed by our own proxy (right-most after
+  // TRUSTED_PROXY_COUNT hops), never the client-spoofable left-most entry.
+  const ip = extractClientIp({
+    platformIp: (request as NextRequest & { ip?: string }).ip,
+    forwardedFor: request.headers.get('x-forwarded-for'),
+    realIp: request.headers.get('x-real-ip'),
+    trustedProxyCount: parseTrustedProxyCount(process.env.TRUSTED_PROXY_COUNT),
+  });
   const tier = classifyRequest(request.nextUrl.pathname, request.method);
 
   if (tier !== 'none' && ip) {
+    let allowed = true;
+    let retryAfterSeconds = 0;
     try {
-      const { allowed, retryAfterSeconds } = await checkRateLimit(ip, tier);
-      if (!allowed) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Too many requests. Please slow down.',
-            code: 'RATE_LIMITED',
-            retryAfter: retryAfterSeconds,
-          },
-          {
-            status: 429,
-            headers: {
-              'Retry-After': String(retryAfterSeconds),
-              'Content-Type': 'application/json',
-            },
-          },
-        );
-      }
+      ({ allowed, retryAfterSeconds } = await checkRateLimit(ip, tier));
     } catch (err) {
-      if (err instanceof RateLimitConfigError) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Rate limiter is not configured correctly for this environment.',
-            code: err.code,
+      // checkRateLimit handles backend errors itself; this is a last-resort
+      // guard. Auth fails closed (brute-force protection must not silently
+      // disappear); other tiers fail open so an unexpected limiter bug can't
+      // take down the app.
+      console.error('[kilink] rate-limit middleware error:', err);
+      ({ allowed, retryAfterSeconds } = rateLimitFailureResult(tier));
+    }
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Too many requests. Please slow down.',
+          code: 'RATE_LIMITED',
+          retryAfter: retryAfterSeconds,
+        },
+        {
+          status: 429,
+          headers: {
+            'Retry-After': String(retryAfterSeconds),
+            'Content-Type': 'application/json',
           },
-          { status: 500 },
-        );
-      }
-      // Other unexpected errors — let the request through rather than blocking all traffic.
-      // The error was already logged inside checkRateLimit.
+        },
+      );
     }
   }
 
   return updateSession(request);
-}
-
-/**
- * Extract the real client IP, preferring Caddy / reverse-proxy headers.
- * Returns an empty string if the IP cannot be determined; callers skip
- * rate limiting in that case to avoid false positives.
- */
-function extractIp(req: NextRequest): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) return forwarded.split(',')[0].trim();
-  // req.ip is available in Vercel deployments and Next.js standalone
-  const ip = (req as NextRequest & { ip?: string }).ip;
-  return ip ?? '';
 }
 
 export const config = {

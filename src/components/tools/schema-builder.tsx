@@ -238,35 +238,67 @@ interface PropertyRowProps {
   availableFields?: string[]
 }
 
+const CUSTOM_FIELD_VALUE = '__custom__'
+
 function PropertyRow({ property, index, onChange, onRemove, canRemove, availableFields }: PropertyRowProps) {
+  const hasFields = !!availableFields && availableFields.length > 0
+  // Free text is only the fallback once fields are known — start in "custom"
+  // mode only when the current name doesn't match a known field (e.g. a
+  // computed/legacy name), so existing definitions don't jump underneath the
+  // user's cursor.
+  const [customMode, setCustomMode] = useState(() => !hasFields || !availableFields!.includes(property.name))
+
   return (
     <div className="group rounded-lg border bg-muted/20 p-3 space-y-2">
       <div className="flex items-start gap-2">
         <div className="flex-1 grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Name</Label>
-            <div className="flex">
-              <Input
-                value={property.name}
-                onChange={(e) => onChange(index, { name: e.target.value })}
-                className={cn("h-8 text-xs font-mono", availableFields && availableFields.length > 0 ? "rounded-r-none border-r-0 focus-visible:z-10" : "")}
-                placeholder="property_name"
-              />
-              {availableFields && availableFields.length > 0 && (
-                <Select onValueChange={(v) => onChange(index, { name: v })}>
-                  <SelectTrigger 
-                    className="w-8 h-8 px-0 rounded-l-none bg-muted/20 border-l border-input flex items-center justify-center flex-none focus:ring-0 focus:ring-offset-0 focus:z-10"
-                    aria-label="Select layout field"
+            {hasFields && !customMode ? (
+              <Select
+                value={availableFields!.includes(property.name) ? property.name : CUSTOM_FIELD_VALUE}
+                onValueChange={(v) => {
+                  if (v === CUSTOM_FIELD_VALUE) {
+                    setCustomMode(true)
+                    return
+                  }
+                  onChange(index, { name: v })
+                }}
+              >
+                <SelectTrigger className="h-8 text-xs font-mono">
+                  <SelectValue placeholder="Select a field" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableFields!.map(f => (
+                    <SelectItem key={f} value={f} className="font-mono text-xs">{f}</SelectItem>
+                  ))}
+                  <SelectItem value={CUSTOM_FIELD_VALUE} className="text-xs text-muted-foreground">
+                    Custom name…
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="flex">
+                <Input
+                  value={property.name}
+                  onChange={(e) => onChange(index, { name: e.target.value })}
+                  className={cn("h-8 text-xs font-mono", hasFields ? "rounded-r-none border-r-0 focus-visible:z-10" : "")}
+                  placeholder="property_name"
+                  autoFocus={hasFields}
+                />
+                {hasFields && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCustomMode(false)}
+                    className="h-8 px-2 rounded-l-none border-l-0 text-xs text-muted-foreground shrink-0"
                   >
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableFields.map(f => (
-                      <SelectItem key={f} value={f}>{f}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
+                    Pick field
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Type</Label>

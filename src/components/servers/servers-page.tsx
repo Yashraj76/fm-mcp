@@ -37,10 +37,9 @@ interface ServerFromAPI {
   description: string | null
   version: string
   status: string
-  connections: { connection: { id: string; name: string; host: string; status: string; database: string }; fileNames: string; isActive: boolean }[]
-  branches: { id: string; name: string; status: string; isDefault: boolean }[]
-  tools: { id: string; name: string; isEnabled: boolean; category: string | null }[]
-  deployments: { id: string; version: string; status: string; toolCount: number; changelog: string | null; deployedAt: string | null; createdAt: string }[]
+  connections: { isActive: boolean }[]
+  tools: { isEnabled: boolean }[]
+  deployments: { status: string }[]
   _count: { tools: number; deployments: number; branches: number; connections: number }
   createdAt: string
   updatedAt: string
@@ -85,8 +84,8 @@ export function ServersPage() {
   const [serverToDelete, setServerToDelete] = useState<ServerFromAPI | null>(null)
 
   const { data: servers = [], isLoading, isError, error } = useQuery<ServerFromAPI[]>({
-    queryKey: ['servers'],
-    queryFn: () => api.get<ServerFromAPI[]>('/api/servers'),
+    queryKey: ['servers', 'summary'],
+    queryFn: () => api.get<ServerFromAPI[]>('/api/servers?summary=true'),
     retry: 1,
   })
 

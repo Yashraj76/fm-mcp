@@ -37,6 +37,7 @@ export function validateToolForSave(tool: any): ToolValidationError[] {
   const hcRaw =
     typeof tool.handlerConfig === 'string' ? tool.handlerConfig : JSON.stringify(tool.handlerConfig ?? {})
   const hc = safeParseJSON<any>(hcRaw, null)
+  const steps: any[] = hc && Array.isArray(hc.steps) ? hc.steps : []
 
   if (!hc) {
     errors.push({ field: 'handlerConfig', message: 'Handler config is invalid JSON' })
@@ -53,7 +54,7 @@ export function validateToolForSave(tool: any): ToolValidationError[] {
     if (
       ['find', 'create', 'update', 'delete', 'list', 'get'].includes(tool.fmMethod) &&
       !hc.layout &&
-      !(Array.isArray(hc.steps) && hc.steps[0]?.layout)
+      !(steps.length > 0 && steps[0]?.layout)
     ) {
       errors.push({
         field: 'handlerConfig.layout',
@@ -62,17 +63,37 @@ export function validateToolForSave(tool: any): ToolValidationError[] {
     }
   }
 
-  // recordId required in inputSchema for update/delete/get
-  if (['update', 'delete', 'get'].includes(tool.fmMethod)) {
-    const inputSchemaRaw =
-      typeof tool.inputSchema === 'string' ? tool.inputSchema : JSON.stringify(tool.inputSchema ?? {})
-    const inputSchema = safeParseJSON<any>(inputSchemaRaw, { properties: {} })
-    if (!inputSchema?.properties?.recordId) {
-      errors.push({
-        field: 'inputSchema',
-        message: 'update/delete/get tools must have recordId in inputSchema.properties',
-      })
-    }
+  const inputSchemaRaw =
+    typeof tool.inputSchema === 'string' ? tool.inputSchema : JSON.stringify(tool.inputSchema ?? {})
+  const inputSchema = safeParseJSON<any>(inputSchemaRaw, { properties: {} })
+  const inputProps = inputSchema?.properties ?? {}
+
+  // recordId required whenever the tool — or any step, for multi-table tools
+  // where the top-level fmMethod is 'sequential-multi-table' rather than the
+  // operation itself — targets one record by id.
+  const needsRecordId =
+    ['update', 'delete', 'get'].includes(tool.fmMethod) ||
+    steps.some(s => ['update', 'delete', 'get'].includes(s?.operation))
+  if (needsRecordId && !inputProps.recordId) {
+    errors.push({
+      field: 'inputSchema',
+      message: 'update/delete/get tools must have recordId in inputSchema.properties',
+    })
+  }
+
+  // Every fieldMappings key (flat shape or per-step) must be a declared input
+  // param — the tool dialog generates inputSchema FROM fieldMappings, so a
+  // mismatch here means hand-edited JSON or AI-generated output drifted.
+  const mappedKeys = new Set<string>([
+    ...Object.keys(hc?.fieldMappings || {}),
+    ...steps.flatMap(s => Object.keys(s?.fieldMappings || {})),
+  ])
+  const missingParams = [...mappedKeys].filter(k => !inputProps[k])
+  if (missingParams.length > 0) {
+    errors.push({
+      field: 'inputSchema',
+      message: `fieldMappings reference input param(s) not declared in inputSchema: ${missingParams.join(', ')}`,
+    })
   }
 
   return errors

@@ -5,6 +5,7 @@ import { callAI } from '@/lib/ai/client'
 import { SINGLE_TOOL_FROM_PROMPT, FLOW_TOOLS_FROM_PROMPT } from '@/lib/ai/prompts/prompt-tool-from-prompt'
 import { normalizeTool } from '@/lib/tools/normalize-tool'
 import { validateToolForSave } from '@/lib/tools/validate-tool'
+import { deriveInputSchema, reverseDeriveExtraParams } from '@/lib/tools/extra-params'
 import { resolveGenerationConnection } from '@/lib/tools/resolve-generation-connection'
 import { withAuth } from "@/lib/auth/api-guard";
 import { safeParseJSON } from '@/lib/utils/safe-parse';
@@ -181,6 +182,20 @@ for (const rawTool of tools) {
 
   try {
     const normalized = normalizeTool({ ...t, isAiGenerated: true })
+
+    // Regenerate inputSchema from the tool's own fieldMappings (plus
+    // whatever non-mapped "extra" params the model declared, e.g.
+    // recordId/limit/offset) — the prompt tells the model to keep
+    // fieldMappings and inputSchema in sync, but nothing enforces that, so
+    // drift would otherwise surface only as a silent runtime bug.
+    {
+      const hcForSchema = safeParseJSON<Record<string, any>>(normalized.handlerConfig, {})
+      const steps = Array.isArray(hcForSchema.steps) ? hcForSchema.steps : []
+      const originalInputSchema = safeParseJSON<any>(normalized.inputSchema, { properties: {} })
+      const extraParams = reverseDeriveExtraParams(originalInputSchema, steps)
+      normalized.inputSchema = JSON.stringify(deriveInputSchema(steps, extraParams))
+    }
+
     const validationErrors = validateToolForSave(normalized)
 
     if (validationErrors.length > 0) {

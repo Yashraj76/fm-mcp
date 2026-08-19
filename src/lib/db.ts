@@ -24,7 +24,14 @@ function createPrismaClient(): PrismaClient {
     )
   }
 
+  // Add pgBouncer-friendly params: short connect timeout + retry on closed
+  // connections so the 15-minute hang (Error { kind: Closed }) never recurs.
+  const urlWithParams = url.includes('?')
+    ? `${url}&connect_timeout=10&pool_timeout=10`
+    : `${url}?connect_timeout=10&pool_timeout=10`
+
   return new PrismaClient({
+    datasources: { db: { url: urlWithParams } },
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
   })
 }

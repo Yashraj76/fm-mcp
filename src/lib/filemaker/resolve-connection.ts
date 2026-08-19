@@ -7,6 +7,9 @@ type ConnectionWithFM = FMConnectionServer & { connection: FMConnection }
  * handlerConfig.connectionId and the server's linked connections.
  *
  * Rules:
+ *  - the branch has a connectionOverride → use it, unconditionally (lets a
+ *    test/feature branch redirect every tool call to a sandbox file without
+ *    touching each tool's handlerConfig.connectionId)
  *  - connectionId is set AND found  → use it
  *  - connectionId is set AND NOT found → throw (wrong/unlinked connection)
  *  - connectionId is absent AND server has exactly 1 connection → use it (unambiguous)
@@ -16,8 +19,13 @@ type ConnectionWithFM = FMConnectionServer & { connection: FMConnection }
 export function resolveToolConnection(
   connectionId: string | null | undefined,
   serverConnections: ConnectionWithFM[],
-  toolName: string
+  toolName: string,
+  branchConnectionOverride?: FMConnection | null,
 ): FMConnection {
+  if (branchConnectionOverride) {
+    return branchConnectionOverride
+  }
+
   if (connectionId) {
     const found = serverConnections.find((c) => c.connectionId === connectionId)?.connection
     if (!found) {

@@ -74,7 +74,7 @@ kilink logs a warning at startup when either bypass is active.
 
 ## Rate limiting
 
-kilink applies per-IP rate limits using Upstash Redis:
+kilink applies per-IP rate limits:
 
 | Route type | Limit |
 |------------|-------|
@@ -83,11 +83,18 @@ kilink applies per-IP rate limits using Upstash Redis:
 | Read API routes | Moderate |
 | Mutation API routes | Conservative |
 
-### Required production env vars
+### ⚠️ Temporary: in-memory rate limiting (no Redis required)
 
-`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` **must** be set in production. kilink refuses to start distributed rate limiting without them — if they are absent at runtime, every request returns a `500 RATE_LIMIT_CONFIG_ERROR` response rather than silently falling back to per-process memory limits (which are reset on every deploy and bypassed by multiple instances).
+Upstash Redis is **currently optional**, including in production. When `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are absent, kilink falls back to a **per-instance in-memory limiter** instead of failing requests.
 
-In development and test environments, kilink falls back to an in-memory sliding-window limiter and logs a warning.
+**Security tradeoff — read before relying on this:**
+> Production currently uses per-instance in-memory rate limiting when Redis is not configured. This is acceptable only for beta/low traffic. Each Vercel instance keeps its own counters (not shared across instances/regions) and counters reset on every deploy/cold start, so the effective limit is multiplied by instance count and brute-force protection is weaker than the distributed Redis limits documented above. **Re-enable distributed Redis rate limiting before public/large-scale launch.**
+
+This is a deliberate, temporary decision to unblock deploys that don't have Upstash provisioned — it is not a claim that rate limiting is distributed.
+
+### Optional: distributed rate limiting via Upstash Redis
+
+If both Upstash env vars are present, kilink automatically uses distributed Redis-backed rate limiting instead of the in-memory fallback — no code changes needed.
 
 **Set up Upstash Redis:**
 1. Create a free database at [upstash.com](https://upstash.com).
@@ -97,6 +104,8 @@ In development and test environments, kilink falls back to an in-memory sliding-
    UPSTASH_REDIS_REST_URL=https://<id>.upstash.io
    UPSTASH_REDIS_REST_TOKEN=<token>
    ```
+
+**Follow-up task:** provision Upstash Redis and confirm the `redis` mode is active (check startup logs for the `RATE_LIMIT` warning — its absence means Redis is in use) before public/large-scale launch.
 
 ---
 
@@ -109,7 +118,7 @@ Before going to production, verify:
 - [ ] `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set
 - [ ] `MCP_DEV_BYPASS` is **not** set
 - [ ] `INTERNAL_TEST_SECRET` is **not** set (or set to a strong random value, never the old `mcp-self-test-secret` fallback)
-- [ ] `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set (required — missing vars return 500 on all requests)
+- [ ] `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set (optional for now — see [Rate limiting](#rate-limiting); without them, production uses a temporary in-memory rate limiter, acceptable for beta/low traffic only)
 
 ---
 

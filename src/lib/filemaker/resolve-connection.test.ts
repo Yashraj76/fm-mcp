@@ -164,6 +164,34 @@ async function runTests() {
     console.log('  ✓ Throws when server has no connections at all')
   }
 
+  // ── 12. Branch connectionOverride wins over a matching connectionId ─────────
+  console.log('\nTesting: branch connectionOverride wins even when connectionId matches a real connection')
+  {
+    const sandbox = { ...connC.connection, id: 'sandbox-conn' }
+    const result = resolveToolConnection('conn-a', [connA, connB], 'my_tool', sandbox as any)
+    assert.strictEqual(result.id, 'sandbox-conn', 'Override must win over handlerConfig.connectionId')
+    console.log('  ✓ Branch override redirects the tool away from its own connectionId')
+  }
+
+  // ── 13. Branch connectionOverride wins even on a 0-connection server ────────
+  console.log('\nTesting: branch connectionOverride wins even when the server has zero connections')
+  {
+    const sandbox = { ...connC.connection, id: 'sandbox-conn' }
+    const result = resolveToolConnection(undefined, [], 'my_tool', sandbox as any)
+    assert.strictEqual(result.id, 'sandbox-conn')
+    console.log('  ✓ Override bypasses the "no connections" throw entirely')
+  }
+
+  // ── 14. null/undefined override falls through to normal resolution ─────────
+  console.log('\nTesting: null or undefined override falls through to normal resolution')
+  {
+    const resultNull = resolveToolConnection('conn-a', [connA, connB], 'my_tool', null)
+    assert.strictEqual(resultNull.id, 'conn-a')
+    const resultUndefined = resolveToolConnection('conn-a', [connA, connB], 'my_tool', undefined)
+    assert.strictEqual(resultUndefined.id, 'conn-a')
+    console.log('  ✓ Falsy override values do not change existing resolution behavior')
+  }
+
   console.log('\n🎉 ALL CONNECTION ROUTING TESTS PASSED! 🎉')
 }
 

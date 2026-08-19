@@ -63,9 +63,10 @@ GET /fmi/odata/v4/{db}/{Table}?$filter=Field eq 'value'&$expand=RelatedTable
 4. inputSchema only contains user-facing inputs — never internal extracted fields.
 5. Description is written for an AI agent — describe the BUSINESS action and when to use the tool.
 6. required: only truly mandatory fields. Optional filters/limits are never required.
-7. For update/delete: always include "recordId" as required.
+7. For update/delete/get: always include "recordId" as required.
 8. Use multi-table strategy only if the user's request clearly needs data from multiple layouts.
-9. Return ONLY the JSON array containing exactly one tool object. No prose, no markdown.
+9. inputSchema.properties MUST be exactly the union of every step's fieldMappings keys plus any reserved/extra params you add ("recordId", "limit", "offset", "sort", ...) — no more, no less. Never put "recordId", "limit", "offset", or "sort" as a fieldMappings value; they are reserved runtime params the executor reads directly off the request body, not FileMaker fields.
+10. Return ONLY the JSON array containing exactly one tool object. No prose, no markdown.
 
 ## REQUIRED FIELDS — Every Tool MUST Include ALL of These
 
@@ -194,10 +195,11 @@ Generate 3–8 tools that together make the workflow completable by an AI agent 
 3. inputSchema only contains user-facing inputs — never internal extracted fields.
 4. Descriptions are written for an AI agent — describe BUSINESS actions and when to use each tool.
 5. required: only truly mandatory fields. Optional filters/limits are never required.
-6. For update/delete: always include "recordId" as required.
+6. For update/delete/get: always include "recordId" as required.
 7. Use multi-table strategy only when the workflow genuinely requires data from multiple layouts.
 8. Tools must cover the full workflow — don't stop at just lookups.
-9. Return ONLY the JSON array. No prose, no markdown, no explanation.
+9. inputSchema.properties MUST be exactly the union of every step's fieldMappings keys plus any reserved/extra params you add ("recordId", "limit", "offset", "sort", ...) — no more, no less. Never put "recordId", "limit", "offset", or "sort" as a fieldMappings value; they are reserved runtime params the executor reads directly off the request body, not FileMaker fields.
+10. Return ONLY the JSON array. No prose, no markdown, no explanation.
 
 ## REQUIRED FIELDS — Every Tool MUST Include ALL of These
 

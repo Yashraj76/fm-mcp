@@ -3,6 +3,7 @@ import { normalizeTool } from '@/lib/tools/normalize-tool';
 import { validateToolForSave } from '@/lib/tools/validate-tool';
 import { createToolWithBranch } from '@/lib/tools/create-tool-with-branch';
 import { resolveSaveConnectionId } from '@/lib/tools/resolve-save-connection';
+import { deriveInputSchema, reverseDeriveExtraParams } from '@/lib/tools/extra-params';
 import { withAuth } from "@/lib/auth/api-guard";
 import { apiSuccess, apiNotFound, apiValidationFailed, apiServerError, apiError } from '@/lib/utils/api-response';
 import { safeParseJSON } from '@/lib/utils/safe-parse';
@@ -77,6 +78,19 @@ export const POST = withAuth(async (req, { params, userId }) => {
 
         // Normalize — fills missing fmMethod, category, inputSchema, handlerConfig fields
         const toolDef = normalizeTool(prepped);
+
+        // Regenerate inputSchema from the tool's own fieldMappings (plus
+        // whatever non-mapped "extra" params the model declared, e.g.
+        // recordId/limit/offset) — the prompt tells the model to keep
+        // fieldMappings and inputSchema in sync, but nothing enforces that,
+        // so drift would otherwise surface only as a silent runtime bug.
+        {
+          const hcForSchema = safeParseJSON<Record<string, any>>(toolDef.handlerConfig, {});
+          const steps = Array.isArray(hcForSchema.steps) ? hcForSchema.steps : [];
+          const originalInputSchema = safeParseJSON<any>(toolDef.inputSchema, { properties: {} });
+          const extraParams = reverseDeriveExtraParams(originalInputSchema, steps);
+          toolDef.inputSchema = JSON.stringify(deriveInputSchema(steps, extraParams));
+        }
 
         // Validate semantic correctness before saving
         const validationErrors = validateToolForSave(toolDef);

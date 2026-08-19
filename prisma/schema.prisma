@@ -65,6 +65,7 @@ model FMConnection {
   schemaCache   FMSchemaCache[]
   browsedSchema BrowsedSchema?
   relationshipGraph RelationshipGraph?
+  branchOverrides Branch[] @relation("BranchConnectionOverride")
 
   @@index([userId])
 }
@@ -181,11 +182,20 @@ model Branch {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  // Optional per-branch data-connection override — e.g. point a "test"
+  // branch at a sandbox FileMaker file instead of the server's default
+  // connection. Falls back to the server's connection(s) when unset. Applies
+  // to every tool execution on this branch regardless of the tool's own
+  // handlerConfig.connectionId — see resolveToolConnection().
+  connectionOverrideId String?
+  connectionOverride   FMConnection? @relation("BranchConnectionOverride", fields: [connectionOverrideId], references: [id], onDelete: SetNull)
+
   tools         BranchTool[]
   deployments   Deployment[]
   logs          ActivityLog[]
 
   @@unique([serverId, name])
+  @@index([connectionOverrideId])
 }
 
 model BranchTool {
@@ -196,6 +206,10 @@ model BranchTool {
   tool          Tool     @relation(fields: [toolId], references: [id], onDelete: Cascade)
   action        String   @default("inherited")  // "inherited"|"modified"|"added"|"deleted"
   overrideData  String?  // JSON: local branch overrides to the tool (description, schema, config)
+  // Tool.updatedAt at the moment this override was last written — lets merge
+  // detect whether the base tool changed (e.g. via another branch's merge)
+  // since this branch's edit was made, so a conflicting overwrite isn't silent.
+  baseUpdatedAt DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -213,6 +227,10 @@ model Tool {
   category      String?
   inputSchema   String
   outputSchema  String?
+  // Dot-path (e.g. "response.data[0].fieldData") projecting the raw FM/OData
+  // response before it's returned to the MCP client. Runtime-effective, unlike
+  // outputSchema which is documentation-only. Null/empty = return unprojected.
+  outputSelector String?
   handlerConfig String
   fmLayout      String?
   fmScript      String?
@@ -272,6 +290,9 @@ model Deployment {
   logs          ActivityLog[]
 
   @@index([branchId])
+  // Hot path: deployments list, merge/rollback "supersede live" updateMany,
+  // and dashboard counts all filter by serverId (often with isLive).
+  @@index([serverId])
 }
 
 // ============ ACTIVITY LOGS ============
@@ -326,6 +347,9 @@ model AiSuggestion {
   proposedConfig String
   status         String   @default("pending")
   createdAt      DateTime @default(now())
+
+  // Dashboard counts filter by serverId (IN list) + status.
+  @@index([serverId])
 }
 
 // ============ APP SETTINGS (singleton row id="singleton") ============
@@ -373,6 +397,9 @@ model ToolGenerationJob {
   createdAt   DateTime @default(now())
 
   @@index([serverId])
+  // generate-tools duplicate-job check: { userId, serverId, status IN (...) },
+  // and the status route's { userId, serverId } lookup uses the prefix.
+  @@index([userId, serverId, status])
 }
 
 // ============ PLAYGROUND SESSION ============
@@ -389,4 +416,8 @@ model PlaygroundSession {
   status        String   @default("running") // "running"|"done"|"error"
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  // Session lookups are scoped by userId; serverId covers per-server history.
+  @@index([userId])
+  @@index([serverId])
 }

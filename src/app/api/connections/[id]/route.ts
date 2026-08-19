@@ -7,19 +7,27 @@ import { getFMConnection } from '@/lib/db/user-scoped'
 import { connectionUpdateAffectsSchema, invalidateConnectionSchemaCache } from '@/lib/db/schema-cache'
 import { buildConnectionUpdatePayload } from '@/lib/db/connection-update-payload'
 import { logger } from '@/lib/logger'
+import { assertPublicHost } from '@/lib/net/ssrf-guard'
 
 const updateConnectionSchema = z.object({
   name: z.string().min(1).optional(),
-  host: z.string().min(1).optional(),
+  // SSRF guard: reject loopback/private/link-local/metadata hosts, checked
+  // again after DNS resolution. Requires parseAsync. Only runs when host is present.
+  host: z.string().min(1).superRefine(async (host, ctx) => {
+    try {
+      await assertPublicHost(host)
+    } catch (e) {
+      ctx.addIssue({ code: 'custom', message: e instanceof Error ? e.message : 'Host is not allowed' })
+    }
+  }).optional(),
   port: z.number().int().min(1).max(65535).optional(),
   database: z.string().min(1).optional(),
   username: z.string().min(1).optional(),
   // Empty string means "leave current password unchanged" — do not require min(1).
   password: z.string().optional(),
-  authType: z.string().optional(),
-  clientId: z.string().optional().nullable(),
-  // Empty string means "leave current clientSecret unchanged".
-  clientSecret: z.string().optional().nullable(),
+  // Basic is the only auth type FileMakerClient.login() implements — see the
+  // create schema in ../route.ts.
+  authType: z.literal('basic', 'Only Basic authentication is supported').optional(),
   sslVerify: z.boolean().optional(),
 })
 
@@ -63,15 +71,15 @@ export const PUT = withAuth(async (request, { params, userId }) => {
   try {
     const { id } = await params
     const body = await request.json()
-    const parsed = updateConnectionSchema.parse(body)
+    const parsed = await updateConnectionSchema.parseAsync(body)
 
     const connection = await getFMConnection(id, userId)
     if (!connection) {
       return NextResponse.json({ success: false, error: 'Connection not found', code: 'NOT_FOUND' }, { status: 404 })
     }
 
-    // buildConnectionUpdatePayload excludes password/clientSecret when blank so
-    // existing encrypted values are preserved when the user leaves those fields empty.
+    // buildConnectionUpdatePayload excludes password when blank so the
+    // existing encrypted value is preserved when the user leaves the field empty.
     const dataToUpdate = buildConnectionUpdatePayload(parsed, encrypt)
 
     const schemaAffected = connectionUpdateAffectsSchema(parsed)
