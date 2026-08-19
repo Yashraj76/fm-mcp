@@ -1,5 +1,5 @@
 import assert from 'assert';
-import { buildActivityLogData, LOG_ACTIONS, type LogOptions } from './logger';
+import { buildActivityLogData, buildLogEntryAccessWhere, LOG_ACTIONS, type LogOptions } from './logger';
 import { buildApiKeyActivityData, type ApiKeyActivityArgs } from '../mcp/activity';
 
 // ── buildActivityLogData ───────────────────────────────────────────────────────
@@ -206,12 +206,67 @@ async function testBuildApiKeyActivityData() {
   }
 }
 
+// ── buildLogEntryAccessWhere ──────────────────────────────────────────────────
+
+// Minimal evaluator mirroring Prisma's semantics for the specific filters the
+// where-clause uses, so we can assert who can and cannot match a given row.
+interface LogRow { id: string; serverId: string | null; actorUserId: string | null; serverOwnerId?: string }
+
+function rowMatchesWhere(row: LogRow, where: ReturnType<typeof buildLogEntryAccessWhere>): boolean {
+  if (row.id !== where.id) return false;
+  return where.OR.some((cond) => {
+    if ('serverId' in cond) {
+      return row.serverId === cond.serverId && row.actorUserId === cond.actorUserId;
+    }
+    return row.serverId !== null && row.serverOwnerId === cond.server.userId;
+  });
+}
+
+async function testBuildLogEntryAccessWhere() {
+  console.log('\nTesting buildLogEntryAccessWhere...\n');
+
+  // 14. Null-server branch is scoped to the acting user
+  {
+    const where = buildLogEntryAccessWhere('log-1', 'user-a');
+    assert.deepStrictEqual(where.OR[0], { serverId: null, actorUserId: 'user-a' },
+      'global-log branch must require actorUserId — a bare { serverId: null } leaks all global logs');
+    assert.deepStrictEqual(where.OR[1], { server: { userId: 'user-a' } });
+    console.log('  ✓ null-server branch requires actorUserId = acting user');
+  }
+
+  // 15. Scenario — user B cannot fetch user A's null-server (global) log
+  {
+    const globalLogOfUserA: LogRow = { id: 'log-1', serverId: null, actorUserId: 'user-a' };
+    assert.strictEqual(rowMatchesWhere(globalLogOfUserA, buildLogEntryAccessWhere('log-1', 'user-b')), false,
+      "user B must NOT match user A's global log");
+    assert.strictEqual(rowMatchesWhere(globalLogOfUserA, buildLogEntryAccessWhere('log-1', 'user-a')), true,
+      'user A must still match their own global log');
+    console.log("  ✓ scenario: user B cannot fetch user A's null-server log; user A can");
+  }
+
+  // 16. Null-server log with no actor (MCP/API-key writes) matches nobody via the global branch
+  {
+    const anonGlobalLog: LogRow = { id: 'log-2', serverId: null, actorUserId: null };
+    assert.strictEqual(rowMatchesWhere(anonGlobalLog, buildLogEntryAccessWhere('log-2', 'user-a')), false);
+    console.log('  ✓ actorless global log is not exposed to arbitrary users');
+  }
+
+  // 17. Server-scoped logs remain visible to the server owner only
+  {
+    const serverLog: LogRow = { id: 'log-3', serverId: 'srv-1', actorUserId: 'user-a', serverOwnerId: 'user-a' };
+    assert.strictEqual(rowMatchesWhere(serverLog, buildLogEntryAccessWhere('log-3', 'user-a')), true, 'owner matches');
+    assert.strictEqual(rowMatchesWhere(serverLog, buildLogEntryAccessWhere('log-3', 'user-b')), false, 'non-owner does not');
+    console.log('  ✓ server-scoped logs visible to server owner only');
+  }
+}
+
 // ── runner ────────────────────────────────────────────────────────────────────
 
 async function runTests() {
   console.log('🚀 Starting Activity Log Tests...\n');
   await testBuildActivityLogData();
   await testBuildApiKeyActivityData();
+  await testBuildLogEntryAccessWhere();
   console.log('\n🎉 ALL ACTIVITY LOG TESTS PASSED! 🎉\n');
 }
 

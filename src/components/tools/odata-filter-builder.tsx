@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { type ODataTable } from '@/hooks/use-compiled-schema'
+import { type ODataTable, type RelationshipEdge } from '@/hooks/use-compiled-schema'
 import { fmFieldToParamName } from '@/lib/utils/field-name-utils'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 const ODATA_OPERATORS = [
   { value: 'eq', label: 'equals (eq)' },
@@ -26,6 +27,8 @@ interface FilterClause {
 
 interface ODataFilterBuilderProps {
   tables: ODataTable[]
+  /** Used to constrain $expand to tables with a real navigation property. */
+  relationships?: RelationshipEdge[]
   table: string
   filterExpression: string
   expandTables: string[]
@@ -36,6 +39,7 @@ interface ODataFilterBuilderProps {
 
 export function ODataFilterBuilder({
   tables,
+  relationships = [],
   table,
   filterExpression,
   expandTables,
@@ -48,6 +52,15 @@ export function ODataFilterBuilder({
 
   const selectedTable = tables.find(t => t.name === table)
   const tableFields = selectedTable?.fields ?? []
+
+  // A table is only $expand-able from `table` if a real navigation property
+  // (RelationshipGraph edge) connects them — otherwise FileMaker's OData
+  // service returns a runtime error for the expand.
+  const relatedTableNames = new Set(
+    relationships
+      .filter(r => r.usableInTools && (r.fromLayout === table || r.toLayout === table))
+      .map(r => (r.fromLayout === table ? r.toLayout : r.fromLayout))
+  )
 
   function buildExpression(cs: FilterClause[]): string {
     return cs
@@ -123,23 +136,41 @@ export function ODataFilterBuilder({
           <div className="flex flex-wrap gap-3">
             {tables
               .filter(t => t.name !== table)
-              .map(t => (
-                <label key={t.name} className="flex items-center gap-1.5 cursor-pointer text-sm">
-                  <input
-                    type="checkbox"
-                    checked={expandTables.includes(t.name)}
-                    onChange={e => {
-                      onExpandChange(
-                        e.target.checked
-                          ? [...expandTables, t.name]
-                          : expandTables.filter(x => x !== t.name),
-                      )
-                    }}
-                    className="accent-primary"
-                  />
-                  <span className="text-foreground">{t.name}</span>
-                </label>
-              ))}
+              .map(t => {
+                const related = relatedTableNames.has(t.name)
+                const checkboxLabel = (
+                  <label
+                    key={t.name}
+                    className={cn(
+                      'flex items-center gap-1.5 text-sm',
+                      related ? 'cursor-pointer' : 'cursor-not-allowed opacity-40',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={expandTables.includes(t.name)}
+                      disabled={!related}
+                      onChange={e => {
+                        if (!related) return
+                        onExpandChange(
+                          e.target.checked
+                            ? [...expandTables, t.name]
+                            : expandTables.filter(x => x !== t.name),
+                        )
+                      }}
+                      className="accent-primary"
+                    />
+                    <span className="text-foreground">{t.name}</span>
+                  </label>
+                )
+                if (related) return checkboxLabel
+                return (
+                  <Tooltip key={t.name}>
+                    <TooltipTrigger asChild>{checkboxLabel}</TooltipTrigger>
+                    <TooltipContent>No relationship defined between {table} and {t.name}</TooltipContent>
+                  </Tooltip>
+                )
+              })}
           </div>
         </div>
       )}

@@ -6,10 +6,14 @@ import { safeParseJSON } from '@/lib/utils/safe-parse';
 import { incrementVersion } from '@/lib/utils/version';
 import { withAuth } from "@/lib/auth/api-guard";
 import { validateModifiedOverrides } from '@/lib/merge/validate-override-data';
+import { detectMergeConflicts } from '@/lib/merge/detect-merge-conflicts';
 import { logger } from '@/lib/logger'
 
 const mergeSchema = z.object({
   changelog: z.string().optional(),
+  // When conflicts are detected, the client must re-request with force:true
+  // (after showing the user what changed) to proceed with the overwrite.
+  force: z.boolean().optional().default(false),
 });
 
 // Sentinel error classes thrown from inside the $transaction so the outer
@@ -31,7 +35,7 @@ class MergeBranchGoneError extends Error {
 export const POST = withAuth(async (req, { params, userId }) => {
   try {
     const body = await req.json().catch(() => ({}));
-    const { changelog } = mergeSchema.parse(body);
+    const { changelog, force } = mergeSchema.parse(body);
 
     // ── Pre-transaction: ownership and invariant checks ─────────────────────
     // We do NOT check branch.status here. The only authoritative status check
@@ -72,6 +76,28 @@ export const POST = withAuth(async (req, { params, userId }) => {
         'CORRUPT_OVERRIDE_DATA',
         422,
         overrideValidation.corrupt,
+      );
+    }
+
+    // ── Pre-transaction: detect conflicting concurrent edits ────────────────
+    // If another branch already merged a change to a tool this branch also
+    // modified, applying this branch's override would silently discard that
+    // other change. Surface the conflict and require explicit confirmation
+    // (force:true) rather than merging over it.
+    const conflicts = detectMergeConflicts(
+      changesByAction.modified.map((c) => ({
+        toolId: c.toolId,
+        toolName: c.tool.name,
+        baseUpdatedAt: c.baseUpdatedAt,
+        currentToolUpdatedAt: c.tool.updatedAt,
+      })),
+    );
+    if (conflicts.length > 0 && !force) {
+      return apiError(
+        `${conflicts.length} tool${conflicts.length > 1 ? 's' : ''} changed on main since this branch last edited ${conflicts.length > 1 ? 'them' : 'it'}. Review the conflicts and confirm to merge anyway.`,
+        'MERGE_CONFLICT',
+        409,
+        { conflicts },
       );
     }
 

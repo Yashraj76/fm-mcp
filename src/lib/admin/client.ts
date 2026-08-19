@@ -121,18 +121,33 @@ export class FMAdminClient {
     const { data } = await this.fetch('/server/status')
     return data?.response || {}
   }
+
+  /**
+   * Destroy this client's undici Agent, releasing its keep-alive sockets.
+   * Each FMAdminClient owns its own Agent — nothing shared. The client is
+   * unusable afterwards.
+   */
+  async close(): Promise<void> {
+    try {
+      await this.dispatcher.destroy()
+    } catch (e: any) {
+      logger.warn({ errMsg: e.message }, '[FMAdminClient] dispatcher destroy error')
+    }
+  }
 }
 
-// Wrapper: login → do work → always logout
+// Wrapper: login → do work → always logout + release the connection pool
 export async function withAdminSession<T>(
   config: FMServerConfig,
   fn: (client: FMAdminClient) => Promise<T>
 ): Promise<T> {
   const client = new FMAdminClient(config)
-  await client.login()
   try {
+    // login inside the try so the Agent is destroyed even when login throws.
+    await client.login()
     return await fn(client)
   } finally {
-    await client.logout().catch(() => {})
+    await client.logout().catch(() => {}) // no-ops when login never issued a token
+    await client.close()
   }
 }

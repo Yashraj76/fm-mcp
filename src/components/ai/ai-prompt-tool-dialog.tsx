@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation } from '@tanstack/react-query'
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,8 @@ import {
 } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 import { api } from '@/lib/utils/api-client'
+import { normalizeTool } from '@/lib/tools/normalize-tool'
+import { safeParseJSON } from '@/lib/utils/safe-parse'
 
 type Mode = 'single' | 'flow'
 type Step = 'input' | 'generating' | 'preview'
@@ -56,6 +58,32 @@ interface AiPromptToolDialogProps {
   branchId?: string | null
 }
 
+/** Maps a raw AI-generated tool def to ToolDialog's prefilledData shape via
+ *  the same normalizeTool() the direct-save path used, so fmMethod/category/
+ *  layout/inputSchema defaults are filled consistently either way. */
+function generatedToolToPrefilledData(
+  tool: GeneratedTool,
+  connectionId: string | null,
+): Record<string, unknown> {
+  const handlerConfig: Record<string, unknown> = { ...(tool.handlerConfig ?? {}) }
+  if (connectionId && !handlerConfig.connectionId) handlerConfig.connectionId = connectionId
+
+  const normalized = normalizeTool({ ...tool, handlerConfig, isAiGenerated: true })
+
+  return {
+    name: normalized.name,
+    description: normalized.description,
+    category: normalized.category,
+    fmMethod: normalized.fmMethod,
+    fmLayout: normalized.fmLayout || '',
+    fmScript: normalized.fmScript || '',
+    isEnabled: normalized.isEnabled,
+    inputSchema: safeParseJSON(normalized.inputSchema, { type: 'object', properties: {} }),
+    outputSchema: safeParseJSON(normalized.outputSchema, { type: 'object', properties: {} }),
+    handlerConfig: safeParseJSON(normalized.handlerConfig, {}),
+  }
+}
+
 const MODE_OPTIONS: { id: Mode; icon: React.ElementType; label: string; sublabel: string }[] = [
   {
     id: 'single',
@@ -77,7 +105,8 @@ export function AiPromptToolDialog({
   serverId,
   branchId,
 }: AiPromptToolDialogProps) {
-  const queryClient = useQueryClient()
+  const setShowToolDialog = useAppStore(s => s.setShowToolDialog)
+  const setAiReviewQueue = useAppStore(s => s.setAiReviewQueue)
 
   const [step, setStep] = useState<Step>('input')
   const [mode, setMode] = useState<Mode>('single')
@@ -135,21 +164,6 @@ export function AiPromptToolDialog({
     },
   })
 
-  // Save tools mutation
-  const saveMutation = useMutation({
-    mutationFn: (selectedTools: GeneratedTool[]) =>
-      api.post<{ success: boolean; saved: number }>(`/api/servers/${serverId}/generate-tools/save`, { tools: selectedTools, branchId }),
-    onSuccess: (data) => {
-      toast.success(`Successfully added ${data.saved} tool${data.saved !== 1 ? 's' : ''}`)
-      queryClient.invalidateQueries({ queryKey: ['server', serverId] })
-      queryClient.invalidateQueries({ queryKey: ['branch-tools', branchId, serverId] })
-      onOpenChange(false)
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || 'Failed to save tools')
-    },
-  })
-
   const handleGenerate = () => {
     if (!prompt.trim()) {
       toast.error('Please enter a prompt first')
@@ -176,16 +190,27 @@ export function AiPromptToolDialog({
     else setSelectedIndices(new Set(tools.map((_, i) => i)))
   }
 
+  // Route each selected tool through the same edit/schema-aware flow as a
+  // manually-created tool — opens ToolDialog pre-filled instead of saving
+  // directly, so the user reviews category/layout/schema-aware fields (and
+  // can adjust them) before anything is actually persisted.
   const handleSave = () => {
     const selected = tools.filter((_, i) => selectedIndices.has(i))
     if (selected.length === 0) {
       toast.error('Please select at least one tool to add')
       return
     }
-    saveMutation.mutate(selected)
+    const queueItems = selected.map(tool => ({
+      prefilledData: generatedToolToPrefilledData(tool, selectedConnectionId),
+      connectionId: selectedConnectionId,
+    }))
+    const [first, ...rest] = queueItems
+    setAiReviewQueue(rest)
+    setShowToolDialog(true, null, first.connectionId, first.prefilledData)
+    onOpenChange(false)
   }
 
-  const isBusy = step === 'generating' || saveMutation.isPending
+  const isBusy = step === 'generating'
 
   return (
     <Dialog
@@ -494,24 +519,17 @@ export function AiPromptToolDialog({
               <Button
                 variant="ghost"
                 onClick={() => setStep('input')}
-                disabled={saveMutation.isPending}
                 className="text-muted-foreground hover:text-foreground"
               >
                 ← Back
               </Button>
               <Button
                 className="bg-violet-600 hover:bg-violet-500 text-white min-w-[140px]"
-                disabled={selectedIndices.size === 0 || saveMutation.isPending}
+                disabled={selectedIndices.size === 0}
                 onClick={handleSave}
               >
-                {saveMutation.isPending ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <>
-                    <CheckCircle2 className="size-4 mr-2" />
-                    Add {selectedIndices.size} Tool{selectedIndices.size !== 1 ? 's' : ''}
-                  </>
-                )}
+                <CheckCircle2 className="size-4 mr-2" />
+                Review {selectedIndices.size} Tool{selectedIndices.size !== 1 ? 's' : ''}
               </Button>
             </>
           )}

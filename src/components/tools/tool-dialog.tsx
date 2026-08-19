@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/utils/api-client'
+import { invalidateToolLists } from '@/lib/query-keys'
 import { safeParseJSON } from '@/lib/utils/safe-parse'
 import { toast } from 'sonner'
 import {
@@ -30,7 +31,8 @@ import {
 } from '@/components/ui/select'
 import { SchemaBuilder, type JsonSchema } from '@/components/tools/schema-builder'
 import { MultiTableBuilder, type ToolStep } from '@/components/tools/multi-table-builder'
-import { FieldMappingBuilder, mappingsToRecord, recordToMappings } from '@/components/tools/field-mapping-builder'
+import { ExtraParamsBuilder } from '@/components/tools/extra-params-builder'
+import { deriveInputSchema, defaultRecordIdParam, reverseDeriveExtraParams, type ExtraParam } from '@/lib/tools/extra-params'
 import dynamic from 'next/dynamic'
 const HandlerPreview = dynamic(() => import('@/components/tools/handler-preview').then(m => m.HandlerPreview), { ssr: false, loading: () => <div className="p-4 text-sm text-muted-foreground animate-pulse">Loading preview...</div> })
 import { ODataFilterBuilder } from '@/components/tools/odata-filter-builder'
@@ -39,17 +41,15 @@ import { cn } from '@/lib/utils'
 import {
   Wrench,
   Database,
-  FileJson,
-  FileOutput,
   Play,
   Save,
   Loader2,
   Clock,
   CheckCircle2,
   XCircle,
+  AlertTriangle,
   Copy,
   RotateCcw,
-  GitFork,
   ChevronDown,
   ChevronUp,
   Globe,
@@ -133,18 +133,99 @@ function TestResultSummary({ data, isSuccess }: { data: unknown; isSuccess: bool
   )
 }
 
+// ── Output shaping: pick a field/array/object path from the test response ──
+function flattenPaths(value: unknown, prefix = '', depth = 0, maxDepth = 4): { path: string; preview: string }[] {
+  if (depth >= maxDepth || value === null || typeof value !== 'object') return []
+
+  const entries: [string, unknown][] = Array.isArray(value)
+    ? value.slice(0, 1).map((v, i) => [`[${i}]`, v] as [string, unknown]) // one representative array element
+    : Object.entries(value as Record<string, unknown>)
+
+  const results: { path: string; preview: string }[] = []
+  for (const [key, v] of entries) {
+    const path = key.startsWith('[') ? `${prefix}${key}` : prefix ? `${prefix}.${key}` : key
+    const preview = Array.isArray(v)
+      ? `array(${v.length})`
+      : v !== null && typeof v === 'object'
+      ? 'object'
+      : JSON.stringify(v)
+    results.push({ path, preview })
+    results.push(...flattenPaths(v, path, depth + 1, maxDepth))
+  }
+  return results
+}
+
+function OutputSelectorPicker({
+  data,
+  value,
+  onChange,
+}: {
+  data: unknown
+  value: string | null
+  onChange: (path: string | null) => void
+}) {
+  const paths = useMemo(() => flattenPaths(data).slice(0, 60), [data])
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs text-muted-foreground">Output Shape</Label>
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            className="text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            Clear (return full response)
+          </button>
+        )}
+      </div>
+      <Input
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value || null)}
+        placeholder="e.g. response.data[0].fieldData — leave empty to return the full response"
+        className="h-8 text-xs font-mono"
+      />
+      {paths.length > 0 && (
+        <div className="max-h-32 overflow-y-auto rounded-md border bg-muted/10 p-1.5 flex flex-wrap gap-1">
+          {paths.map(p => (
+            <button
+              key={p.path}
+              type="button"
+              onClick={() => onChange(p.path)}
+              className={cn(
+                'text-[11px] font-mono px-1.5 py-0.5 rounded border transition-colors',
+                value === p.path
+                  ? 'bg-primary/15 border-primary/40 text-primary'
+                  : 'border-border/60 text-muted-foreground hover:text-foreground hover:border-foreground/30',
+              )}
+              title={p.preview}
+            >
+              {p.path}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        Click a path or type one to project the tool's response to just that field, array, or object before it's returned to the MCP client.
+      </p>
+    </div>
+  )
+}
+
 const CATEGORIES = ['CRUD', 'Find', 'Script', 'Custom', 'Multi-Table'] as const
 
-const FM_METHODS = [
-  { value: 'find', label: 'Find Records' },
-  { value: 'create', label: 'Create Record' },
-  { value: 'update', label: 'Update Record' },
-  { value: 'delete', label: 'Delete Record' },
-  { value: 'list', label: 'List Records (paginated)' },
-  { value: 'get', label: 'Get Record by ID' },
-  { value: 'script', label: 'Run Script' },
-  { value: 'custom', label: 'Custom' },
-] as const
+// FileMaker Method → Category, for the single tag every tool keeps at the
+// top level. Multi-table tools and OData tools are set separately.
+const METHOD_TO_CATEGORY: Record<string, string> = {
+  find: 'Find',
+  create: 'CRUD',
+  update: 'CRUD',
+  delete: 'CRUD',
+  get: 'CRUD',
+  list: 'CRUD',
+  script: 'Script',
+}
 
 const ODATA_METHODS = [
   { value: 'odata-filter', label: 'OData $filter' },
@@ -158,10 +239,10 @@ interface ToolFormData {
   fmMethod: string
   fmLayout: string
   fmScript: string
-  recordIdField: string
   isEnabled: boolean
   inputSchema: JsonSchema
   outputSchema: JsonSchema
+  outputSelector: string | null
   handlerConfig: Record<string, unknown> & {
     connectionId?: string
     fieldMappings?: Record<string, string>
@@ -173,36 +254,107 @@ function getDefaultFormData(): ToolFormData {
     name: '',
     description: '',
     category: 'Custom',
-    fmMethod: 'custom',
+    fmMethod: 'find',
     fmLayout: '',
     fmScript: '',
-    recordIdField: 'recordId',
     isEnabled: true,
     inputSchema: { type: 'object', properties: {} },
     outputSchema: { type: 'object', properties: {} },
+    outputSelector: null,
     handlerConfig: {
       connectionId: '',
-      method: 'custom',
-      layout: '',
-      script: null,
-      recordIdField: 'recordId',
-      requestParams: [],
+      method: 'find',
       steps: [],
-      fieldMappings: {},
     },
   }
+}
+
+// Maps a legacy flat-shape tool's `fmMethod` to the equivalent step operation
+// when upgrading it to a `steps[]` array. Anything unrecognized (e.g. the
+// long-dead 'custom' method) falls back to 'find'.
+const LEGACY_METHOD_TO_OPERATION: Record<string, ToolStep['operation']> = {
+  find: 'find', create: 'create', update: 'update', delete: 'delete', get: 'get', list: 'list', script: 'script',
+}
+
+/** Pure builder for {fmMethod, fmLayout, fmScript, handlerConfig} — the same
+ * shape both the live editor (`assembleTool`) and the edit-load effect need
+ * to produce, so a freshly-loaded tool's "already tested" snapshot and a
+ * live re-assembly of unchanged state serialize identically. */
+function assembleHandlerConfig(opts: {
+  connectionId: string
+  useOData: boolean
+  odataMethod: string
+  odataTable: string
+  odataFilterExpression: string
+  odataExpandTables: string[]
+  steps: ToolStep[]
+}) {
+  if (opts.useOData) {
+    return {
+      fmMethod: opts.odataMethod,
+      fmLayout: '',
+      fmScript: '',
+      handlerConfig: {
+        connectionId: opts.connectionId,
+        method: opts.odataMethod,
+        type: opts.odataMethod,
+        table: opts.odataTable,
+        filterExpression: opts.odataFilterExpression,
+        expandTables: opts.odataExpandTables,
+      },
+    }
+  }
+
+  const isMulti = opts.steps.length > 1
+  const fmMethod = isMulti ? 'sequential-multi-table' : opts.steps[0]?.operation || 'find'
+  return {
+    fmMethod,
+    fmLayout: opts.steps[0]?.layout || '',
+    fmScript: opts.steps[0]?.scriptName || '',
+    handlerConfig: { connectionId: opts.connectionId, method: fmMethod, steps: opts.steps },
+  }
+}
+
+/** Reconstructs a 1-step array from a legacy flat handlerConfig, or passes
+ * through an already-modern `steps[]`. Returns `[]` for OData tools (they
+ * don't use the steps model) or handlerConfigs with neither shape. */
+function buildStepsFromHandlerConfig(handlerConfig: any, fmMethod: string | null | undefined): ToolStep[] {
+  if (fmMethod === 'odata-filter' || fmMethod === 'odata-expand') return []
+  if (Array.isArray(handlerConfig?.steps) && handlerConfig.steps.length > 0) return handlerConfig.steps
+  if (handlerConfig?.layout) {
+    return [{
+      stepIndex: 0,
+      api: 'data-api',
+      operation: LEGACY_METHOD_TO_OPERATION[fmMethod as string] ?? 'find',
+      layout: handlerConfig.layout,
+      fieldMappings: handlerConfig.fieldMappings || {},
+      scriptName: handlerConfig.script || handlerConfig.scriptName || undefined,
+    }]
+  }
+  return []
 }
 
 interface ToolDialogProps {
   prefilledData?: Partial<ToolFormData>
 }
 
-export function ToolDialog({ prefilledData }: ToolDialogProps) {
+export function ToolDialog({ prefilledData: propPrefilledData }: ToolDialogProps) {
   const showToolDialog = useAppStore(s => s.showToolDialog)
   const editingToolId = useAppStore(s => s.editingToolId)
   const currentServerId = useAppStore(s => s.currentServerId)
   const currentBranchId = useAppStore(s => s.currentBranchId)
+  const toolDialogConnectionId = useAppStore(s => s.toolDialogConnectionId)
+  const toolDialogPrefilledData = useAppStore(s => s.toolDialogPrefilledData)
+  const aiReviewQueue = useAppStore(s => s.aiReviewQueue)
+  const setAiReviewQueue = useAppStore(s => s.setAiReviewQueue)
   const setShowToolDialog = useAppStore(s => s.setShowToolDialog)
+
+  // Store-driven queue takes priority since it's set for every AI-review
+  // session; the prop is kept as a direct-usage escape hatch for callers
+  // that render <ToolDialog prefilledData={...}> themselves.
+  const prefilledData = (propPrefilledData ?? toolDialogPrefilledData ?? undefined) as
+    | Partial<ToolFormData>
+    | undefined
 
 
   const queryClient = useQueryClient()
@@ -217,11 +369,19 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     duration: number
     data: unknown
   } | null>(null)
+  // Snapshot of the exact config that was last successfully dry-run tested —
+  // compared against the current config at save time so an edit made after
+  // testing (a different layout, a changed mapping, ...) can't ride through
+  // on a stale pass; the user must re-test whatever they actually save.
+  const [testedConfigSnapshot, setTestedConfigSnapshot] = useState<string | null>(null)
   const [testBody, setTestBody] = useState('{}')
   const [handlerConfigStr, setHandlerConfigStr] = useState('{}')
   const [multiTableSteps, setMultiTableSteps] = useState<ToolStep[]>([])
+  const [tableMode, setTableMode] = useState<'single' | 'multi'>('single')
+  const [extraParams, setExtraParams] = useState<ExtraParam[]>([])
   const [isExecuting, setIsExecuting] = useState(false)
   const [showAdvancedJson, setShowAdvancedJson] = useState(false)
+  const [showOutputSchema, setShowOutputSchema] = useState(false)
   const [useOData, setUseOData] = useState(false)
   const [odataTable, setOdataTable] = useState('')
   const [odataExpandTables, setOdataExpandTables] = useState<string[]>([])
@@ -251,69 +411,72 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
   })
 
   // ── Determine active connectionId ─────────────────────────────────────────
+  // Priority: form value (once populated) > the connectionId the calling page
+  // already knew and passed in via the store (known instantly, no fetch) >
+  // serverData's first connection (only source left once both of the above
+  // are unavailable — e.g. the dialog was opened directly without a hint).
+  // Checking the store value before serverData lets useCompiledSchema below
+  // fire in parallel with the serverData fetch instead of waiting on it.
   const activeConnectionId = useMemo<string | null>(() => {
     const fromForm = formData.handlerConfig?.connectionId as string | undefined
     if (fromForm) return fromForm
-    // Fall back to the first active connection on the server
+    if (toolDialogConnectionId) return toolDialogConnectionId
     return serverData?.connections?.[0]?.connection?.id ?? null
-  }, [formData.handlerConfig?.connectionId, serverData?.connections])
+  }, [formData.handlerConfig?.connectionId, toolDialogConnectionId, serverData?.connections])
 
   // ── Load compiled schema for the active connection ────────────────────────
-  const { data: compiledSchema } = useCompiledSchema(activeConnectionId)
+  const { data: compiledSchema, isLoading: isLoadingSchema, error: schemaError } = useCompiledSchema(activeConnectionId)
 
-  // ── Derive available layouts / scripts ────────────────────────────────────
+  // Layouts come from the connection's saved schema selections (Browse
+  // Schema → Save Selections). There's no other source — a connection that
+  // was never browsed, or browsed but never saved, simply has none; see
+  // `schemaHint` below for the message shown in that case. (MultiTableBuilder
+  // computes its own layout/script/field lists per step from the same
+  // `compiledSchema` object — this copy exists purely to gate the hint.)
   const availableLayouts = useMemo(() => {
-    if (compiledSchema?.layouts?.length) return compiledSchema.layouts.map(l => l.name).sort()
-    // Legacy fallback
-    const layouts = new Set<string>()
-    serverData?.connections?.forEach((conn: any) => {
-      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
-      schema.layouts?.forEach((l: any) => layouts.add(l.name))
-    })
-    return Array.from(layouts).sort()
-  }, [compiledSchema, serverData])
+    return compiledSchema?.layouts?.length ? compiledSchema.layouts.map(l => l.name).sort() : []
+  }, [compiledSchema])
 
-  const availableScripts = useMemo(() => {
-    if (compiledSchema?.scripts?.length) return compiledSchema.scripts.sort()
-    const scripts = new Set<string>()
-    serverData?.connections?.forEach((conn: any) => {
-      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
-      schema.scripts?.forEach((s: any) => scripts.add(typeof s === 'string' ? s : s.name))
-    })
-    return Array.from(scripts).sort()
-  }, [compiledSchema, serverData])
-
-  // ── Current layout's fields (typed FieldMeta[]) ───────────────────────────
-  const layoutFields = useMemo(() => {
-    if (!formData.fmLayout) return []
-    if (compiledSchema?.layouts?.length) {
-      return compiledSchema.layouts.find(l => l.name === formData.fmLayout)?.fields ?? []
+  const schemaHint = useMemo(() => {
+    if (!activeConnectionId || isLoadingSchema || availableLayouts.length > 0) return null
+    const code = (schemaError as { code?: string } | null)?.code
+    if (code === 'NOT_BROWSED_YET' || code === 'SCHEMA_NOT_SAVED') {
+      return 'This connection has no saved schema yet — open Browse Schema on the Connections page, select layouts, and save.'
     }
-    // Legacy fallback — returns field names as minimal FieldMeta
-    const connId = formData.handlerConfig?.connectionId as string | undefined
-    const fields: any[] = []
-    serverData?.connections?.forEach((conn: any) => {
-      if (connId && conn.connection?.id !== connId) return
-      const schema = safeParseJSON<Record<string, any>>(conn.connection?.browsedSchema?.compiledSchema, {})
-      const layout = schema.layouts?.find((l: any) => l.name === formData.fmLayout)
-      if (layout?.fieldMetaData) {
-        layout.fieldMetaData.forEach((f: any) => {
-          fields.push({
-            name: f.name,
-            type: f.type ?? 'normal',
-            result: f.result ?? 'text',
-            global: f.global ?? false,
-            autoEnter: f.autoEnter ?? false,
-            notEmpty: f.notEmpty ?? false,
-          })
-        })
-      }
-    })
-    return fields
-  }, [compiledSchema, formData.fmLayout, formData.handlerConfig?.connectionId, serverData])
+    return null
+  }, [activeConnectionId, isLoadingSchema, availableLayouts.length, schemaError])
 
   // ── OData availability ────────────────────────────────────────────────────
   const odataAvailable = (compiledSchema?.tables?.length ?? 0) > 0
+
+  // ── inputSchema is generated, not authored — every step's field mappings
+  // plus every declared extra param become an inputSchema property. OData
+  // mode has no fieldMappings concept (its {placeholders} live inside the
+  // filter expression instead), so it's extraParams-only.
+  useEffect(() => {
+    const derived = deriveInputSchema(useOData ? [] : multiTableSteps, extraParams)
+    queueMicrotask(() => {
+      setFormData(prev =>
+        JSON.stringify(prev.inputSchema) === JSON.stringify(derived) ? prev : { ...prev, inputSchema: derived },
+      )
+    })
+  }, [multiTableSteps, extraParams, useOData])
+
+  // ── recordId is a reserved, executor-required param — auto add/remove it
+  // as an extra param whenever a step needs to address one record by id,
+  // instead of making the user remember to declare it themselves.
+  useEffect(() => {
+    if (useOData) return
+    const needsRecordId = multiTableSteps.some(s => ['update', 'delete', 'get'].includes(s.operation))
+    queueMicrotask(() => {
+      setExtraParams(prev => {
+        const has = prev.some(p => p.name === 'recordId')
+        if (needsRecordId && !has) return [defaultRecordIdParam(), ...prev]
+        if (!needsRecordId && has) return prev.filter(p => p.name !== 'recordId')
+        return prev
+      })
+    })
+  }, [multiTableSteps, useOData])
 
   // ── Populate form when editing ────────────────────────────────────────────
   useEffect(() => {
@@ -333,38 +496,57 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
             ? safeParseJSON(existingTool.handlerConfig, {})
             : existingTool.handlerConfig
 
+        const isOData = existingTool.fmMethod === 'odata-filter' || existingTool.fmMethod === 'odata-expand'
+
+        // Auto-upgrade the legacy flat shape (handlerConfig.layout/fieldMappings,
+        // no `steps`) to a 1-step array — the dialog only ever authors `steps[]`
+        // now, whether the tool has one step or many.
+        const steps = buildStepsFromHandlerConfig(handlerConfig, existingTool.fmMethod)
+
         queueMicrotask(() => {
           setFormData({
             name: existingTool.name || '',
             description: existingTool.description || '',
-            fmMethod: existingTool.fmMethod || 'custom',
+            fmMethod: existingTool.fmMethod || 'find',
             fmLayout: existingTool.fmLayout || '',
             fmScript: existingTool.fmScript || '',
-            recordIdField:
-              (handlerConfig as Record<string, unknown>)?.recordIdField as string || 'recordId',
             isEnabled: existingTool.isEnabled ?? true,
             inputSchema: inputSchema || { type: 'object', properties: {} },
             outputSchema: outputSchema || { type: 'object', properties: {} },
+            outputSelector: existingTool.outputSelector ?? null,
             handlerConfig: handlerConfig || {},
-            category:
-              Array.isArray(handlerConfig?.steps) && handlerConfig.steps.length > 0
-                ? 'Multi-Table'
-                : existingTool.category || 'Custom',
+            category: existingTool.category || (steps.length > 1 ? 'Multi-Table' : 'Custom'),
           })
           setHandlerConfigStr(JSON.stringify(handlerConfig || {}, null, 2))
-          if (Array.isArray(handlerConfig?.steps) && handlerConfig.steps.length > 0) {
-            setMultiTableSteps(handlerConfig.steps)
-          }
+          setMultiTableSteps(steps)
+          setTableMode(steps.length > 1 ? 'multi' : 'single')
+          // Field mappings only cover the params tied to a layout field —
+          // anything else already in the saved inputSchema (pagination,
+          // recordId, script args...) becomes an extra param so it isn't
+          // silently dropped by the new schema-generation path.
+          setExtraParams(reverseDeriveExtraParams(inputSchema, steps))
           // Restore OData state
-          if (
-            existingTool.fmMethod === 'odata-filter' ||
-            existingTool.fmMethod === 'odata-expand'
-          ) {
+          if (isOData) {
             setUseOData(true)
             setOdataTable(handlerConfig?.table ?? '')
             setOdataFilterExpression(handlerConfig?.filterExpression ?? '')
             setOdataExpandTables(handlerConfig?.expandTables ?? [])
           }
+          // This tool is already saved and presumably working — seed the
+          // "already tested" snapshot from its own config so editing
+          // something unrelated (description, output schema) doesn't force
+          // a redundant re-test. The moment anything execution-relevant
+          // changes, this snapshot stops matching and a fresh test is
+          // required again before the next save.
+          setTestedConfigSnapshot(JSON.stringify(assembleHandlerConfig({
+            connectionId: (handlerConfig?.connectionId as string) || '',
+            useOData: isOData,
+            odataMethod: existingTool.fmMethod || 'find',
+            odataTable: handlerConfig?.table ?? '',
+            odataFilterExpression: handlerConfig?.filterExpression ?? '',
+            odataExpandTables: handlerConfig?.expandTables ?? [],
+            steps,
+          }).handlerConfig))
         })
       } catch {
         toast.error('Failed to parse existing tool data')
@@ -380,160 +562,131 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
         }))
         if (prefilledData.handlerConfig) {
           setHandlerConfigStr(JSON.stringify(prefilledData.handlerConfig, null, 2))
-          const hc = prefilledData.handlerConfig as any
-          if (Array.isArray(hc?.steps)) setMultiTableSteps(hc.steps)
+          const steps = buildStepsFromHandlerConfig(prefilledData.handlerConfig, prefilledData.fmMethod)
+          setMultiTableSteps(steps)
+          setTableMode(steps.length > 1 ? 'multi' : 'single')
+          setExtraParams(reverseDeriveExtraParams(prefilledData.inputSchema, steps))
         }
       })
     }
   }, [existingTool, isEditing, prefilledData])
 
-  // ── Reset on close ────────────────────────────────────────────────────────
+  // ── Reset all local form state ────────────────────────────────────────────
+  // Shared by the close effect below and by the AI-review queue advance
+  // (handleCloseDialog) — the latter keeps the dialog mounted/open between
+  // queued tools, so it can't rely on the isOpen transition to clear state.
+  const resetFormState = useCallback(() => {
+    setFormData(getDefaultFormData())
+    setActiveTab('basic')
+    setNameError(null)
+    setDescriptionError(null)
+    setLayoutError(null)
+    setTestResult(null)
+    setTestedConfigSnapshot(null)
+    setShowRawResult(false)
+    setTestBody('{}')
+    setHandlerConfigStr('{}')
+    setMultiTableSteps([])
+    setTableMode('single')
+    setExtraParams([])
+    setShowAdvancedJson(false)
+    setShowOutputSchema(false)
+    setUseOData(false)
+    setOdataTable('')
+    setOdataExpandTables([])
+    setOdataFilterExpression('')
+  }, [])
+
   useEffect(() => {
     if (!isOpen) {
-      queueMicrotask(() => {
-        setFormData(getDefaultFormData())
-        setActiveTab('basic')
-        setNameError(null)
-        setDescriptionError(null)
-        setLayoutError(null)
-        setTestResult(null)
-        setShowRawResult(false)
-        setTestBody('{}')
-        setHandlerConfigStr('{}')
-        setMultiTableSteps([])
-        setShowAdvancedJson(false)
-        setUseOData(false)
-        setOdataTable('')
-        setOdataExpandTables([])
-        setOdataFilterExpression('')
-      })
+      queueMicrotask(resetFormState)
     }
-  }, [isOpen])
+  }, [isOpen, resetFormState])
 
-  // ── Sync fmMethod → category (skip when multi-table active) ──────────────
+  // ── Sync steps/OData → category — category is informational (the executor
+  // never reads it), so this just keeps the Basic tab's suggested value
+  // reasonable as the mode/operation changes; the user can still override it.
   useEffect(() => {
-    const methodToCategory: Record<string, string> = {
-      create: 'CRUD',
-      read: 'CRUD',
-      update: 'CRUD',
-      delete: 'CRUD',
-      list: 'CRUD',
-      get: 'CRUD',
-      find: 'Find',
-      script: 'Script',
-      'odata-filter': 'Custom',
-      'odata-expand': 'Custom',
-    }
-    if (multiTableSteps.length > 0 || formData.category === 'Multi-Table') return
-    if (methodToCategory[formData.fmMethod]) {
-      queueMicrotask(() => {
-        setFormData(prev => ({
-          ...prev,
-          category: methodToCategory[prev.fmMethod],
-          handlerConfig: {
-            ...prev.handlerConfig,
-            method: prev.fmMethod,
-            layout: prev.fmLayout || prev.handlerConfig.layout,
-            script: prev.fmScript || prev.handlerConfig.script,
-            recordIdField: prev.recordIdField,
-          },
-        }))
-        setHandlerConfigStr(
-          JSON.stringify(
-            {
-              ...formData.handlerConfig,
-              method: formData.fmMethod,
-              layout: formData.fmLayout || formData.handlerConfig.layout,
-              script: formData.fmScript || formData.handlerConfig.script,
-              recordIdField: formData.recordIdField,
-            },
-            null,
-            2,
-          ),
-        )
-      })
-    }
-  }, [formData.fmMethod, formData.fmLayout, formData.fmScript, formData.recordIdField])
-
-
-  /** Called from every OData event handler to keep formData in sync without a useEffect */
-  const applyODataToFormData = useCallback(
-    (toggle: boolean, table: string, filterExpr: string, expandTablesArr: string[]) => {
-      if (!toggle) return
-      setFormData(prev => ({
-        ...prev,
-        fmMethod: 'odata-filter',
-        category: 'Custom',
-        handlerConfig: {
-          ...prev.handlerConfig,
-          method: 'odata-filter',
-          table,
-          filterExpression: filterExpr,
-          expandTables: expandTablesArr,
-        },
-      }))
-    },
-    [],
-  )
+    const category = useOData
+      ? 'Custom'
+      : multiTableSteps.length > 1
+      ? 'Multi-Table'
+      : METHOD_TO_CATEGORY[multiTableSteps[0]?.operation ?? 'find'] ?? 'Custom'
+    queueMicrotask(() => {
+      setFormData(prev => (prev.category === category ? prev : { ...prev, category }))
+    })
+  }, [useOData, multiTableSteps])
 
   const updateField = useCallback((field: keyof ToolFormData, value: any) => {
     if (field === 'name') setNameError(null)
     if (field === 'description') setDescriptionError(null)
-    if (field === 'fmLayout') setLayoutError(null)
-    setFormData(prev => {
-      const updated = { ...prev, [field]: value }
-
-      // Auto-sync inputSchema properties to fieldMappings
-      if (field === 'inputSchema' && prev.category !== 'Multi-Table') {
-        const inputProps = (value as JsonSchema)?.properties || {}
-        const newMappings = { ...(prev.handlerConfig?.fieldMappings || {}) }
-        let hasChanges = false
-        for (const key of Object.keys(inputProps)) {
-          if (!(key in newMappings)) { newMappings[key] = key; hasChanges = true }
-        }
-        for (const key of Object.keys(newMappings)) {
-          if (!(key in inputProps)) { delete newMappings[key]; hasChanges = true }
-        }
-        if (hasChanges) {
-          updated.handlerConfig = { ...(prev.handlerConfig || {}), fieldMappings: newMappings }
-        }
-      }
-
-      return updated
-    })
+    setFormData(prev => ({ ...prev, [field]: value }))
   }, [])
 
+  // ── Single source of truth for fmMethod/fmLayout/fmScript/handlerConfig ──
+  // Both single- and multi-table tools are always a `steps[]` array now (see
+  // executor-service.ts's dispatch) — OData tools stay on the separate flat
+  // shape the OData executor actually reads. Built on the module-level
+  // `assembleHandlerConfig` (shared with the edit-load effect below) so the
+  // "already tested" snapshot and the live config are always constructed
+  // identically and can be compared by string equality.
+  const assembleTool = useCallback(() => {
+    return assembleHandlerConfig({
+      connectionId: (formData.handlerConfig?.connectionId as string) || '',
+      useOData,
+      odataMethod: formData.fmMethod,
+      odataTable,
+      odataFilterExpression,
+      odataExpandTables,
+      steps: multiTableSteps,
+    })
+  }, [formData.handlerConfig?.connectionId, formData.fmMethod, useOData, odataTable, odataFilterExpression, odataExpandTables, multiTableSteps])
+
+  // Keeps the Advanced JSON textarea showing the live assembled config —
+  // but only while the panel is collapsed, so it never clobbers a hand edit
+  // the user is actively making once they've opened it.
+  useEffect(() => {
+    if (showAdvancedJson) return
+    const str = JSON.stringify(assembleTool().handlerConfig, null, 2)
+    queueMicrotask(() => setHandlerConfigStr(str))
+  }, [showAdvancedJson, assembleTool])
+
   // ── Build the live handlerConfig preview ──────────────────────────────────
-  const liveHandlerConfig = useMemo(() => {
-    if (multiTableSteps.length > 0) {
-      return { ...formData.handlerConfig, steps: multiTableSteps, method: 'sequential-multi-table' }
-    }
-    return formData.handlerConfig
-  }, [formData.handlerConfig, multiTableSteps])
+  const liveHandlerConfig = useMemo(() => assembleTool().handlerConfig, [assembleTool])
+
+  // Advanced JSON always wins when it's valid (per the panel's own warning)
+  // — but if the user hasn't touched `steps` there, keep it in sync with the
+  // live Single/Multi-Table UI rather than going stale. Shared by both the
+  // dry-run test and the actual save so they always execute/persist the
+  // exact same config.
+  const computeFinalConfig = useCallback((assembled: ReturnType<typeof assembleTool>): Record<string, unknown> => {
+    const editorParsed = safeParseJSON<Record<string, any>>(handlerConfigStr, null)
+    if (!editorParsed) return assembled.handlerConfig
+    return Array.isArray(editorParsed.steps) && editorParsed.steps.length > 0
+      ? editorParsed
+      : { ...editorParsed, ...(multiTableSteps.length > 0 && !useOData ? { steps: multiTableSteps } : {}) }
+  }, [handlerConfigStr, multiTableSteps, useOData])
+
+  // `testedConfigSnapshot` is the actual signal — it's seeded from the tool's
+  // own saved config on edit-load (already "tested" by virtue of already
+  // working) as well as set by a live passing dry-run. Gating on `testResult`
+  // instead would force a redundant re-test on every single Edit-open, since
+  // `testResult` always starts null and the seeded snapshot would never get
+  // consulted.
+  const needsRetest = testedConfigSnapshot === null || JSON.stringify(computeFinalConfig(assembleTool())) !== testedConfigSnapshot
+  const hasEverPassedTest = testedConfigSnapshot !== null
 
   // ── Save mutation ─────────────────────────────────────────────────────────
   const saveMutation = useMutation({
     mutationFn: async (data: ToolFormData) => {
-      let finalConfig = data.handlerConfig
-      if (multiTableSteps.length > 0) {
-        finalConfig = { ...finalConfig, steps: multiTableSteps, method: 'sequential-multi-table' }
-      }
-      try {
-        const editorParsed = safeParseJSON<Record<string, any>>(handlerConfigStr, null)
-        if (!editorParsed) throw new Error('Invalid JSON')
-        if (editorParsed?.steps?.length > 0) {
-          finalConfig = { ...editorParsed, method: 'sequential-multi-table' }
-        } else if (multiTableSteps.length > 0) {
-          finalConfig = { ...editorParsed, steps: multiTableSteps, method: 'sequential-multi-table' }
-        } else {
-          finalConfig = editorParsed
-        }
-      } catch {
-        console.warn('Using fallback handlerConfig — invalid JSON in advanced editor')
-      }
+      const assembled = assembleTool()
+      const finalConfig = computeFinalConfig(assembled)
 
       const payload = {
         ...data,
+        fmMethod: assembled.fmMethod,
+        fmLayout: assembled.fmLayout,
+        fmScript: assembled.fmScript,
         inputSchema: JSON.stringify(data.inputSchema),
         outputSchema: JSON.stringify(data.outputSchema),
         handlerConfig: JSON.stringify(finalConfig),
@@ -554,10 +707,13 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     },
     onSuccess: (data: any) => {
       toast.success(isEditing ? 'Tool updated' : 'Tool created')
-      queryClient.invalidateQueries({ queryKey: ['tools', currentServerId, currentBranchId] })
+      invalidateToolLists(queryClient, currentServerId, currentBranchId)
       if (!isEditing && data?.id) {
-        // Switch to edit mode for the new tool so Test tab becomes live
-        setShowToolDialog(true, data.id)
+        // Switch to edit mode for the new tool so Test tab becomes live.
+        // Carry the connection hint and prefilledData marker through so an
+        // AI-review session is still recognized as active when this dialog
+        // is eventually closed (see handleCloseDialog).
+        setShowToolDialog(true, data.id, toolDialogConnectionId, toolDialogPrefilledData)
       } else {
         queryClient.invalidateQueries({ queryKey: ['tool', editingToolId, currentBranchId] })
       }
@@ -584,15 +740,55 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       setDescriptionError('Description is required')
       if (!firstErrorTab) firstErrorTab = 'basic'
     }
-    const needsLayout = !useOData && ['find', 'create', 'update', 'delete', 'list', 'get'].includes(formData.fmMethod)
-    if (needsLayout && !formData.fmLayout) {
-      setLayoutError('Select a layout for this operation')
-      if (!firstErrorTab) firstErrorTab = 'fm-mapping'
+    if (!useOData) {
+      const missingLayout = multiTableSteps.length === 0 || multiTableSteps.some(s => s.api === 'data-api' && !s.layout)
+      if (missingLayout) {
+        setLayoutError('Select a layout for every step')
+        if (!firstErrorTab) firstErrorTab = 'filemaker'
+      }
+      const missingScript = multiTableSteps.some(s => s.operation === 'script' && !s.scriptName)
+      if (missingScript) {
+        setLayoutError('Select a script for every script step')
+        if (!firstErrorTab) firstErrorTab = 'filemaker'
+      }
     }
     if (firstErrorTab) { setActiveTab(firstErrorTab); return }
+
+    // The exact config about to be saved must have been successfully
+    // dry-run at least once — catches broken layouts/mappings/connections
+    // before they reach production, for both new and edited tools.
+    if (needsRetest) {
+      toast.error(
+        !hasEverPassedTest
+          ? 'Test the tool successfully before saving.'
+          : 'The config changed since your last passing test — re-test before saving.',
+      )
+      setActiveTab('test')
+      return
+    }
+
     if (!currentBranchId) { toast.error('No branch selected'); return }
     saveMutation.mutate(formData)
-  }, [formData, currentBranchId, saveMutation, useOData])
+  }, [formData, currentBranchId, saveMutation, useOData, multiTableSteps, needsRetest, hasEverPassedTest])
+
+  // Closing a dialog that's part of an AI-generated tool review queue moves
+  // to the next queued tool instead of just closing — each generated tool
+  // gets its own full create → test → close cycle before the next opens.
+  const handleCloseDialog = useCallback((open: boolean) => {
+    if (open) {
+      setShowToolDialog(true)
+      return
+    }
+    if (toolDialogPrefilledData && aiReviewQueue.length > 0) {
+      const [next, ...rest] = aiReviewQueue
+      resetFormState()
+      setAiReviewQueue(rest)
+      setShowToolDialog(true, null, next.connectionId, next.prefilledData)
+    } else {
+      setAiReviewQueue([])
+      setShowToolDialog(false)
+    }
+  }, [toolDialogPrefilledData, aiReviewQueue, setAiReviewQueue, setShowToolDialog, resetFormState])
 
   const handleExecuteTest = useCallback(async () => {
     if (!currentServerId) return
@@ -610,27 +806,16 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
         return
       }
 
-      let finalConfig = formData.handlerConfig
-      if (multiTableSteps.length > 0) {
-        finalConfig = { ...finalConfig, steps: multiTableSteps, method: 'sequential-multi-table' }
-      }
-      try {
-        const editorParsed = safeParseJSON<Record<string, any>>(handlerConfigStr, null)
-        if (!editorParsed) throw new Error('Invalid JSON')
-        if (editorParsed?.steps?.length > 0) {
-          finalConfig = { ...editorParsed, method: 'sequential-multi-table' }
-        } else if (multiTableSteps.length > 0) {
-          finalConfig = { ...editorParsed, steps: multiTableSteps, method: 'sequential-multi-table' }
-        } else {
-          finalConfig = editorParsed
-        }
-      } catch {}
+      const assembled = assembleTool()
+      const finalConfig = computeFinalConfig(assembled)
 
       const result = await api.post<any>(`/api/servers/${currentServerId}/tools/dry-run`, {
-        toolData: { ...formData, handlerConfig: finalConfig },
+        toolData: { ...formData, fmMethod: assembled.fmMethod, fmLayout: assembled.fmLayout, fmScript: assembled.fmScript, handlerConfig: finalConfig },
         body,
+        branchId: currentBranchId,
       })
       setTestResult({ status: 200, duration: Date.now() - startTime, data: result })
+      setTestedConfigSnapshot(JSON.stringify(finalConfig))
       testPanelRef.current?.scrollIntoView({ behavior: 'smooth' })
     } catch (err: any) {
       setTestResult({
@@ -641,7 +826,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
     } finally {
       setIsExecuting(false)
     }
-  }, [currentServerId, formData, multiTableSteps, handlerConfigStr, testBody])
+  }, [currentServerId, formData, assembleTool, computeFinalConfig, testBody])
 
   const handleCopyResponse = useCallback(() => {
     if (testResult) {
@@ -665,7 +850,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
       }
       updateField('outputSchema', deriveSchema(testResult.data))
       toast.success('Output schema derived successfully!')
-      setActiveTab('output-schema')
+      setShowOutputSchema(true)
     }
   }, [testResult, updateField])
 
@@ -688,13 +873,13 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
   }, [activeTab, formData.inputSchema.properties])
 
   return (
-    <Dialog open={isOpen} onOpenChange={open => setShowToolDialog(open)}>
+    <Dialog open={isOpen} onOpenChange={handleCloseDialog}>
       <DialogContent className="sm:max-w-4xl max-h-[90vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-6 pb-0">
           <DialogTitle className="flex items-center gap-2">
             <Wrench className="size-5" />
             {isEditing ? 'Edit Tool' : 'Create New Tool'}
-            {existingTool?.isAiGenerated && (
+            {(existingTool?.isAiGenerated || toolDialogPrefilledData) && (
               <Badge
                 variant="outline"
                 className="text-[10px] gap-1 bg-violet-500/20 text-violet-400 border-violet-500/30"
@@ -704,7 +889,9 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
             )}
           </DialogTitle>
           <DialogDescription>
-            {isEditing
+            {toolDialogPrefilledData
+              ? `Review and adjust before saving — ${aiReviewQueue.length} more tool${aiReviewQueue.length !== 1 ? 's' : ''} queued after this one`
+              : isEditing
               ? `Editing v${existingTool?.version || 1} of ${existingTool?.name || 'tool'}`
               : 'Configure a new MCP tool for your FileMaker server'}
           </DialogDescription>
@@ -718,39 +905,27 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
           </div>
         ) : (
           <>
-            {/* ── Tab order: Basic → Input → FileMaker → Multi-Table → Test → Output ── */}
+            {/* ── Tab order: Basic → FileMaker → Test (includes Output Schema) ── */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0">
               <div className="px-6 pt-2">
-                <TabsList className="w-full grid grid-cols-6">
+                <TabsList className="w-full grid grid-cols-3">
                   <TabsTrigger value="basic" className="text-xs gap-1">
                     <Wrench className="size-3" />
                     <span className="hidden sm:inline">Basic</span>
                   </TabsTrigger>
-                  <TabsTrigger value="input-schema" className="text-xs gap-1">
-                    <FileJson className="size-3" />
-                    <span className="hidden sm:inline">Input</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="fm-mapping" className="text-xs gap-1">
+                  <TabsTrigger value="filemaker" className="text-xs gap-1">
                     <Database className="size-3" />
                     <span className="hidden sm:inline">FileMaker</span>
-                  </TabsTrigger>
-                  <TabsTrigger value="multi-table" className="text-xs gap-1">
-                    <GitFork className="size-3" />
-                    <span className="hidden sm:inline">Multi-Table</span>
                   </TabsTrigger>
                   <TabsTrigger value="test" className="text-xs gap-1">
                     <Play className="size-3" />
                     <span className="hidden sm:inline">Test</span>
                   </TabsTrigger>
-                  <TabsTrigger value="output-schema" className="text-xs gap-1">
-                    <FileOutput className="size-3" />
-                    <span className="hidden sm:inline">Output</span>
-                  </TabsTrigger>
                 </TabsList>
               </div>
 
               <div className="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar">
-                {/* ══════════ BASIC TAB ══════════ */}
+                {/* ========== BASIC TAB ========== */}
                 <TabsContent value="basic" className="mt-0 space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -826,19 +1001,8 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                   </div>
                 </TabsContent>
 
-                {/* ══════════ INPUT SCHEMA TAB (moved to position 2) ══════════ */}
-                <TabsContent value="input-schema" className="mt-0">
-                  <SchemaBuilder
-                    value={formData.inputSchema}
-                    onChange={schema => updateField('inputSchema', schema)}
-                    title="Input Schema"
-                    description="Define the parameters that AI assistants will send to this tool. These param names drive the field mapping dropdowns on the FileMaker tab."
-                    availableFields={layoutFields.map(f => f.name)}
-                  />
-                </TabsContent>
-
-                {/* ══════════ FILEMAKER TAB ══════════ */}
-                <TabsContent value="fm-mapping" className="mt-0 space-y-4">
+                {/* ========== FILEMAKER TAB (merged single/multi-table) ========== */}
+                <TabsContent value="filemaker" className="mt-0 space-y-4">
                   {/* Connection + Method */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -847,9 +1011,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                         value={(formData.handlerConfig?.connectionId as string) || 'default'}
                         onValueChange={v => {
                           const val = v === 'default' ? '' : v
-                          const hc = { ...formData.handlerConfig, connectionId: val }
-                          updateField('handlerConfig', hc)
-                          setHandlerConfigStr(JSON.stringify(hc, null, 2))
+                          updateField('handlerConfig', { ...formData.handlerConfig, connectionId: val })
                         }}
                       >
                         <SelectTrigger id="fm-connection">
@@ -866,30 +1028,21 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                       </Select>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="fm-method">FileMaker Method *</Label>
-                      <Select
-                        value={useOData ? (formData.fmMethod || 'odata-filter') : formData.fmMethod}
-                        onValueChange={v => {
-                          updateField('fmMethod', v)
-                          if (v === 'odata-filter' || v === 'odata-expand') setUseOData(true)
-                        }}
-                        disabled={useOData}
-                      >
-                        <SelectTrigger id="fm-method">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {useOData
-                            ? ODATA_METHODS.map(m => (
-                              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                            ))
-                            : FM_METHODS.map(m => (
+                    {useOData && (
+                      <div className="space-y-2">
+                        <Label htmlFor="fm-method">OData Method *</Label>
+                        <Select value={formData.fmMethod || 'odata-filter'} onValueChange={v => updateField('fmMethod', v)}>
+                          <SelectTrigger id="fm-method">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ODATA_METHODS.map(m => (
                               <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                             ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
 
                   {/* OData toggle — only shown when OData tables available */}
@@ -900,13 +1053,7 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                         checked={useOData}
                         onCheckedChange={checked => {
                           setUseOData(checked)
-                          if (checked) {
-                            updateField('fmMethod', 'odata-filter')
-                            updateField('category', 'Custom')
-                          } else {
-                            updateField('fmMethod', 'find')
-                            updateField('category', 'Find')
-                          }
+                          updateField('fmMethod', checked ? 'odata-filter' : 'find')
                         }}
                       />
                       <Label htmlFor="use-odata" className="text-sm cursor-pointer">
@@ -921,156 +1068,78 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                     </div>
                   )}
 
+                  {schemaHint && (
+                    <p className="flex items-center gap-1 text-xs text-amber-500">
+                      <AlertTriangle className="size-3 shrink-0" />{schemaHint}
+                    </p>
+                  )}
+
                   {/* ── OData mode ── */}
                   {useOData ? (
                     <ODataFilterBuilder
                       tables={compiledSchema?.tables ?? []}
+                      relationships={compiledSchema?.relationships ?? []}
                       table={odataTable}
                       filterExpression={odataFilterExpression}
                       expandTables={odataExpandTables}
-                      onTableChange={t => {
-                        setOdataTable(t)
-                        const hc = {
-                          ...formData.handlerConfig,
-                          method: formData.fmMethod,
-                          table: t,
-                          filterExpression: odataFilterExpression,
-                          expandTables: odataExpandTables,
-                        }
-                        updateField('handlerConfig', hc)
-                        setHandlerConfigStr(JSON.stringify(hc, null, 2))
-                      }}
-                      onFilterChange={expr => {
-                        setOdataFilterExpression(expr)
-                        const hc = {
-                          ...formData.handlerConfig,
-                          method: formData.fmMethod,
-                          table: odataTable,
-                          filterExpression: expr,
-                          expandTables: odataExpandTables,
-                        }
-                        updateField('handlerConfig', hc)
-                        setHandlerConfigStr(JSON.stringify(hc, null, 2))
-                      }}
-                      onExpandChange={tables => {
-                        setOdataExpandTables(tables)
-                        const hc = {
-                          ...formData.handlerConfig,
-                          method: formData.fmMethod,
-                          table: odataTable,
-                          filterExpression: odataFilterExpression,
-                          expandTables: tables,
-                        }
-                        updateField('handlerConfig', hc)
-                        setHandlerConfigStr(JSON.stringify(hc, null, 2))
-                      }}
+                      onTableChange={setOdataTable}
+                      onFilterChange={setOdataFilterExpression}
+                      onExpandChange={setOdataExpandTables}
                     />
                   ) : (
                     <>
-                      {/* ── FM Data API mode ── */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="fm-layout">FM Layout</Label>
-                          <Select
-                            value={formData.fmLayout || 'none'}
-                            onValueChange={v => {
-                              const val = v === 'none' ? '' : v
-                              updateField('fmLayout', val)
-                              const hc = {
-                                ...formData.handlerConfig,
-                                layout: val,
-                                fieldMappings: {},
+                      {/* ── FM Data API mode: Single Table / Multi-Table ── */}
+                      <div className="flex items-center gap-1 rounded-md bg-muted p-0.5 w-fit">
+                        {(['single', 'multi'] as const).map(m => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => {
+                              setTableMode(m)
+                              setLayoutError(null)
+                              if (m === 'single' && multiTableSteps.length > 1) {
+                                setMultiTableSteps(steps => steps.slice(0, 1))
                               }
-                              updateField('handlerConfig', hc)
-                              setHandlerConfigStr(JSON.stringify(hc, null, 2))
                             }}
+                            className={cn(
+                              'text-xs px-3 py-1.5 rounded transition-colors',
+                              tableMode === m
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
                           >
-                            <SelectTrigger id="fm-layout" className={cn('text-sm', layoutError && 'border-destructive')}>
-                              <SelectValue placeholder="Select layout" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none" className="text-muted-foreground italic">
-                                None
-                              </SelectItem>
-                              {availableLayouts.map(l => (
-                                <SelectItem key={l} value={l}>{l}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          {layoutError ? (
-                            <p className="flex items-center gap-1 text-xs text-destructive">
-                              <XCircle className="size-3 shrink-0" />{layoutError}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">
-                              The FileMaker layout to target for data operations
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="fm-script">FM Script</Label>
-                          <Select
-                            value={formData.fmScript || 'none'}
-                            onValueChange={v => updateField('fmScript', v === 'none' ? '' : v)}
-                            disabled={formData.fmMethod !== 'script'}
-                          >
-                            <SelectTrigger id="fm-script" className="text-sm">
-                              <SelectValue placeholder="Select script" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none" className="text-muted-foreground italic">
-                                None
-                              </SelectItem>
-                              {availableScripts.map(s => (
-                                <SelectItem key={s} value={s}>{s}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
+                            {m === 'single' ? 'Single Table' : 'Multi-Table'}
+                          </button>
+                        ))}
                       </div>
 
-                      {/* Record ID field (for read/update/delete/get) */}
-                      {(formData.fmMethod === 'read' ||
-                        formData.fmMethod === 'update' ||
-                        formData.fmMethod === 'delete' ||
-                        formData.fmMethod === 'get') && (
-                        <div className="space-y-2">
-                          <Label htmlFor="record-id-field">Record ID Field Mapping</Label>
-                          <Input
-                            id="record-id-field"
-                            value={formData.recordIdField}
-                            onChange={e => updateField('recordIdField', e.target.value)}
-                            placeholder="recordId"
-                            className="font-mono text-sm w-64"
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            The field name used to identify records in your schema
-                          </p>
-                        </div>
+                      {layoutError && (
+                        <p className="flex items-center gap-1 text-xs text-destructive">
+                          <XCircle className="size-3 shrink-0" />{layoutError}
+                        </p>
                       )}
 
-                      {/* Field Mapping Builder */}
-                      <div className="bg-muted/10 rounded-lg p-4 border">
-                        <FieldMappingBuilder
-                          mappings={recordToMappings(
-                            formData.handlerConfig?.fieldMappings as Record<string, string>,
-                          )}
-                          fields={layoutFields}
-                          onChange={mappings => {
-                            const record = mappingsToRecord(mappings)
-                            const hc = { ...formData.handlerConfig, fieldMappings: record }
-                            updateField('handlerConfig', hc)
-                            setHandlerConfigStr(JSON.stringify(hc, null, 2))
-                          }}
-                        />
-                        <p className="text-[11px] text-muted-foreground mt-3">
-                          Map input parameters (from Input Schema) to the actual FileMaker field names.
-                          Selecting an FM field auto-fills the input param name.
-                        </p>
-                      </div>
+                      <MultiTableBuilder
+                        steps={multiTableSteps}
+                        connectionId={formData.handlerConfig?.connectionId as string || ''}
+                        serverData={serverData}
+                        compiledSchema={compiledSchema}
+                        singleMode={tableMode === 'single'}
+                        onChange={steps => {
+                          setMultiTableSteps(steps)
+                          setLayoutError(null)
+                        }}
+                      />
                     </>
                   )}
+
+                  {/* Extra Parameters — inputs with no matching layout field:
+                      pagination, sort, recordId, script args, OData {placeholders} */}
+                  <ExtraParamsBuilder
+                    params={extraParams}
+                    onChange={setExtraParams}
+                    lockedNames={['recordId']}
+                  />
 
                   {/* Live Handler Config Preview */}
                   <HandlerPreview handlerConfig={liveHandlerConfig} />
@@ -1097,7 +1166,6 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                       <div className="px-4 pb-4 space-y-2">
                         <p className="text-xs text-amber-500">
                           ⚠ Advanced JSON overrides the form fields above on save.
-                          For multi-table tools use the Multi-Table tab instead.
                         </p>
                         <Textarea
                           className="font-mono text-xs min-h-[140px] custom-scrollbar"
@@ -1117,39 +1185,11 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                   </div>
                 </TabsContent>
 
-                {/* ══════════ MULTI-TABLE TAB ══════════ */}
-                <TabsContent value="multi-table" className="mt-0 space-y-4">
-                  <div>
-                    <h3 className="text-sm font-semibold">Multi-Table Steps</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      Build sequential FM Data API steps or OData calls that chain together across
-                      multiple layouts or tables. Use this for cross-table lookups, OData $expand,
-                      and atomic $batch writes.
-                    </p>
-                  </div>
-                  <MultiTableBuilder
-                    steps={multiTableSteps}
-                    connectionId={formData.handlerConfig?.connectionId as string || ''}
-                    serverData={serverData}
-                    compiledSchema={compiledSchema}
-                    onChange={steps => {
-                      setMultiTableSteps(steps)
-                      if (steps.length > 1) updateField('category', 'Multi-Table')
-                    }}
-                  />
-                  {multiTableSteps.length > 0 && (
-                    <p className="text-[11px] text-muted-foreground border border-dashed rounded px-2 py-1.5">
-                      ✓ {multiTableSteps.length} step{multiTableSteps.length > 1 ? 's' : ''}{' '}
-                      configured. These will be saved to{' '}
-                      <code className="font-mono bg-muted px-1 rounded">handlerConfig.steps</code>.
-                    </p>
-                  )}
-                </TabsContent>
-
-                {/* ══════════ TEST TAB ══════════ */}
+                {/* ========== TEST TAB ========== */}
                 <TabsContent value="test" className="mt-0 space-y-4">
-                  {isEditing ? (
-                    <>
+                  {/* Dry-run executes the in-memory toolData directly — no
+                      need to save first, for either a new or existing tool. */}
+                  <>
                       <div className="space-y-2">
                         <Label>Request Body</Label>
                         <p className="text-xs text-muted-foreground">
@@ -1242,6 +1282,15 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                             isSuccess={testResult.status >= 200 && testResult.status < 300}
                           />
 
+                          {/* Output shaping — pick what the MCP client actually gets back */}
+                          {testResult.status >= 200 && testResult.status < 300 && (
+                            <OutputSelectorPicker
+                              data={testResult.data}
+                              value={formData.outputSelector}
+                              onChange={path => updateField('outputSelector', path)}
+                            />
+                          )}
+
                           {/* Expandable raw JSON */}
                           <div className="rounded-lg border overflow-hidden">
                             <button
@@ -1262,32 +1311,53 @@ export function ToolDialog({ prefilledData }: ToolDialogProps) {
                           </div>
                         </div>
                       )}
-                    </>
-                  ) : (
-                    <div className="text-center py-8">
-                      <Play className="size-8 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">
-                        Save the tool first to enable testing
-                      </p>
-                    </div>
-                  )}
-                </TabsContent>
 
-                {/* ══════════ OUTPUT SCHEMA TAB ══════════ */}
-                <TabsContent value="output-schema" className="mt-0">
-                  <SchemaBuilder
-                    value={formData.outputSchema}
-                    onChange={schema => updateField('outputSchema', schema)}
-                    title="Output Schema"
-                    description="Define the expected structure of tool responses"
-                  />
+                      {/* Output Schema — collapsed by default; "Derive Schema"
+                          above fills this in from a real test response and
+                          expands it, or hand-author/adjust it here directly. */}
+                      <div className="rounded-lg border border-border bg-muted/10">
+                        <button
+                          type="button"
+                          onClick={() => setShowOutputSchema(s => !s)}
+                          className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium text-left"
+                        >
+                          <span>
+                            Output Schema{' '}
+                            <span className="text-xs text-muted-foreground font-normal">
+                              (expected shape of the response)
+                            </span>
+                          </span>
+                          {showOutputSchema ? (
+                            <ChevronUp className="size-3.5 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="size-3.5 text-muted-foreground" />
+                          )}
+                        </button>
+                        {showOutputSchema && (
+                          <div className="px-4 pb-4">
+                            <SchemaBuilder
+                              value={formData.outputSchema}
+                              onChange={schema => updateField('outputSchema', schema)}
+                              title="Output Schema"
+                              description="Define the expected structure of tool responses"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </>
                 </TabsContent>
               </div>
             </Tabs>
 
             <DialogFooter className="px-6 py-4 border-t flex-shrink-0">
-              <Button variant="ghost" onClick={() => setShowToolDialog(false)}>
-                Cancel
+              {needsRetest && (
+                <span className="flex items-center gap-1 text-xs text-amber-500 mr-auto">
+                  <AlertTriangle className="size-3 shrink-0" />
+                  {hasEverPassedTest ? 'Config changed — re-test before saving' : 'Test the tool before saving'}
+                </span>
+              )}
+              <Button variant="ghost" onClick={() => handleCloseDialog(false)}>
+                {toolDialogPrefilledData && aiReviewQueue.length > 0 ? 'Skip / Next Tool' : 'Cancel'}
               </Button>
               <Button
                 onClick={handleSave}

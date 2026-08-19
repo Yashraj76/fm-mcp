@@ -91,6 +91,31 @@ async function runTests() {
     console.log('  ✓ recordId not duplicated when already present')
   }
 
+  // ── 5b. multi-step tool with an update step also gets recordId injected ─────
+  // fmMethod here is 'sequential-multi-table' at the top level — the actual
+  // 'update' operation only shows up inside handlerConfig.steps[0].operation.
+  console.log('\nTesting: multi-step tool with an update step → recordId injected')
+  {
+    const result = normalizeTool({
+      name: 'update_related_records',
+      description: 'Update a contact after looking up its account',
+      fmMethod: 'sequential-multi-table',
+      handlerConfig: {
+        connectionId: 'conn-1',
+        method: 'sequential-multi-table',
+        steps: [
+          { stepIndex: 0, api: 'data-api', operation: 'find', layout: 'Accounts', fieldMappings: {} },
+          { stepIndex: 1, api: 'data-api', operation: 'update', layout: 'Contacts', fieldMappings: {} },
+        ],
+      },
+      inputSchema: { type: 'object', properties: {}, required: [] },
+    })
+    const schema = JSON.parse(result.inputSchema)
+    assert.ok(schema.properties.recordId, 'recordId should be injected for a multi-step update')
+    assert.ok(schema.required.includes('recordId'), 'recordId should be in required')
+    console.log('  ✓ recordId injected when any step (not just the top-level fmMethod) needs it')
+  }
+
   // ── 6. Missing description auto-generated ───────────────────────────────────
   console.log('\nTesting: missing description → auto-generated from method + layout')
   {

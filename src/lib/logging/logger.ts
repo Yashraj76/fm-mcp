@@ -72,6 +72,24 @@ export function buildActivityLogData(options: LogOptions) {
   };
 }
 
+/**
+ * Where-clause for fetching a single activity-log entry on behalf of a user.
+ * Server-scoped entries are visible to the server's owner; global
+ * (null-server) entries are visible ONLY to the user who performed them —
+ * without the actorUserId scope, any authenticated user could read any other
+ * user's global activity (e.g. API-key events). Exported as a pure function
+ * so it can be tested without a database connection.
+ */
+export function buildLogEntryAccessWhere(id: string, userId: string) {
+  return {
+    id,
+    OR: [
+      { serverId: null, actorUserId: userId },
+      { server: { userId } },
+    ],
+  };
+}
+
 // Fire-and-forget — never awaited in main request path
 export function log(options: LogOptions): void {
   prisma.activityLog.create({

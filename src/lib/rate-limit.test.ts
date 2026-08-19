@@ -1,5 +1,14 @@
 import assert from 'assert';
-import { classifyRequest, InMemoryLimiter, TIER_CONFIG, type LimitTier, resolveRateLimitMode, checkRateLimit } from './rate-limit';
+import {
+  classifyRequest,
+  InMemoryLimiter,
+  TIER_CONFIG,
+  type LimitTier,
+  checkRateLimit,
+  extractClientIp,
+  parseTrustedProxyCount,
+  rateLimitFailureResult,
+} from './rate-limit';
 
 // ── classifyRequest ───────────────────────────────────────────────────────────
 
@@ -116,51 +125,13 @@ async function testInMemoryLimiter() {
   }
 }
 
-// ── resolveRateLimitMode ──────────────────────────────────────────────────────
-//
-// Redis is optional in every environment, including production. These tests
-// cover the pure decision function directly (rather than the module's
-// process.env-derived singletons, which are fixed for the life of this
-// process) since NODE_ENV/Upstash env vars can't be swapped per-test without
-// reloading the module.
-
-async function testResolveRateLimitMode() {
-  console.log('\nTesting resolveRateLimitMode...\n');
-
-  // 1. Production without any Redis env vars → 'memory' (never throws)
-  {
-    const mode = resolveRateLimitMode({ });
-    assert.strictEqual(mode, 'memory');
-    console.log('  ✓ no Redis env → memory (does not throw, even conceptually "in production")');
-  }
-
-  // 2. URL present but token missing → still 'memory' (partial config is not enough)
-  {
-    const mode = resolveRateLimitMode({ UPSTASH_REDIS_REST_URL: 'https://example.upstash.io' });
-    assert.strictEqual(mode, 'memory');
-    console.log('  ✓ URL only (no token) → memory');
-  }
-
-  // 3. Both Redis env vars present → 'redis'
-  {
-    const mode = resolveRateLimitMode({
-      UPSTASH_REDIS_REST_URL: 'https://example.upstash.io',
-      UPSTASH_REDIS_REST_TOKEN: 'AQIjtoken',
-    });
-    assert.strictEqual(mode, 'redis');
-    console.log('  ✓ both Redis env vars → redis');
-  }
-}
-
 // ── checkRateLimit ────────────────────────────────────────────────────────────
 
 async function testCheckRateLimit() {
   console.log('\nTesting checkRateLimit...\n');
 
-  // This test process has no UPSTASH_REDIS_REST_* env vars set, so the module
-  // singleton falls back to the in-memory limiter regardless of NODE_ENV.
-  // The key behavior under test: it must not throw a config error just
-  // because Redis is absent — API routes should never fail for this reason.
+  // In-memory is the only backend (Redis support was deliberately removed
+  // 2026-07-17). checkRateLimit must never throw in normal operation.
   {
     let threw = false;
     let result: { allowed: boolean; retryAfterSeconds: number } | undefined;
@@ -169,9 +140,9 @@ async function testCheckRateLimit() {
     } catch {
       threw = true;
     }
-    assert.ok(!threw, 'checkRateLimit must not throw when Redis env vars are absent');
+    assert.ok(!threw, 'checkRateLimit must not throw');
     assert.strictEqual(result?.allowed, true, 'first request for a fresh IP should be allowed');
-    console.log('  ✓ checkRateLimit without Redis configured → uses in-memory limiter, does not throw');
+    console.log('  ✓ checkRateLimit uses the in-memory limiter and does not throw');
   }
 
   // 'none' tier always passes through regardless of backend.
@@ -182,14 +153,143 @@ async function testCheckRateLimit() {
   }
 }
 
+// ── extractClientIp ───────────────────────────────────────────────────────────
+
+async function testExtractClientIp() {
+  console.log('\nTesting extractClientIp...\n');
+
+  // 1. Platform-provided IP wins over all headers
+  {
+    const ip = extractClientIp({
+      platformIp: '198.51.100.7',
+      forwardedFor: '1.2.3.4, 5.6.7.8',
+      realIp: '9.9.9.9',
+    });
+    assert.strictEqual(ip, '198.51.100.7');
+    console.log('  ✓ platform IP (req.ip) preferred over headers');
+  }
+
+  // 2. Spoofed left-most XFF entry is ignored — right-most (our proxy's
+  //    contribution) is used with the default trusted hop count of 1.
+  {
+    const ip = extractClientIp({ forwardedFor: '6.6.6.6, 203.0.113.9' });
+    assert.strictEqual(ip, '203.0.113.9', 'must take right-most entry, not client-spoofable left-most');
+    console.log('  ✓ XFF: takes right-most entry (trusted hop), not spoofable left-most');
+  }
+
+  // 3. Single XFF entry (proxy appended the only value)
+  {
+    const ip = extractClientIp({ forwardedFor: '203.0.113.9' });
+    assert.strictEqual(ip, '203.0.113.9');
+    console.log('  ✓ XFF: single entry used as-is');
+  }
+
+  // 4. trustedProxyCount = 2 → second entry from the right
+  {
+    const ip = extractClientIp({
+      forwardedFor: 'spoofed.example, 203.0.113.9, 10.0.0.2',
+      trustedProxyCount: 2,
+    });
+    assert.strictEqual(ip, '203.0.113.9', '2 trusted hops → 2nd entry from the right');
+    console.log('  ✓ XFF: trustedProxyCount=2 takes 2nd entry from the right');
+  }
+
+  // 5. Fewer entries than trusted hops → left-most (everything was added by our proxies)
+  {
+    const ip = extractClientIp({ forwardedFor: '203.0.113.9', trustedProxyCount: 3 });
+    assert.strictEqual(ip, '203.0.113.9');
+    console.log('  ✓ XFF: fewer entries than trusted hops → left-most trusted entry');
+  }
+
+  // 6. trustedProxyCount = 0 → forwarding headers not trusted at all
+  {
+    const ip = extractClientIp({
+      forwardedFor: '6.6.6.6',
+      realIp: '7.7.7.7',
+      trustedProxyCount: 0,
+    });
+    assert.strictEqual(ip, '', 'no trusted proxies → headers ignored');
+    const withPlatform = extractClientIp({
+      platformIp: '198.51.100.7',
+      forwardedFor: '6.6.6.6',
+      trustedProxyCount: 0,
+    });
+    assert.strictEqual(withPlatform, '198.51.100.7', 'platform IP still used');
+    console.log('  ✓ trustedProxyCount=0 ignores headers, platform IP still works');
+  }
+
+  // 7. x-real-ip fallback when XFF absent
+  {
+    const ip = extractClientIp({ realIp: '203.0.113.5' });
+    assert.strictEqual(ip, '203.0.113.5');
+    console.log('  ✓ x-real-ip used when XFF is absent');
+  }
+
+  // 8. Garbage / non-IP-shaped values are rejected, not used as limiter keys
+  {
+    assert.strictEqual(extractClientIp({ forwardedFor: 'unknown' }), '');
+    assert.strictEqual(extractClientIp({ forwardedFor: '<script>, ' }), '');
+    assert.strictEqual(extractClientIp({}), '');
+    console.log('  ✓ garbage header values → empty string (rate limiting skipped safely)');
+  }
+
+  // 9. IPv6 and whitespace handling
+  {
+    assert.strictEqual(extractClientIp({ forwardedFor: ' 2001:db8::1 , 2001:db8::2 ' }), '2001:db8::2');
+    console.log('  ✓ IPv6 entries and surrounding whitespace handled');
+  }
+}
+
+// ── parseTrustedProxyCount ────────────────────────────────────────────────────
+
+async function testParseTrustedProxyCount() {
+  console.log('\nTesting parseTrustedProxyCount...\n');
+
+  assert.strictEqual(parseTrustedProxyCount(undefined), 1);
+  assert.strictEqual(parseTrustedProxyCount(''), 1);
+  assert.strictEqual(parseTrustedProxyCount('garbage'), 1);
+  assert.strictEqual(parseTrustedProxyCount('-2'), 1);
+  assert.strictEqual(parseTrustedProxyCount('1.5'), 1);
+  console.log('  ✓ missing/invalid values default to 1');
+
+  assert.strictEqual(parseTrustedProxyCount('0'), 0);
+  assert.strictEqual(parseTrustedProxyCount('2'), 2);
+  console.log('  ✓ valid integer counts (including 0) are honored');
+}
+
+// ── rateLimitFailureResult (limiter backend error policy) ────────────────────
+
+async function testRateLimitFailureResult() {
+  console.log('\nTesting rateLimitFailureResult...\n');
+
+  // Auth fails CLOSED: a limiter outage must not disable brute-force protection.
+  {
+    const result = rateLimitFailureResult('auth');
+    assert.strictEqual(result.allowed, false, 'auth tier must fail closed on limiter error');
+    assert.ok(result.retryAfterSeconds >= 1, 'denied result carries a Retry-After');
+    console.log('  ✓ auth tier fails closed (denied) on limiter error');
+  }
+
+  // Every other tier fails OPEN: a limiter outage must not take down the app.
+  {
+    for (const tier of ['mcp', 'mutation', 'read', 'none'] as LimitTier[]) {
+      const result = rateLimitFailureResult(tier);
+      assert.strictEqual(result.allowed, true, `${tier} tier must fail open on limiter error`);
+    }
+    console.log('  ✓ mcp/mutation/read/none tiers fail open (allowed) on limiter error');
+  }
+}
+
 // ── runner ────────────────────────────────────────────────────────────────────
 
 async function runTests() {
   console.log('🚀 Starting Rate-Limit Tests...\n');
   await testClassifyRequest();
   await testInMemoryLimiter();
-  await testResolveRateLimitMode();
   await testCheckRateLimit();
+  await testExtractClientIp();
+  await testParseTrustedProxyCount();
+  await testRateLimitFailureResult();
   console.log('\n🎉 ALL RATE-LIMIT TESTS PASSED! 🎉\n');
 }
 

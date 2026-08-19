@@ -45,6 +45,19 @@ export const GET = withAuth(async (_request, { params, userId }) => {
       deployments: {
         orderBy: { createdAt: 'desc' },
         take: 10,
+        // Exclude the snapshot column (a full server+tools JSON blob) from the
+        // list — the latest deployment's snapshot is grafted back below.
+        select: {
+          id: true,
+          serverId: true,
+          branchId: true,
+          version: true,
+          changelog: true,
+          status: true,
+          isLive: true,
+          deployedAt: true,
+          createdAt: true,
+        },
       },
       apiKey: true,
       _count: {
@@ -59,6 +72,17 @@ export const GET = withAuth(async (_request, { params, userId }) => {
 
     if (!server) {
       return apiNotFound('Server not found')
+    }
+
+    // The "Deployed Tools" tab reads deployments[0].snapshot — fetch that one
+    // blob rather than pulling snapshots for all 10 listed deployments.
+    const deployments = (server as { deployments?: Array<{ id: string; snapshot?: string }> }).deployments
+    if (deployments && deployments.length > 0) {
+      const latest = await db.deployment.findUnique({
+        where: { id: deployments[0].id },
+        select: { snapshot: true },
+      })
+      deployments[0].snapshot = latest?.snapshot
     }
 
     return apiSuccess(toSafeServer(server))

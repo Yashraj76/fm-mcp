@@ -5,17 +5,27 @@ import { z, ZodError } from 'zod'
 import { encrypt } from '@/lib/crypto'
 import { withAuth } from "@/lib/auth/api-guard";
 import { logger } from '@/lib/logger'
+import { assertPublicHost } from '@/lib/net/ssrf-guard'
 
 const createConnectionSchema = z.object({
   name: z.string().min(1, 'Name is required'),
-  host: z.string().min(1, 'Host is required'),
+  // SSRF guard: reject loopback/private/link-local/metadata hosts, checked
+  // again after DNS resolution. Requires parseAsync.
+  host: z.string().min(1, 'Host is required').superRefine(async (host, ctx) => {
+    try {
+      await assertPublicHost(host)
+    } catch (e) {
+      ctx.addIssue({ code: 'custom', message: e instanceof Error ? e.message : 'Host is not allowed' })
+    }
+  }),
   port: z.number().int().min(1).max(65535).default(443),
   database: z.string().min(1, 'Database name is required'),
   username: z.string().min(1, 'Username is required'),
   password: z.string().min(1, 'Password is required'),
-  authType: z.string().default('basic'),
-  clientId: z.string().optional(),
-  clientSecret: z.string().optional(),
+  // Basic is the only auth type FileMakerClient.login() implements. Widen this
+  // (and the update schema + connection-dialog Select) only alongside real
+  // OAuth/Claris ID login flows.
+  authType: z.literal('basic', 'Only Basic authentication is supported').default('basic'),
   sslVerify: z.boolean().default(true),
   serverConnectionId: z.string().optional(), // FK to FMServerConnection
 })
@@ -76,7 +86,7 @@ export const GET = withAuth(async (req, { params, userId }) => {
 export const POST = withAuth(async (request, { params, userId }) => {
     try {
     const body = await request.json()
-    const parsed = createConnectionSchema.parse(body)
+    const parsed = await createConnectionSchema.parseAsync(body)
 
     // Verify serverConnectionId belongs to user
     if (parsed.serverConnectionId) {
@@ -102,8 +112,6 @@ export const POST = withAuth(async (request, { params, userId }) => {
         password: encryptedPassword,
         authType: parsed.authType,
         sslVerify: parsed.sslVerify,
-        clientId: parsed.clientId ?? null,
-        clientSecret: parsed.clientSecret ? encrypt(parsed.clientSecret) : null,
         ...(parsed.serverConnectionId ? { serverConnectionId: parsed.serverConnectionId } : {}),
       },
       select: {

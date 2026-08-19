@@ -179,6 +179,80 @@ async function runTests() {
     }
   }
 
+  // ── 5b. recordId required for multi-step tools with update/delete/get ────
+  console.log('\nTesting recordId requirement for multi-step tools...')
+  {
+    // fmMethod is 'sequential-multi-table' at the top level — the update
+    // operation only shows up inside steps[0].operation.
+    const errors = validateToolForSave(validTool({
+      fmMethod: 'sequential-multi-table',
+      handlerConfig: JSON.stringify({
+        connectionId: 'conn_abc',
+        method: 'sequential-multi-table',
+        steps: [{ stepIndex: 0, api: 'data-api', operation: 'update', layout: 'Contacts', fieldMappings: {} }],
+      }),
+      inputSchema: JSON.stringify({ type: 'object', properties: {} }),
+    }))
+    assertFieldError(errors, 'inputSchema')
+    console.log('  ✓ Multi-step update without recordId produces inputSchema error')
+  }
+  {
+    const errors = validateToolForSave(validTool({
+      fmMethod: 'sequential-multi-table',
+      handlerConfig: JSON.stringify({
+        connectionId: 'conn_abc',
+        method: 'sequential-multi-table',
+        steps: [{ stepIndex: 0, api: 'data-api', operation: 'update', layout: 'Contacts', fieldMappings: {} }],
+      }),
+      inputSchema: JSON.stringify({ type: 'object', properties: { recordId: { type: 'string' } } }),
+    }))
+    assertNoFieldError(errors, 'inputSchema')
+    console.log('  ✓ Multi-step update with recordId passes inputSchema check')
+  }
+
+  // ── 5c. fieldMappings keys must exist in inputSchema.properties ──────────
+  console.log('\nTesting fieldMappings ↔ inputSchema cross-check...')
+  {
+    const errors = validateToolForSave(validTool({
+      handlerConfig: JSON.stringify({
+        connectionId: 'conn_abc',
+        method: 'find',
+        layout: 'Contacts',
+        fieldMappings: { email: 'Email_FM' },
+      }),
+      inputSchema: JSON.stringify({ type: 'object', properties: { name: { type: 'string' } } }), // no "email"
+    }))
+    assertFieldError(errors, 'inputSchema')
+    console.log('  ✓ fieldMappings key missing from inputSchema produces inputSchema error')
+  }
+  {
+    const errors = validateToolForSave(validTool({
+      handlerConfig: JSON.stringify({
+        connectionId: 'conn_abc',
+        method: 'find',
+        layout: 'Contacts',
+        fieldMappings: { email: 'Email_FM' },
+      }),
+      inputSchema: JSON.stringify({ type: 'object', properties: { email: { type: 'string' } } }),
+    }))
+    assertNoFieldError(errors, 'inputSchema')
+    console.log('  ✓ fieldMappings key present in inputSchema passes')
+  }
+  {
+    // Per-step fieldMappings (multi-table shape) are checked too.
+    const errors = validateToolForSave(validTool({
+      fmMethod: 'sequential-multi-table',
+      handlerConfig: JSON.stringify({
+        connectionId: 'conn_abc',
+        method: 'sequential-multi-table',
+        steps: [{ stepIndex: 0, api: 'data-api', operation: 'find', layout: 'Contacts', fieldMappings: { email: 'Email_FM' } }],
+      }),
+      inputSchema: JSON.stringify({ type: 'object', properties: {} }),
+    }))
+    assertFieldError(errors, 'inputSchema')
+    console.log('  ✓ per-step fieldMappings key missing from inputSchema produces inputSchema error')
+  }
+
   // ── 6. Multiple errors returned at once ──────────────────────────────────
 
   console.log('\nTesting multiple simultaneous errors...')

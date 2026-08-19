@@ -112,6 +112,7 @@ async function handleMcpRequest(
               try {
                 const result = await executeMcpTool(tool, toolParams as Record<string, any>, {
                   branchId: targetBranch?.id ?? null,
+                  branchConnectionOverride: targetBranch?.connectionOverride ?? null,
                 })
                 return {
                   content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],

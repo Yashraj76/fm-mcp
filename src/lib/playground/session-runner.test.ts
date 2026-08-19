@@ -1,6 +1,6 @@
 import assert from 'assert'
 import { prisma } from '../prisma'
-import { resolveToolForStep } from './session-runner'
+import { resolveToolForStep, runPlaygroundSession } from './session-runner'
 
 // ── shared fixtures ───────────────────────────────────────────────────────────
 
@@ -169,6 +169,82 @@ async function runTests() {
     assert.ok(tool.handlerConfig.includes('conn-1'), 'handlerConfig must remain from base when no override')
     assert.ok(Array.isArray(tool.server?.connections), 'server.connections must be present')
     console.log('  ✓ null overrideData → base tool fields preserved unchanged')
+  }
+
+  // ── 10. runPlaygroundSession synthesizes answerText via injected callAI ──────
+  console.log('\nTesting: runPlaygroundSession synthesizes answerText via injected callAI')
+  {
+    const sessionStore: Record<string, any> = { 'session-ok': { id: 'session-ok', stepLog: '[]' } }
+    ;(prisma as any).playgroundSession = {
+      findUnique: async ({ where }: any) => sessionStore[where.id] ?? null,
+      update: async ({ where, data }: any) => {
+        sessionStore[where.id] = { ...sessionStore[where.id], ...data }
+        return sessionStore[where.id]
+      },
+    }
+    ;(prisma as any).tool = {
+      findFirst: async () => ({
+        id: 'sys-1', name: 'add_numbers', serverId: 'server-1',
+        category: 'system', fmMethod: 'add',
+        handlerConfig: JSON.stringify({ operation: 'add' }),
+        inputSchema: '{}', description: 'add', isEnabled: true,
+        // Present so resolveToolConnection doesn't throw — unused by system tools.
+        server: { connections: [{ connectionId: 'conn-x', connection: { id: 'conn-x' } }] },
+      }),
+    }
+
+    const plan = {
+      intent: 'Add 2 and 3',
+      steps: [{ stepIndex: 0, toolName: 'add_numbers', reason: 'sum', params: { values: [2, 3] } }],
+    }
+
+    await runPlaygroundSession('session-ok', plan as any, 'server-1', undefined, 'user-1', {
+      callAI: async () => 'The sum is 5.',
+    })
+
+    const finalJob = sessionStore['session-ok']
+    assert.strictEqual(finalJob.status, 'done')
+    const finalResult = JSON.parse(finalJob.finalResult)
+    assert.strictEqual(finalResult.answerText, 'The sum is 5.')
+    console.log('  ✓ answerText set from the injected summarizer')
+  }
+
+  // ── 11. Summarizer failure never fails the session ────────────────────────────
+  console.log('\nTesting: runPlaygroundSession survives a callAI failure — session still completes')
+  {
+    const sessionStore: Record<string, any> = { 'session-ai-fail': { id: 'session-ai-fail', stepLog: '[]' } }
+    ;(prisma as any).playgroundSession = {
+      findUnique: async ({ where }: any) => sessionStore[where.id] ?? null,
+      update: async ({ where, data }: any) => {
+        sessionStore[where.id] = { ...sessionStore[where.id], ...data }
+        return sessionStore[where.id]
+      },
+    }
+    ;(prisma as any).tool = {
+      findFirst: async () => ({
+        id: 'sys-1', name: 'add_numbers', serverId: 'server-1',
+        category: 'system', fmMethod: 'add',
+        handlerConfig: JSON.stringify({ operation: 'add' }),
+        inputSchema: '{}', description: 'add', isEnabled: true,
+        server: { connections: [{ connectionId: 'conn-x', connection: { id: 'conn-x' } }] },
+      }),
+    }
+
+    const plan = {
+      intent: 'Add 2 and 3',
+      steps: [{ stepIndex: 0, toolName: 'add_numbers', reason: 'sum', params: { values: [2, 3] } }],
+    }
+
+    await runPlaygroundSession('session-ai-fail', plan as any, 'server-1', undefined, 'user-1', {
+      callAI: async () => { throw new Error('AI API key not configured') },
+    })
+
+    const finalJob = sessionStore['session-ai-fail']
+    assert.strictEqual(finalJob.status, 'done', 'Session must still complete despite summarizer failure')
+    const finalResult = JSON.parse(finalJob.finalResult)
+    assert.strictEqual(finalResult.answerText, undefined, 'answerText absent when summarizer fails')
+    assert.ok(finalResult.allResults, 'Raw results remain available as fallback')
+    console.log('  ✓ Summarizer failure does not fail the session — raw results still returned')
   }
 
   console.log('\n🎉 ALL SESSION RUNNER BRANCH TESTS PASSED! 🎉')

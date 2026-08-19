@@ -7,7 +7,9 @@ import { logger } from '@/lib/logger'
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-// POST /api/branches/[id]/revert - Revert branch tools back to main state
+// POST /api/branches/[id]/revert - "Reset to Main": discards this branch's
+// tool overrides and re-clones main's *current* tools. Not a history-based
+// revert to an earlier branch state — there is no such feature yet.
 export const POST = withAuth(async (_, { params, userId }) => {
     try {
     const branchId = params.id;
@@ -28,7 +30,7 @@ export const POST = withAuth(async (_, { params, userId }) => {
 
     if (branch.isDefault || branch.isProtected) {
       return NextResponse.json(
-        { success: false, error: 'Cannot revert the main branch', code: 'FORBIDDEN' },
+        { success: false, error: 'Cannot reset the main branch', code: 'FORBIDDEN' },
         { status: 403 }
       );
     }
@@ -90,11 +92,11 @@ export const POST = withAuth(async (_, { params, userId }) => {
 
     return NextResponse.json({
       success: true,
-      message: 'Branch reverted to main successfully',
+      message: 'Branch reset to main successfully',
       data: { toolCount: mainTools.length },
     });
     } catch (error) {
-    logger.error({ err: error }, '[API POST Revert Branch Error]');
+    logger.error({ err: error }, '[API POST Reset-to-Main Branch Error]');
     return NextResponse.json(
       { success: false, error: 'Internal server error', code: 'SERVER_ERROR' },
       { status: 500 }

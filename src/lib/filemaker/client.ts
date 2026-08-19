@@ -4,6 +4,7 @@ import { decrypt } from '../crypto'
 import { safeParseJSON } from '../utils/safe-parse'
 import { sanitizeText } from '../utils/sanitizer'
 import { logger } from '../logger'
+import { assertPublicHost } from '../net/ssrf-guard'
 
 /**
  * Structured error thrown by FileMakerClient.
@@ -164,6 +165,7 @@ export class FileMakerClient {
   private token: string | null = null
   private baseUrl: string
   private dispatcher: Agent
+  private hostCheck: Promise<unknown> | null = null
 
   constructor(config: FMConnection) {
     this.config = config
@@ -183,6 +185,12 @@ export class FileMakerClient {
   }
 
   private async fetch(path: string, options: RequestInit = {}): Promise<FMResponse> {
+    // Defense-in-depth SSRF check: hosts are validated at connection
+    // create/update, but re-check here (once per client instance) in case a
+    // disallowed host reached the DB some other way or now resolves internally.
+    if (!this.hostCheck) this.hostCheck = assertPublicHost(this.config.host)
+    await this.hostCheck
+
     const url = `${this.baseUrl}${path}`
     const headers = new Headers(options.headers || {})
     
@@ -240,6 +248,18 @@ export class FileMakerClient {
 
 
   async login() {
+    // Only HTTP Basic is implemented. Legacy rows may still hold 'oauth' or
+    // 'clamid' (options the UI once offered but that never worked) — fail
+    // loudly with a clear message instead of silently attempting Basic with
+    // credentials that were never meant for it.
+    if (this.config.authType && this.config.authType !== 'basic') {
+      throw new FileMakerError(
+        '',
+        0,
+        `Authentication type "${this.config.authType}" is not supported — edit the connection and use Basic authentication.`,
+      )
+    }
+
     const username = this.config.username
     const password = decrypt(this.config.password)
     const auth = Buffer.from(`${username}:${password}`).toString('base64')
@@ -258,6 +278,20 @@ export class FileMakerClient {
     } catch (err: unknown) {
       logger.error({ errMsg: err instanceof Error ? err.message : String(err) }, '[FileMakerClient] login failed')
       throw err
+    }
+  }
+
+  /**
+   * Destroy this client's undici Agent, releasing its keep-alive sockets.
+   * Each FileMakerClient owns its own Agent (created in the constructor —
+   * nothing shared), so this must be called once the client is done or the
+   * pool leaks one Agent per operation. The client is unusable afterwards.
+   */
+  async close(): Promise<void> {
+    try {
+      await this.dispatcher.destroy()
+    } catch (err: unknown) {
+      logger.warn({ errMsg: err instanceof Error ? err.message : String(err) }, '[FileMakerClient] dispatcher destroy error')
     }
   }
 
@@ -305,8 +339,25 @@ export class FileMakerClient {
     })
   }
 
+  /**
+   * FileMaker internal record ids are strictly numeric. Validate before
+   * building the path so a crafted "id" (e.g. "1/../../other") can never
+   * change the request target, then encode as defense-in-depth.
+   */
+  private static encodeRecordId(recordId: string | number): string {
+    const id = String(recordId).trim()
+    if (!/^\d+$/.test(id)) {
+      throw new FileMakerError(
+        '',
+        400,
+        `Invalid FileMaker record id "${id}" — expected the numeric internal record id.`,
+      )
+    }
+    return encodeURIComponent(id)
+  }
+
   async getRecord(layout: string, recordId: string) {
-    return this.fetch(`/layouts/${encodeURIComponent(layout)}/records/${recordId}`, {
+    return this.fetch(`/layouts/${encodeURIComponent(layout)}/records/${FileMakerClient.encodeRecordId(recordId)}`, {
       method: 'GET'
     })
   }
@@ -319,14 +370,14 @@ export class FileMakerClient {
   }
 
   async updateRecord(layout: string, recordId: string, fieldData: Record<string, unknown>) {
-    return this.fetch(`/layouts/${encodeURIComponent(layout)}/records/${recordId}`, {
+    return this.fetch(`/layouts/${encodeURIComponent(layout)}/records/${FileMakerClient.encodeRecordId(recordId)}`, {
       method: 'PATCH',
       body: JSON.stringify({ fieldData })
     })
   }
 
   async deleteRecord(layout: string, recordId: string) {
-    return this.fetch(`/layouts/${encodeURIComponent(layout)}/records/${recordId}`, {
+    return this.fetch(`/layouts/${encodeURIComponent(layout)}/records/${FileMakerClient.encodeRecordId(recordId)}`, {
       method: 'DELETE'
     })
   }

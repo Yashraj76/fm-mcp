@@ -21,7 +21,6 @@ import {
   Server, CircleDot, Layout, ServerIcon, ChevronRight, CheckCircle2,
 } from 'lucide-react'
 import { useState } from 'react'
-import { formatDistanceToNow } from 'date-fns'
 import { SchemaBrowser } from './schema-browser'
 import { ServerConnectionDialog } from './server-connection-dialog'
 import { DatabasePicker } from './database-picker'
@@ -207,7 +206,7 @@ export function ConnectionsPage() {
   return (
     <div className="p-4 md:p-6 space-y-8">
 
-      {/* ════ FM SERVERS SECTION ════ */}
+      {/* ==== FM SERVERS SECTION ==== */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -325,7 +324,7 @@ export function ConnectionsPage() {
         )}
       </section>
 
-      {/* ════ FILE CONNECTIONS SECTION ════ */}
+      {/* ==== FILE CONNECTIONS SECTION ==== */}
       <section>
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -418,37 +417,36 @@ export function ConnectionsPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Server className="size-3" />
-                        <span className="truncate">{conn.database}</span>
+                      <div className="flex items-end justify-between gap-2">
+                        <div className="space-y-1 min-w-0">
+                          <Badge variant="outline" className={`text-[10px] ${config.badge}`}>
+                            <CircleDot className="size-2.5 mr-1" />
+                            {config.label}
+                          </Badge>
+                          {conn.lastError && (
+                            <p className="text-[11px] text-red-400 truncate">{conn.lastError}</p>
+                          )}
+                          {conn.hasBrowsedSchema && (conn.schemaLayoutCount > 0 || conn.schemaTableCount > 0) ? (
+                            <p className="text-[11px] text-emerald-400 flex items-center gap-1">
+                              <CheckCircle2 className="size-3 shrink-0" />
+                              {[
+                                conn.schemaLayoutCount > 0 && `${conn.schemaLayoutCount} layout${conn.schemaLayoutCount !== 1 ? 's' : ''}`,
+                                conn.schemaTableCount > 0 && `${conn.schemaTableCount} OData table${conn.schemaTableCount !== 1 ? 's' : ''}`,
+                              ].filter(Boolean).join(', ')} selected
+                            </p>
+                          ) : conn.hasBrowsedSchema ? (
+                            <p className="text-[11px] text-amber-400">Schema browsed — no selection saved yet</p>
+                          ) : (
+                            <p className="text-[11px] text-muted-foreground/50">No schema loaded — click Browse Schema</p>
+                          )}
+                        </div>
+                        <button
+                          onClick={() => setSchemaBrowserId(conn.id)}
+                          className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-0.5 shrink-0"
+                        >
+                          Browse Schema <ChevronRight className="w-3 h-3" />
+                        </button>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <Badge variant="outline" className={`text-[10px] ${config.badge}`}>
-                          <CircleDot className="size-2.5 mr-1" />
-                          {config.label}
-                        </Badge>
-                        <span className="text-[11px] text-muted-foreground">
-                          {conn.lastTested
-                            ? <span suppressHydrationWarning>{formatDistanceToNow(new Date(conn.lastTested), { addSuffix: false })} ago</span>
-                            : 'Not tested'}
-                        </span>
-                      </div>
-                      {conn.lastError && (
-                        <p className="text-[11px] text-red-400 truncate">{conn.lastError}</p>
-                      )}
-                      {conn.hasBrowsedSchema && (conn.schemaLayoutCount > 0 || conn.schemaTableCount > 0) ? (
-                        <p className="text-[11px] text-emerald-400 flex items-center gap-1">
-                          <CheckCircle2 className="size-3 shrink-0" />
-                          {[
-                            conn.schemaLayoutCount > 0 && `${conn.schemaLayoutCount} layout${conn.schemaLayoutCount !== 1 ? 's' : ''}`,
-                            conn.schemaTableCount > 0 && `${conn.schemaTableCount} OData table${conn.schemaTableCount !== 1 ? 's' : ''}`,
-                          ].filter(Boolean).join(', ')} selected
-                        </p>
-                      ) : conn.hasBrowsedSchema ? (
-                        <p className="text-[11px] text-amber-400">Schema browsed — no selection saved yet</p>
-                      ) : (
-                        <p className="text-[11px] text-muted-foreground/50">No schema loaded — click Browse Schema</p>
-                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -471,7 +469,7 @@ export function ConnectionsPage() {
         )}
       </section>
 
-      {/* ════ DIALOGS ════ */}
+      {/* ==== DIALOGS ==== */}
 
       {/* Server Connection Dialog */}
       <ServerConnectionDialog

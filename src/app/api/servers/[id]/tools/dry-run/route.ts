@@ -15,11 +15,11 @@ export const POST = withAuth(async (req, { params, userId }) => {
   try {
     const { id: serverId } = params
     const rawBody = await req.text()
-    const bodyObj = safeParseJSON<{ toolData: Record<string, unknown>; body: Record<string, unknown> }>(rawBody, null)
+    const bodyObj = safeParseJSON<{ toolData: Record<string, unknown>; body: Record<string, unknown>; branchId?: string }>(rawBody, null)
     if (!bodyObj || typeof bodyObj !== 'object') {
       return apiError('Invalid JSON request body', 'VALIDATION_ERROR', 400)
     }
-    const { toolData, body } = bodyObj
+    const { toolData, body, branchId } = bodyObj
 
     const server = await db.mcpServer.findFirst({
       where: { id: serverId, userId },
@@ -35,13 +35,22 @@ export const POST = withAuth(async (req, { params, userId }) => {
       return apiError('System tools cannot be dry-run.', 'VALIDATION_ERROR', 400)
     }
 
-    const connectionId = handlerConfig.connectionId as string | undefined
-    let connection = connectionId
-      ? server.connections.find((c: any) => c.connectionId === connectionId)?.connection
+    // A branch's connectionOverride (e.g. a sandbox file for a test branch)
+    // redirects every test execution on that branch, same as live MCP calls —
+    // testing on that branch should never fall through to production data.
+    let connection = branchId
+      ? (await db.branch.findFirst({
+          where: { id: branchId, serverId },
+          include: { connectionOverride: true },
+        }))?.connectionOverride ?? undefined
       : undefined
 
-    if (connectionId && !connection) {
-      return apiError('The specified connection is not attached to this server', 'VALIDATION_ERROR', 400)
+    const connectionId = handlerConfig.connectionId as string | undefined
+    if (!connection && connectionId) {
+      connection = server.connections.find((c: any) => c.connectionId === connectionId)?.connection
+      if (!connection) {
+        return apiError('The specified connection is not attached to this server', 'VALIDATION_ERROR', 400)
+      }
     }
 
     if (!connection) {

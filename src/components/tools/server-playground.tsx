@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { Bot, Send, User, Loader2, CheckCircle2, XCircle, Info, GitBranch, Clock } from 'lucide-react'
+import { Bot, Send, User, Loader2, CheckCircle2, XCircle, Info, GitBranch, Clock, ChevronDown, ChevronUp } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import { ResponseTable } from './response-table'
 import {
   nextIntervalMs,
@@ -57,6 +58,10 @@ export function ServerPlayground({
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  // Raw "Final Output" panel is collapsed by default once a message has a
+  // synthesized answerText (it becomes supplementary detail, not the primary
+  // answer) — expanded by default otherwise so nothing is hidden.
+  const [expandedRawData, setExpandedRawData] = useState<Set<string>>(new Set())
 
   // Holds the session being actively polled.  Separate from messages so that
   // updating messages mid-poll doesn't restart the polling loop.
@@ -247,7 +252,13 @@ export function ServerPlayground({
                         : 'bg-card/80 backdrop-blur-sm border border-border/50 text-card-foreground rounded-tl-sm'
                     }`}
                   >
-                    {msg.content}
+                    {msg.finalOutput?.answerText ? (
+                      <div className="prose-sm [&_p]:my-1.5 [&_ul]:my-1.5 [&_ul]:pl-4 [&_ul]:list-disc [&_li]:my-0.5 [&_strong]:font-semibold [&_code]:bg-muted [&_code]:rounded [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs">
+                        <ReactMarkdown>{msg.finalOutput.answerText}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      msg.content
+                    )}
                   </div>
 
                   {/* Timeout notice */}
@@ -258,20 +269,44 @@ export function ServerPlayground({
                     </div>
                   )}
 
-                  {/* Final Output */}
-                  {msg.finalOutput && (
-                    <div className="w-full mt-3 border border-border/50 rounded-xl overflow-hidden shadow-lg bg-card/90 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-500">
-                      <div className="bg-muted/30 px-4 py-2.5 border-b border-border/50 flex items-center justify-between">
-                        <span className="text-xs font-semibold text-emerald-500 flex items-center gap-2 tracking-wide uppercase">
-                          <CheckCircle2 className="size-4" />
-                          Final Output
-                        </span>
+                  {/* Final Output — the primary answer now lives in the bubble above when
+                      answerText is present, so this becomes supplementary "view raw data"
+                      detail rather than the main output; collapsed by default in that case. */}
+                  {msg.finalOutput && (() => {
+                    const hasAnswer = !!msg.finalOutput.answerText
+                    // expandedRawData tracks whether the user flipped this panel away
+                    // from its default (collapsed when there's an answerText to show
+                    // instead, expanded otherwise) — not the expanded state directly.
+                    const isFlipped = expandedRawData.has(msg.id)
+                    const isExpanded = hasAnswer ? isFlipped : !isFlipped
+                    const toggle = () =>
+                      setExpandedRawData((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(msg.id)) next.delete(msg.id)
+                        else next.add(msg.id)
+                        return next
+                      })
+                    return (
+                      <div className="w-full mt-3 border border-border/50 rounded-xl overflow-hidden shadow-lg bg-card/90 backdrop-blur-sm animate-in fade-in zoom-in-95 duration-500">
+                        <button
+                          type="button"
+                          onClick={toggle}
+                          className="w-full bg-muted/30 px-4 py-2.5 border-b border-border/50 flex items-center justify-between hover:bg-muted/50 transition-colors"
+                        >
+                          <span className="text-xs font-semibold text-emerald-500 flex items-center gap-2 tracking-wide uppercase">
+                            <CheckCircle2 className="size-4" />
+                            {hasAnswer ? 'View Raw Data' : 'Final Output'}
+                          </span>
+                          {isExpanded ? <ChevronUp className="size-3.5 text-muted-foreground" /> : <ChevronDown className="size-3.5 text-muted-foreground" />}
+                        </button>
+                        {isExpanded && (
+                          <div className="p-0 max-h-[350px] overflow-auto custom-scrollbar">
+                            <ResponseTable data={msg.finalOutput} tableConfig={msg.plan?.tableConfig} />
+                          </div>
+                        )}
                       </div>
-                      <div className="p-0 max-h-[350px] overflow-auto custom-scrollbar">
-                        <ResponseTable data={msg.finalOutput} tableConfig={msg.plan?.tableConfig} />
-                      </div>
-                    </div>
-                  )}
+                    )
+                  })()}
                 </div>
               </div>
             ))}

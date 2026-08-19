@@ -15,6 +15,7 @@ const updateToolSchema = z.object({
   category: z.string().nullable().optional(),
   inputSchema: z.string().optional(),
   outputSchema: z.string().nullable().optional(),
+  outputSelector: z.string().nullable().optional(),
   handlerConfig: z.string().optional(),
   fmLayout: z.string().nullable().optional(),
   fmScript: z.string().nullable().optional(),

@@ -249,8 +249,8 @@ async function runTests() {
     console.log('  ✓ AI not called when fewer than 2 layouts have field data')
   }
 
-  // ── 9. Both old (infer-relationships) and new (ai-relationships) paths return
-  //       the same canonical shape from the same input ──────────────────────────
+  // ── 9. Any route wrapping inferRelationships (currently connections/[id]/
+  //       infer-relationships) returns the same canonical shape from the same input ──
   console.log('\nTesting: canonical shape invariant — both routes produce identical structure')
   {
     // Simulate what both routes do: call inferRelationships and wrap the result

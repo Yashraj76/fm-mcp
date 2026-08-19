@@ -6,11 +6,19 @@
  * library.  The route passes its actual DB operations as `deps`; tests pass mocks.
  */
 
+import type { FMConnection } from '@prisma/client'
 import { checkTransport } from './transport-guard'
 import { resolveMcpBypass, BypassInput } from './auth-bypass'
 import { verifyMcpApiKey } from '@/lib/auth/verify-mcp-api-key'
 
 // ─── Public types ──────────────────────────────────────────────────────────────
+
+/** Resolved branch shape — connectionOverride is optional so existing test
+ *  mocks that predate the per-branch connection override remain valid. */
+export interface ResolvedBranch {
+  id: string
+  connectionOverride?: FMConnection | null
+}
 
 export interface McpGatewayDeps {
   /** Look up the API-key record for this server (for bcrypt verification). */
@@ -20,7 +28,7 @@ export interface McpGatewayDeps {
   /** Load the McpServer row — returns null when the server doesn't exist. */
   findServer: (serverId: string) => Promise<{ id: string; name: string; version: string } | null>
   /** Resolve the target branch (preferred → default → null). */
-  resolveServerBranch: (serverId: string, preferredBranchId: string | null) => Promise<{ id: string } | null>
+  resolveServerBranch: (serverId: string, preferredBranchId: string | null) => Promise<ResolvedBranch | null>
   /** Return all non-deleted BranchTool rows with their base Tool merged in. */
   getEffectiveTools: (branchId: string) => Promise<any[]>
 }
@@ -41,7 +49,7 @@ export type McpGatewayOutcome =
   | {
       ok: true
       server: { id: string; name: string; version: string }
-      branch: { id: string } | null
+      branch: ResolvedBranch | null
       tools: any[]
     }
 

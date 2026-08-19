@@ -193,10 +193,11 @@ Return ONLY a valid JSON array. No prose, no markdown, no explanation:
 6. inputSchema: only user-facing inputs. Never include extracted intermediate fields (like customerId from step 0).
 7. required: only include fields that are truly mandatory. Limit/offset, status filters are always optional.
 8. fieldMappings: keys are inputSchema param names; values are EXACT FileMaker field names from the schema. Never invent field names.
-9. For update/delete tools (if usecase strictly demands them): always include "recordId" as a required field in inputSchema.
+9. For update/delete/get tools (if usecase strictly demands them): always include "recordId" as a required field in inputSchema.
 10. For multi-table tools: extractField must be a field that exists in the step's layout.
 11. Scripts: use operation "script" and include "scriptName" in the step (exact name from compiledSchema.scripts).
-12. Return ONLY the JSON array. Nothing else.
+12. inputSchema.properties MUST be exactly the union of every step's fieldMappings keys plus any reserved/extra params you add ("recordId", "limit", "offset", "sort", ...) — no more, no less. Never put "recordId", "limit", "offset", or "sort" as a fieldMappings value; they are reserved runtime params the executor reads directly off the request body, not FileMaker fields.
+13. Return ONLY the JSON array. Nothing else.
 
 ## REQUIRED FIELDS — Every Tool MUST Include ALL of These
 

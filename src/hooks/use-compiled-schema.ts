@@ -49,14 +49,34 @@ export interface CompiledSchema {
   primaryKeys: Record<string, string>
 }
 
+// The saved schema only ever persists layout fields as plain name strings
+// (see src/app/api/connections/[id]/schema/selections/route.ts), never full
+// FieldMeta objects — normalize here so every consumer (tool-dialog's field
+// mapper, multi-table builder, FieldSelector) can rely on the declared shape
+// instead of crashing on `field.name` being undefined.
+function toFieldMeta(f: unknown): FieldMeta {
+  if (typeof f === 'string') {
+    return { name: f, type: 'normal', result: 'text', global: false, autoEnter: false, notEmpty: false }
+  }
+  return f as FieldMeta
+}
+
 export function useCompiledSchema(connectionId: string | null | undefined) {
   return useQuery({
     queryKey: ['compiled-schema', connectionId],
     enabled: !!connectionId,
     staleTime: 5 * 60 * 1000, // 5 min cache — schema doesn't change often
     queryFn: async () => {
-      const res = await api.get<CompiledSchema>(`/api/connections/${connectionId}/schema/compiled`)
-      return res as CompiledSchema
+      // GET /schema/compiled responds with { compiledSchema, selectedLayouts,
+      // selectedTables, selectedScripts, fetchedAt, updatedAt } — the actual
+      // {layouts, tables, scripts, relationships} shape lives one level
+      // deeper, under `compiledSchema`.
+      const res = await api.get<{ compiledSchema: CompiledSchema }>(`/api/connections/${connectionId}/schema/compiled`)
+      const schema = res.compiledSchema
+      return {
+        ...schema,
+        layouts: (schema.layouts ?? []).map(l => ({ ...l, fields: (l.fields ?? []).map(toFieldMeta) })),
+      }
     },
   })
 }

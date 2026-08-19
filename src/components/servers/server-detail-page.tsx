@@ -5,6 +5,8 @@ import { useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import Link from 'next/link'
 import { api } from '@/lib/utils/api-client'
+import { cn } from '@/lib/utils'
+import { toolKeys, invalidateToolLists } from '@/lib/query-keys'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -29,11 +31,10 @@ import {
   Power,
   PowerOff,
   Brain,
-  Loader2,
   RotateCcw,
-  CheckCircle2,
-  Circle,
+  Info,
 } from 'lucide-react'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { useState } from 'react'
@@ -77,13 +78,18 @@ interface ServerDetail {
 
 function ToolRow({ tool, onToggle, onEdit, onDelete, readOnly }: { tool: ToolItem; onToggle?: () => void; onEdit?: () => void; onDelete?: () => void; readOnly?: boolean }) {
   return (
-    <div className="flex items-center justify-between py-3 px-4 rounded-xl border bg-muted/30 hover:bg-muted/60 transition-all duration-200 group mb-2 shadow-sm">
+    <div
+      className={cn(
+        'flex items-center justify-between py-3 px-4 rounded-xl border bg-muted/30 hover:bg-muted/60 transition-all duration-200 group mb-2 shadow-sm',
+        !tool.isEnabled && 'opacity-60',
+      )}
+    >
       <div className="flex items-center gap-3 min-w-0">
         <div className={`p-2 rounded-lg shrink-0 ${tool.isEnabled ? 'bg-blue-500/10 text-blue-500 dark:text-blue-400' : 'bg-muted text-muted-foreground'}`}>
           <Wrench className="size-4" />
         </div>
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-semibold truncate tracking-wide">{tool.name}</span>
+          <span className="text-sm font-medium truncate tracking-wide">{tool.name}</span>
           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
             {tool.category && (
               <Badge variant="outline" className="text-[10px] uppercase font-bold tracking-wider py-0 px-1.5">
@@ -217,28 +223,32 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
       return api.put<any>(url, body)
     },
     onMutate: async ({ id, isEnabled }) => {
-      await queryClient.cancelQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
-      const previousTools = queryClient.getQueryData(['branch-tools', currentBranchId, currentServerId])
-      queryClient.setQueryData(['branch-tools', currentBranchId, currentServerId], (old: ToolItem[] | undefined) => {
+      const queryKey = toolKeys.view(currentServerId, currentBranchId)
+      await queryClient.cancelQueries({ queryKey })
+      const previousTools = queryClient.getQueryData(queryKey)
+      queryClient.setQueryData(queryKey, (old: ToolItem[] | undefined) => {
         if (!old) return old
         return old.map(t => t.id === id ? { ...t, isEnabled: !isEnabled } : t)
       })
-      return { previousTools }
+      return { previousTools, queryKey }
     },
     onError: (err, variables, context) => {
-      queryClient.setQueryData(['branch-tools', currentBranchId, currentServerId], context?.previousTools)
+      if (context) queryClient.setQueryData(context.queryKey, context.previousTools)
       toast.error('Failed to toggle tool')
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
-      queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
+      invalidateToolLists(queryClient, currentServerId, currentBranchId)
     },
   })
 
-  // Delete mutation (Branch-aware)
+  // Delete mutation (Branch-aware). The branch-scoped DELETE route rejects
+  // deletes on the default/main branch (it only supports per-tool overrides,
+  // not removing the base Tool row) — route to the server-scoped endpoint
+  // whenever the current branch is main, not just when no branch is set.
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const url = currentBranchId
+      const url = currentBranchId && !isOnMainBranch
         ? `/api/branches/${currentBranchId}/tools/${id}`
         : `/api/servers/${currentServerId}/tools/${id}`
       return api.delete<void>(url)
@@ -246,24 +256,42 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
     onSuccess: () => {
       toast.success('Tool deleted')
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
-      queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
-      queryClient.invalidateQueries({ queryKey: ['tools'] })
+      invalidateToolLists(queryClient, currentServerId, currentBranchId)
     },
-    onError: () => {
-      toast.error('Failed to delete tool')
+    onError: (err: any) => {
+      toast.error(err?.message || 'Failed to delete tool')
     },
   })
 
   // Branch operations mutations
   const mergeMutation = useMutation({
-    mutationFn: (branchId: string) =>
-      api.post<{ message: string }>(`/api/branches/${branchId}/merge`, { changelog: `Merged branch ${branchId}` }),
+    mutationFn: ({ branchId, force }: { branchId: string; force?: boolean }) =>
+      api.post<{ message: string }>(`/api/branches/${branchId}/merge`, {
+        changelog: `Merged branch ${branchId}`,
+        force,
+      }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
-      queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
+      // Merge creates a deployment and rewrites main's tools — refresh the
+      // server-list cards and dashboard stats too.
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      queryClient.invalidateQueries({ queryKey: ['stats'] })
+      invalidateToolLists(queryClient, currentServerId, currentBranchId)
       toast.success(data.message || 'Branch merged successfully')
     },
-    onError: (err: any) => toast.error(err.message || 'Failed to merge branch'),
+    onError: (err: any, { branchId }) => {
+      if (err.code === 'MERGE_CONFLICT' && err.details?.conflicts) {
+        const names = err.details.conflicts.map((c: { toolName: string }) => c.toolName).join(', ')
+        openConfirm({
+          title: 'Merge conflicts detected',
+          description: `${names} changed on main since this branch last edited them. Merging anyway overwrites those tools with this branch's version. Go to Branches for a detailed diff, or confirm to merge anyway.`,
+          confirmLabel: 'Merge Anyway',
+          onConfirm: () => mergeMutation.mutate({ branchId, force: true }),
+        })
+        return
+      }
+      toast.error(err.message || 'Failed to merge branch')
+    },
   })
 
   const archiveMutation = useMutation({
@@ -271,6 +299,8 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
       api.put<any>(`/api/branches/${branchId}`, { status: 'archived' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
+      // Server-list cards show branch counts.
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Branch archived')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to archive branch'),
@@ -281,6 +311,8 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
       api.delete<any>(`/api/branches/${branchId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
+      // Server-list cards show branch counts.
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Branch deleted')
       // If we deleted the current branch, reset selection
       if (currentBranchId) {
@@ -297,7 +329,9 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
       api.post<any>(`/api/deployments/${deploymentId}/rollback`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
-      queryClient.invalidateQueries({ queryKey: ['branch-tools', currentBranchId, currentServerId] })
+      // Refresh the server-list cards (version / live deployment changed).
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      invalidateToolLists(queryClient, currentServerId, currentBranchId)
       toast.success('Rollback completed successfully')
       setLocalRefreshKey(k => k + 1)
     },
@@ -311,9 +345,12 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
     enabled: !!currentServerId,
   })
 
+  const mainBranchId = server?.branches.find(b => b.isDefault)?.id ?? null
+  const isOnMainBranch = !currentBranchId || currentBranchId === mainBranchId
+
   // Branch effective tools fetch
   const { data: branchTools = [], isLoading: isLoadingTools } = useQuery<ToolItem[]>({
-    queryKey: ['branch-tools', currentBranchId, currentServerId],
+    queryKey: toolKeys.view(currentServerId, currentBranchId),
     queryFn: async () => {
       if (!currentServerId) return []
       const url = currentBranchId
@@ -324,11 +361,16 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
     enabled: !!currentServerId,
   })
 
-  // Auto-set the default branch only if no active branch is currently selected
+  // Auto-set the default branch if none is selected, or the selected one
+  // doesn't belong to this server (e.g. left over from a previously viewed
+  // server).
   useEffect(() => {
-    if (server?.branches && !currentBranchId) {
-      const def = server.branches.find(b => b.isDefault)
-      if (def) setCurrentBranch(def.id)
+    if (server?.branches) {
+      const isValidBranch = server.branches.some(b => b.id === currentBranchId)
+      if (!isValidBranch) {
+        const def = server.branches.find(b => b.isDefault)
+        if (def) setCurrentBranch(def.id)
+      }
     }
   }, [server, currentBranchId, setCurrentBranch])
 
@@ -356,10 +398,10 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
   }
 
   const activeTools = branchTools.filter(t => t.isEnabled)
+  // Disabled tools sink to the bottom of the list — enabled tools are what
+  // you're actively working with; disabled ones are there for reference.
+  const sortedBranchTools = [...branchTools].sort((a, b) => Number(b.isEnabled) - Number(a.isEnabled))
   const lastDeployment = server.deployments?.[0]
-  const hasConnections = server.connections.some(c => c.isActive)
-  const hasTools = branchTools.length > 0
-  const isNewServer = !hasConnections && !hasTools && !lastDeployment
 
   return (
     <div className="p-6 space-y-6">
@@ -399,119 +441,124 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
         </div>
       </div>
 
-      {/* Server Info & Connections Container */}
+      {/* Server Info & Connections — a single compact row so the tools list
+          below gets most of the vertical space. */}
       <Card className="overflow-hidden">
-        <div className="p-4 flex flex-wrap items-center gap-6 border-b">
-          <div className="flex items-center gap-2">
+        <div className="p-3 flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-1.5">
             <span className="text-xs text-muted-foreground">Version:</span>
             <span className="text-sm font-semibold">v{server.version}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <span className="text-xs text-muted-foreground">Active Tools:</span>
             <span className="text-sm font-semibold">{activeTools.length}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <span className="text-xs text-muted-foreground">Created:</span>
             <span className="text-sm font-semibold">{format(new Date(server.createdAt), 'MMM d, yyyy')}</span>
           </div>
+
+          {server.connections.length > 0 && (
+            <>
+              <Separator orientation="vertical" className="h-4" />
+              <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                <span className="text-xs text-muted-foreground shrink-0">Connections:</span>
+                {(server.connections ?? []).filter(c => c.isActive).map((conn) => {
+                  let layouts = 0, tables = 0
+                  const bs = conn.connection.browsedSchema
+                  if (bs) {
+                    try { layouts = JSON.parse(bs.selectedLayouts || '[]').length } catch {}
+                    try { tables = JSON.parse(bs.selectedTables || '[]').length } catch {}
+                  }
+
+                  return (
+                    <div
+                      key={conn.connection.id}
+                      className="flex items-center gap-1.5 bg-muted/30 border hover:border-foreground/10 transition-colors rounded-md px-2 py-1 text-xs"
+                    >
+                      <Link2 className="size-3 text-blue-400 shrink-0" />
+                      <span className="font-medium truncate max-w-[120px]">{conn.connection.name}</span>
+                      <Badge variant="outline" className="text-[9px] py-0 px-1 font-mono">{conn.connection.database}</Badge>
+                      <span className="text-muted-foreground whitespace-nowrap" title={`${layouts} layouts, ${tables} OData tables`}>
+                        {layouts}L · {tables}T
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
         </div>
-        
-        {server.connections.length > 0 && (
-          <div className="p-4 flex flex-col gap-3">
-            <span className="text-xs text-muted-foreground font-medium">Linked Connections</span>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {(server.connections ?? []).filter(c => c.isActive).map((conn) => {
-                let layouts = 0, tables = 0
-                const bs = conn.connection.browsedSchema
-                if (bs) {
-                  try { layouts = JSON.parse(bs.selectedLayouts || '[]').length } catch {}
-                  try { tables = JSON.parse(bs.selectedTables || '[]').length } catch {}
-                }
-
-                return (
-                  <div key={conn.connection.id} className="flex flex-col gap-2.5 bg-muted/30 border hover:border-foreground/10 transition-colors rounded-lg p-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Link2 className="size-4 text-blue-400 shrink-0" />
-                        <span className="font-semibold text-sm truncate">{conn.connection.name}</span>
-                      </div>
-                      <Badge variant="outline" className="text-[10px] py-0 font-mono">{conn.connection.database}</Badge>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-                      <span title="Selected Layouts">{layouts} layouts</span>
-                      <span title="Selected OData Tables">{tables} tables</span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
       </Card>
-
-      {/* Getting Started guidance for new servers */}
-      {isNewServer && (
-        <Card className="border-blue-500/20 bg-blue-500/5">
-          <CardContent className="p-5">
-            <p className="text-sm font-semibold mb-3">Get started in 4 steps</p>
-            <ol className="space-y-2.5">
-              {[
-                { done: hasConnections, label: 'Configure a FileMaker connection', action: <Link href="/connections" className="text-xs text-blue-400 hover:underline ml-auto shrink-0">Go to Connections →</Link> },
-                { done: false, label: 'Load layouts and schema from FileMaker', action: null },
-                { done: hasTools, label: 'Create or AI-generate tools', action: null },
-                { done: !!lastDeployment, label: 'Test your MCP endpoint', action: <Button size="sm" variant="ghost" className="text-xs h-6 px-2 ml-auto" onClick={() => setShowConfigDialog(true)}>View Config →</Button> },
-              ].map((step, i) => (
-                <li key={i} className="flex items-center gap-2.5 text-sm">
-                  {step.done
-                    ? <CheckCircle2 className="size-4 text-green-500 shrink-0" />
-                    : <Circle className="size-4 text-muted-foreground/40 shrink-0" />}
-                  <span className={step.done ? 'line-through text-muted-foreground' : ''}>{step.label}</span>
-                  {step.action}
-                </li>
-              ))}
-            </ol>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Mode Tabs */}
       <Tabs value={serverMode} onValueChange={(v) => setServerMode(v as typeof serverMode)}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <TabsList className="border p-1 rounded-lg">
-            <TabsTrigger value="edit" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
-              <Pencil className="size-3.5 mr-1.5" />
-              Edit
-            </TabsTrigger>
-            <TabsTrigger value="staging" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
-              <Eye className="size-3.5 mr-1.5" />
-              Staging
-            </TabsTrigger>
-            <TabsTrigger value="deployed" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
-              <Rocket className="size-3.5 mr-1.5" />
-              Deployed
-            </TabsTrigger>
-          </TabsList>
+          <div className="flex items-center gap-1.5">
+            <TabsList className="border p-1 rounded-lg">
+              <TabsTrigger value="edit" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
+                <Pencil className="size-3.5 mr-1.5" />
+                Edit
+              </TabsTrigger>
+              <TabsTrigger value="staging" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
+                <Eye className="size-3.5 mr-1.5" />
+                Staging
+              </TabsTrigger>
+              <TabsTrigger value="deployed" className="data-[state=active]:bg-accent data-[state=active]:text-foreground text-muted-foreground transition-all">
+                <Rocket className="size-3.5 mr-1.5" />
+                Deployed
+              </TabsTrigger>
+            </TabsList>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button type="button" aria-label="What do these tabs mean?" className="text-muted-foreground hover:text-foreground">
+                  <Info className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs space-y-1.5">
+                <p><strong>Edit</strong> — modify tools on the branch selected below (defaults to main).</p>
+                <p><strong>Staging</strong> — a read-only preview of that same branch's effective tools, not a separate pending state.</p>
+                <p><strong>Deployed</strong> — the live snapshot MCP clients actually call.</p>
+                <p><strong>Merge</strong> (on a feature branch) folds its changes into main and immediately creates a new live deployment — merging already deploys.</p>
+                <p><strong>Deploy to Production</strong> creates an additional deployment snapshot of main's current state, e.g. after editing main directly without a branch.</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
 
           <div className="flex items-center gap-2">
             {serverMode === 'staging' && (
-              <Button
-                size="sm"
-                className="bg-blue-600 hover:bg-blue-500 text-white gap-1.5 shadow-lg shadow-blue-900/20"
-                onClick={async () => {
-                  try {
-                    await api.post<any>(`/api/servers/${currentServerId}/deployments`, {
-                      changelog: `Manual deployment - ${activeTools.length} tools`
-                    })
-                    toast.success('Server deployed to production!')
-                    setLocalRefreshKey(k => k + 1)
-                  } catch (err: any) {
-                    toast.error(err.message || 'Failed to deploy')
-                  }
-                }}
-              >
-                <Rocket className="size-3.5" />
-                Deploy to Production
-              </Button>
+              isOnMainBranch ? (
+                <Button
+                  size="sm"
+                  className="bg-blue-600 hover:bg-blue-500 text-white gap-1.5 shadow-lg shadow-blue-900/20"
+                  onClick={async () => {
+                    try {
+                      await api.post<any>(`/api/servers/${currentServerId}/deployments`, {
+                        changelog: `Manual deployment - ${activeTools.length} tools`,
+                        branchId: currentBranchId,
+                      })
+                      toast.success('Server deployed to production!')
+                      setLocalRefreshKey(k => k + 1)
+                    } catch (err: any) {
+                      toast.error(err.message || 'Failed to deploy')
+                    }
+                  }}
+                >
+                  <Rocket className="size-3.5" />
+                  Deploy to Production
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-muted-foreground"
+                  disabled
+                  title="Deploying always ships main. Merge this branch into main first, then deploy."
+                >
+                  <Rocket className="size-3.5" />
+                  Merge to main to deploy
+                </Button>
+              )
             )}
             
             {serverMode === 'deployed' && (
@@ -553,7 +600,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                         <Brain className="size-3.5" />
                         Auto-Generate Suite
                       </Button>
-                      <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white" onClick={() => setShowToolDialog(true)}>
+                      <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white" onClick={() => setShowToolDialog(true, null, server?.connections?.[0]?.connection?.id ?? null)}>
                         <Plus className="size-3.5 mr-1.5" />
                         Add Tool
                       </Button>
@@ -569,12 +616,12 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      {branchTools.map(tool => (
-                        <ToolRow 
-                          key={tool.id} 
-                          tool={tool} 
+                      {sortedBranchTools.map(tool => (
+                        <ToolRow
+                          key={tool.id}
+                          tool={tool}
                           onToggle={() => toggleMutation.mutate({ id: tool.id, isEnabled: tool.isEnabled })}
-                          onEdit={() => setShowToolDialog(true, tool.id)}
+                          onEdit={() => setShowToolDialog(true, tool.id, server?.connections?.[0]?.connection?.id ?? null)}
                           onDelete={() =>
                             openConfirm({
                               title: 'Delete Tool',
@@ -661,7 +708,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                                       title: `Merge "${branch.name}"`,
                                       description: `Merge this branch into the default branch? Tool changes will become the new production state.`,
                                       confirmLabel: 'Merge',
-                                      onConfirm: () => mergeMutation.mutate(branch.id),
+                                      onConfirm: () => mergeMutation.mutate({ branchId: branch.id }),
                                     })
                                   }}
                                   title="Merge into default branch"
@@ -733,7 +780,7 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    {branchTools.map(tool => (
+                    {sortedBranchTools.map(tool => (
                       <ToolRow key={tool.id} tool={tool} readOnly />
                     ))}
                   </div>
@@ -791,6 +838,8 @@ export function ServerDetailPage({ serverId }: ServerDetailPageProps) {
                   } catch (e) {
                     console.error('Failed to parse snapshot', e);
                   }
+                  // Disabled tools sink to the bottom, same as the Edit/Staging lists.
+                  snapshotTools = [...snapshotTools].sort((a, b) => Number(b.isEnabled) - Number(a.isEnabled))
                   
                   return (
                     <>

@@ -3,6 +3,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/utils/api-client'
 import { useAppStore } from '@/lib/store'
+import { isCurrentDeployment, canRollbackTo } from '@/lib/deployments/deployment-ui-state'
 import Link from 'next/link'
 import { Card, CardContent } from '@/components/ui/card'
 import { StatusBadge } from '@/components/ui/status-badge'
@@ -54,6 +55,7 @@ interface DeploymentItem {
   branchId: string
   branchName: string
   status: string
+  isLive: boolean
   version: string
   changelog: string | null
   deployedAt: string | null
@@ -83,8 +85,8 @@ export function DeploymentsPage() {
   const [snapshotConfig, setSnapshotConfig] = useState<string>('')
 
   const { data: servers = [] } = useQuery<ServerItem[]>({
-    queryKey: ['servers'],
-    queryFn: () => api.get<ServerItem[]>('/api/servers'),
+    queryKey: ['servers', 'summary'],
+    queryFn: () => api.get<ServerItem[]>('/api/servers?summary=true'),
   })
 
   const { data: deployments = [], isLoading, isError, error } = useQuery<DeploymentItem[]>({
@@ -115,6 +117,11 @@ export function DeploymentsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
+      // The server LIST (['servers']) is a separate cache feeding the cards on
+      // the servers/tools/branches/deployments pages — refresh its version and
+      // deployment counts too, plus the dashboard stats.
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
+      queryClient.invalidateQueries({ queryKey: ['stats'] })
       toast.success('Deployment created successfully')
       setShowDeployDialog(false)
       setChangelog('')
@@ -128,6 +135,8 @@ export function DeploymentsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deployments', currentServerId] })
       queryClient.invalidateQueries({ queryKey: ['server', currentServerId] })
+      // Refresh the server-list cards (version / live deployment changed).
+      queryClient.invalidateQueries({ queryKey: ['servers'] })
       toast.success('Rollback completed successfully')
     },
     onError: (err: any) => toast.error(err.message || 'Failed to rollback deployment'),
@@ -270,8 +279,8 @@ export function DeploymentsPage() {
         </Card>
       ) : (
         <div className="space-y-3 max-h-[calc(100vh-16rem)] overflow-y-auto">
-          {deployments.map((deployment, index) => (
-            <Card key={deployment.id} className={index === 0 ? 'border-primary/30' : ''}>
+          {deployments.map((deployment) => (
+            <Card key={deployment.id} className={isCurrentDeployment(deployment) ? 'border-primary/30' : ''}>
               <CardContent className="p-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex-1 min-w-0 space-y-2">
@@ -281,7 +290,7 @@ export function DeploymentsPage() {
                         <span className="text-sm font-bold">v{deployment.version}</span>
                       </div>
                       <StatusBadge status={deployment.status} />
-                      {index === 0 && deployment.status === 'deployed' && (
+                      {isCurrentDeployment(deployment) && (
                         <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs">
                           Current
                         </Badge>
@@ -329,7 +338,7 @@ export function DeploymentsPage() {
                     >
                       <Eye className="size-3.5" />
                     </Button>
-                    {(deployment.status === 'deployed' || deployment.status === 'rolled_back') && index > 0 && (
+                    {canRollbackTo(deployment) && (
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button variant="outline" size="sm" title="Rollback to this version" aria-label={`Rollback to version ${deployment.version}`}>

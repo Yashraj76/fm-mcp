@@ -58,14 +58,27 @@ export const POST = withAuth(async (_req, { params, userId }) => {
     // 2. OData service document: entity names (fast, ~10 s timeout)
     // 3. OData $metadata: full field definitions (slower, ~20 s timeout)
     const [
-      { layouts, scripts },
+      { layouts, scripts, duplicateLayoutNames },
       odataTablesFromServiceDoc,
       odataMetaResult,
     ] = await Promise.all([
       // 1. Data API
       withFMSession(connection, async (client) => {
         const layoutsRes = await client.getLayouts()
-        const allLayouts: string[] = (layoutsRes?.response?.layouts || []).map((l: any) => l.name)
+        const rawLayoutNames: string[] = (layoutsRes?.response?.layouts || []).map((l: any) => l.name)
+
+        // FileMaker layout names are not guaranteed unique within a file (the
+        // Data API addresses layouts by name only — it has no internal id
+        // concept anywhere, including at record/script execution time). Two
+        // layouts sharing a name are indistinguishable to FileMaker itself,
+        // so collapse duplicates here rather than surfacing broken UI state
+        // (duplicate React keys, Set-based selection collisions) downstream.
+        const nameCounts = new Map<string, number>()
+        for (const name of rawLayoutNames) nameCounts.set(name, (nameCounts.get(name) || 0) + 1)
+        const allLayouts = Array.from(new Set(rawLayoutNames))
+        const duplicateLayoutNames = Array.from(nameCounts.entries())
+          .filter(([, count]) => count > 1)
+          .map(([name]) => name)
 
         let allScripts: string[] = []
         try {
@@ -77,7 +90,7 @@ export const POST = withAuth(async (_req, { params, userId }) => {
           logger.warn({ detail: scriptErr.message }, '[browse-schema] Scripts endpoint not available:')
         }
 
-        return { layouts: allLayouts, scripts: allScripts }
+        return { layouts: allLayouts, scripts: allScripts, duplicateLayoutNames }
       }),
 
       // 2. OData service document
@@ -122,6 +135,7 @@ export const POST = withAuth(async (_req, { params, userId }) => {
       data: {
         layouts,
         scripts,
+        duplicateLayoutNames,
         layoutMeta: {},   // fields fetched on-demand via /layout-fields
         odataTables,
         odataMeta: odataMetaResult.meta,

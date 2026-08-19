@@ -68,7 +68,7 @@ const AI_PROVIDERS = [
 
 const MODEL_MAP: Record<string, string[]> = {
   openai: ['gpt-4', 'gpt-4o', 'gpt-4-turbo', 'gpt-4o-mini', 'gpt-3.5-turbo'],
-  anthropic: ['claude-sonnet-4-20250514', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
+  anthropic: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
   google: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash'],
   ollama: ['llama3.2', 'codellama', 'mistral', 'mixtral', 'qwen2.5-coder'],
   custom: [],
@@ -102,7 +102,7 @@ function ApiTokensCard() {
   const { data: servers, isLoading: serversLoading } = useQuery<ServerListItem[]>({
     queryKey: ['servers-list-for-tokens'],
     queryFn: async () => {
-      const data = await api.get<any[]>('/api/servers')
+      const data = await api.get<any[]>('/api/servers?summary=true')
       return data.map((s: { id: string; name: string }) => ({ id: s.id, name: s.name }))
     },
   })

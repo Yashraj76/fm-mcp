@@ -1,5 +1,6 @@
 import assert from 'assert'
-import { encrypt, decrypt } from './crypto'
+import crypto from 'crypto'
+import { encrypt, decrypt, isLegacyCiphertext } from './crypto'
 
 // ── env helpers ────────────────────────────────────────────────────────────────
 
@@ -89,18 +90,19 @@ async function runTests() {
       // Must not equal plaintext
       assert.notStrictEqual(ciphertext, plaintext, 'Encrypted value should differ from plaintext')
 
-      // Must be in iv:ciphertext format
+      // Must be in GCM iv:tag:ciphertext format
       const parts = ciphertext.split(':')
-      assert.strictEqual(parts.length, 2, 'Encrypted format should be iv:ciphertext')
-      assert.strictEqual(parts[0].length, 32, 'IV should be 32 hex chars (16 bytes)')
+      assert.strictEqual(parts.length, 3, 'Encrypted format should be iv:tag:ciphertext (GCM)')
+      assert.strictEqual(parts[0].length, 24, 'IV should be 24 hex chars (12 bytes, GCM)')
+      assert.strictEqual(parts[1].length, 32, 'Auth tag should be 32 hex chars (16 bytes)')
 
       // Must round-trip back to original
       const decrypted = decrypt(ciphertext)
       assert.strictEqual(decrypted, plaintext)
     })
     console.log('  ✓ Encrypted output differs from plaintext')
-    console.log('  ✓ Encrypted format is 32-char IV hex : ciphertext hex')
-    console.log('  ✓ decrypt(encrypt(x)) === x')
+    console.log('  ✓ Encrypted format is 24-char IV : 32-char auth tag : ciphertext (GCM)')
+    console.log('  ✓ decrypt(encrypt(x)) === x (GCM round-trip)')
   }
 
   // ── 4. Each encryption produces a unique ciphertext (random IV) ───────────
@@ -118,17 +120,22 @@ async function runTests() {
   console.log('\nTesting decrypt rejects wrong format...')
   {
     withEnv(VALID_KEY, 'production', () => {
-      // Plain text — no colon at position 32
+      // Plain text — no colon at all
       assert.throws(
         () => decrypt('plaintext_password'),
         /not in the expected encrypted format/
       )
-      // Too many colons
+      // 3-part but wrong segment lengths (not a real GCM value)
       assert.throws(
         () => decrypt('iv:cipher:extra'),
         /not in the expected encrypted format/
       )
-      // IV too short (colon not at position 32)
+      // 4+ parts — matches neither format
+      assert.throws(
+        () => decrypt('a:b:c:d'),
+        /not in the expected encrypted format/
+      )
+      // Legacy 2-part with IV of wrong length
       assert.throws(
         () => decrypt('shortiv:ciphertext'),
         /not in the expected encrypted format/
@@ -140,29 +147,70 @@ async function runTests() {
       )
     })
     console.log('  ✓ decrypt() throws for plaintext input')
-    console.log('  ✓ decrypt() throws for multi-colon input')
-    console.log('  ✓ decrypt() throws when IV is wrong length')
+    console.log('  ✓ decrypt() throws for malformed 3-part input')
+    console.log('  ✓ decrypt() throws for 4+-part input')
+    console.log('  ✓ decrypt() throws when legacy IV is wrong length')
     console.log('  ✓ decrypt() throws when IV is empty')
   }
 
-  // ── 6. decrypt throws for corrupted ciphertext (wrong block alignment) ────
-  console.log('\nTesting decrypt throws for corrupted ciphertext...')
+  // ── 6. GCM tamper detection: any flipped byte fails auth-tag verification ──
+  console.log('\nTesting GCM tamper detection...')
   {
     withEnv(VALID_KEY, 'production', () => {
-      const encrypted = encrypt('some_credential')
-      // Strip one character from the ciphertext to break block alignment
-      const parts = encrypted.split(':')
-      const corrupted = `${parts[0]}:${parts[1].slice(0, -1)}`
-      assert.throws(
-        () => decrypt(corrupted),
-        (err: Error) => {
-          // Node crypto will throw a padding / block-length error — we just want it to throw
+      const flipLastHexChar = (s: string) => s.slice(0, -1) + (s.endsWith('0') ? '1' : '0')
+
+      // Flip one byte of the CIPHERTEXT → auth tag mismatch → throws
+      {
+        const [iv, tag, cipher] = encrypt('some_credential').split(':')
+        const tampered = `${iv}:${tag}:${flipLastHexChar(cipher)}`
+        assert.throws(() => decrypt(tampered), (err: Error) => {
           assert.ok(err instanceof Error)
           return true
-        }
-      )
+        })
+      }
+      // Flip one byte of the AUTH TAG → throws
+      {
+        const [iv, tag, cipher] = encrypt('some_credential').split(':')
+        const tampered = `${iv}:${flipLastHexChar(tag)}:${cipher}`
+        assert.throws(() => decrypt(tampered))
+      }
+      // Flip one byte of the IV → throws
+      {
+        const [iv, tag, cipher] = encrypt('some_credential').split(':')
+        const tampered = `${flipLastHexChar(iv)}:${tag}:${cipher}`
+        assert.throws(() => decrypt(tampered))
+      }
     })
-    console.log('  ✓ decrypt() throws for corrupted (block-misaligned) ciphertext')
+    console.log('  ✓ decrypt() throws when a ciphertext byte is flipped (auth tag verified)')
+    console.log('  ✓ decrypt() throws when the auth tag is tampered')
+    console.log('  ✓ decrypt() throws when the IV is tampered')
+  }
+
+  // ── 6b. Legacy CBC format (pre-GCM writes) still decrypts ──────────────────
+  console.log('\nTesting legacy CBC backward compatibility...')
+  {
+    withEnv(VALID_KEY, 'production', () => {
+      // Construct a value exactly as the pre-migration encrypt() did:
+      // AES-256-CBC, 16-byte IV, `iv:ciphertext` hex format.
+      const key = Buffer.from(VALID_KEY, 'hex')
+      const iv = crypto.randomBytes(16)
+      const cipher = crypto.createCipheriv('aes-256-cbc', key, iv)
+      const legacy = `${iv.toString('hex')}:${cipher.update('legacy_stored_password', 'utf8', 'hex') + cipher.final('hex')}`
+
+      assert.ok(isLegacyCiphertext(legacy), 'legacy 2-part value detected as legacy')
+      assert.ok(!isLegacyCiphertext(encrypt('x')), 'new GCM value not detected as legacy')
+      assert.strictEqual(decrypt(legacy), 'legacy_stored_password', 'legacy CBC value decrypts')
+
+      // Corrupted legacy ciphertext (broken block alignment) still throws
+      const corrupted = legacy.slice(0, -1)
+      assert.throws(() => decrypt(corrupted), (err: Error) => {
+        assert.ok(err instanceof Error)
+        return true
+      })
+    })
+    console.log('  ✓ legacy iv:ciphertext (CBC) value decrypts correctly')
+    console.log('  ✓ isLegacyCiphertext() distinguishes legacy from GCM values')
+    console.log('  ✓ decrypt() throws for corrupted legacy ciphertext')
   }
 
   // ── 7. Empty / falsy passthrough ──────────────────────────────────────────

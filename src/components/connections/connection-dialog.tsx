@@ -34,8 +34,6 @@ interface ConnectionFormData {
   username: string
   password: string
   authType: string
-  clientId: string
-  clientSecret: string
   sslVerify: boolean
 }
 
@@ -47,8 +45,6 @@ const emptyForm: ConnectionFormData = {
   username: '',
   password: '',
   authType: 'basic',
-  clientId: '',
-  clientSecret: '',
   sslVerify: true,
 }
 
@@ -67,6 +63,10 @@ export function ConnectionDialog() {
   const [showPassword, setShowPassword] = useState(false)
   const [errors, setErrors] = useState<Partial<Record<keyof ConnectionFormData, string>>>({})
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  // Set when "Create & Test" saves a new connection while the dialog stays
+  // open. Later saves in the same dialog session update this connection
+  // instead of creating a duplicate.
+  const [createdId, setCreatedId] = useState<string | null>(null)
 
   // Fetch connection data for editing
   const { data: existingConnection } = useQuery({
@@ -74,8 +74,12 @@ export function ConnectionDialog() {
     queryFn: () => api.get<any>(`/api/connections/${editingConnectionId}`),
     enabled: isEditing && showConnectionDialog,
     placeholderData: () => {
-      const all = queryClient.getQueryData<any[]>(['connections'])
-      return all?.find(c => c.id === editingConnectionId)
+      // ['connections'] is populated by connections-page.tsx's useInfiniteQuery,
+      // so its cached shape is { pages: { data: any[] }[], pageParams }, not a
+      // flat array — flatten it before searching.
+      const cached = queryClient.getQueryData<{ pages: { data: any[] }[] }>(['connections'])
+      const all = cached?.pages?.flatMap((p) => p?.data ?? []) ?? []
+      return all.find((c) => c.id === editingConnectionId)
     }
   })
 
@@ -93,9 +97,9 @@ export function ConnectionDialog() {
           // even if it did, we must never render it in an input.
           // An empty value means "leave current password unchanged" on save.
           password: '',
-          authType: existingConnection.authType ?? 'basic',
-          clientId: existingConnection.clientId ?? '',
-          clientSecret: '',
+          // Basic is the only implemented auth type — coerce legacy
+          // 'oauth'/'clamid' rows so the Select always has a valid value.
+          authType: 'basic',
           sslVerify: existingConnection.sslVerify ?? true,
         })
         setSeeded(true)
@@ -112,6 +116,7 @@ export function ConnectionDialog() {
         setErrors({})
         setShowPassword(false)
         setTestResult(null)
+        setCreatedId(null)
       })
     }
   }, [showConnectionDialog])
@@ -137,33 +142,44 @@ export function ConnectionDialog() {
     if (!form.database.trim()) newErrors.database = 'Database name is required'
     if (!form.username.trim()) newErrors.username = 'Username is required'
     if (!form.password.trim() && !isEditing) newErrors.password = 'Password is required'
-    if (form.authType === 'oauth') {
-      if (!form.clientId.trim()) newErrors.clientId = 'Client ID is required for OAuth'
-      if (!form.clientSecret.trim()) newErrors.clientSecret = 'Client Secret is required for OAuth'
-    }
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
   }
 
+  // The id this dialog session writes to: the connection being edited, or the
+  // one already created by an earlier "Create & Test" in this session.
+  const effectiveId = editingConnectionId ?? createdId
+
   const saveMutation = useMutation({
-    mutationFn: (data: ConnectionFormData) => {
-      if (isEditing) {
-        return api.put<any>(`/api/connections/${editingConnectionId}`, data)
+    // `test` records the caller's intent so onSuccess knows whether to close
+    // the dialog (plain save) or keep it open and run the connection test.
+    mutationFn: ({ data }: { data: ConnectionFormData; test: boolean }) => {
+      if (effectiveId) {
+        return api.put<any>(`/api/connections/${effectiveId}`, data)
       } else {
         return api.post<any>('/api/connections', data)
       }
     },
-    onSuccess: () => {
+    onSuccess: (res, { test }) => {
+      const wasUpdate = !!effectiveId
+      const savedId = effectiveId ?? (res?.id as string | undefined)
+      if (!effectiveId && savedId) setCreatedId(savedId)
       queryClient.invalidateQueries({ queryKey: ['connections'] })
       queryClient.invalidateQueries({ queryKey: ['stats'] })
-      queryClient.invalidateQueries({ queryKey: ['connection', editingConnectionId] })
-      setShowConnectionDialog(false)
+      if (savedId) queryClient.invalidateQueries({ queryKey: ['connection', savedId] })
       toast({
-        title: isEditing ? 'Connection Updated' : 'Connection Created',
-        description: isEditing
+        title: wasUpdate ? 'Connection Updated' : 'Connection Created',
+        description: wasUpdate
           ? 'The connection has been updated successfully.'
           : 'New FileMaker connection has been added.',
       })
+      if (test && savedId) {
+        // Keep the dialog open so the inline testResult panel can render;
+        // the user closes it once they've seen the outcome.
+        testMutation.mutate(savedId)
+      } else {
+        setShowConnectionDialog(false)
+      }
     },
     onError: (error: any) => {
       toast({
@@ -199,26 +215,14 @@ export function ConnectionDialog() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!validate()) return
-    saveMutation.mutate(form)
+    setTestResult(null)
+    saveMutation.mutate({ data: form, test: false })
   }
 
   const handleTest = () => {
     if (!validate()) return
-    if (isEditing && editingConnectionId) {
-      saveMutation.mutate(form, {
-        onSuccess: (res) => {
-          const id = res?.data?.id || editingConnectionId
-          testMutation.mutate(id)
-        },
-      })
-    } else {
-      saveMutation.mutate(form, {
-        onSuccess: (res) => {
-          const id = res?.data?.id
-          if (id) testMutation.mutate(id)
-        },
-      })
-    }
+    setTestResult(null)
+    saveMutation.mutate({ data: form, test: true })
   }
 
   const handleOpenChange = (open: boolean) => {
@@ -316,9 +320,10 @@ export function ConnectionDialog() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                {/* Only Basic is implemented in FileMakerClient.login() — do not
+                    re-add OAuth/Claris ID here without implementing those login
+                    flows and widening the authType Zod schemas to match. */}
                 <SelectItem value="basic">Basic Auth</SelectItem>
-                <SelectItem value="oauth">OAuth 2.0</SelectItem>
-                <SelectItem value="clamid">Claris ID</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -381,50 +386,6 @@ export function ConnectionDialog() {
             )}
           </div>
 
-          {/* OAuth fields (conditional) */}
-          {form.authType === 'oauth' && (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="conn-client-id">
-                  Client ID <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="conn-client-id"
-                  placeholder="your-client-id"
-                  value={form.clientId}
-                  onChange={(e) => updateField('clientId', e.target.value)}
-                  className={errors.clientId ? 'border-destructive' : ''}
-                  aria-invalid={errors.clientId ? "true" : "false"}
-                  aria-describedby={errors.clientId ? "conn-client-id-error" : undefined}
-                />
-                {errors.clientId && (
-                  <p id="conn-client-id-error" className="text-xs text-destructive">{errors.clientId}</p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="conn-client-secret">
-                  Client Secret <span className="text-destructive">*</span>
-                  {isEditing && (
-                    <span className="text-muted-foreground font-normal"> (leave blank to keep current)</span>
-                  )}
-                </Label>
-                <Input
-                  id="conn-client-secret"
-                  type="password"
-                  placeholder={isEditing ? '••••••••' : 'your-client-secret'}
-                  value={form.clientSecret}
-                  onChange={(e) => updateField('clientSecret', e.target.value)}
-                  className={errors.clientSecret ? 'border-destructive' : ''}
-                  aria-invalid={errors.clientSecret ? "true" : "false"}
-                  aria-describedby={errors.clientSecret ? "conn-client-secret-error" : undefined}
-                />
-                {errors.clientSecret && (
-                  <p id="conn-client-secret-error" className="text-xs text-destructive">{errors.clientSecret}</p>
-                )}
-              </div>
-            </>
-          )}
-
           {/* SSL Verify */}
           <div className="flex items-center justify-between rounded-lg border p-3">
             <div className="space-y-0.5">
@@ -460,7 +421,9 @@ export function ConnectionDialog() {
               onClick={() => handleOpenChange(false)}
               disabled={saveMutation.isPending || testMutation.isPending}
             >
-              Cancel
+              {/* After a "& Test" save the connection already exists — closing
+                  is no longer a cancellation. */}
+              {testResult || createdId ? 'Close' : 'Cancel'}
             </Button>
             <Button
               type="button"
@@ -468,16 +431,16 @@ export function ConnectionDialog() {
               onClick={handleTest}
               disabled={saveMutation.isPending || testMutation.isPending}
             >
-              {((saveMutation.isPending && testMutation.isPending) || testMutation.isPending) ? (
+              {((saveMutation.isPending && saveMutation.variables?.test) || testMutation.isPending) ? (
                 <Loader2 className="size-4 mr-2 animate-spin" />
               ) : (
                 <Zap className="size-4 mr-2" />
               )}
-              {isEditing ? 'Save & Test' : 'Create & Test'}
+              {effectiveId ? 'Save & Test' : 'Create & Test'}
             </Button>
             <Button type="submit" disabled={saveMutation.isPending || testMutation.isPending}>
-              {saveMutation.isPending && !testMutation.isPending && <Loader2 className="size-4 mr-2 animate-spin" />}
-              {isEditing ? 'Update Connection' : 'Create Connection'}
+              {saveMutation.isPending && !saveMutation.variables?.test && <Loader2 className="size-4 mr-2 animate-spin" />}
+              {effectiveId ? 'Update Connection' : 'Create Connection'}
             </Button>
           </DialogFooter>
         </form>

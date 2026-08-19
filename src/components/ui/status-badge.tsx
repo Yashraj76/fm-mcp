@@ -17,6 +17,7 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   // Deployment lifecycle
   pending:     { label: 'Pending',     className: 'bg-yellow-500/15 text-yellow-500 border-yellow-500/20' },
   deploying:   { label: 'Deploying',   className: 'bg-blue-500/15 text-blue-500 border-blue-500/20' },
+  superseded:  { label: 'Superseded',  className: 'bg-muted text-muted-foreground border-border' },
   rolled_back: { label: 'Rolled Back', className: 'bg-orange-500/15 text-orange-500 border-orange-500/20' },
   failed:      { label: 'Failed',      className: 'bg-red-500/15 text-red-500 border-red-500/20' },
 
